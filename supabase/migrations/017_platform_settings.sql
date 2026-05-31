@@ -1,4 +1,5 @@
--- Migration 017: Platform-level settings table + is_platform_admin flag
+-- Migration 017: Platform-level settings table
+-- Admin access is enforced at the API layer via isAdminEmail() — no DB user_profiles needed.
 
 CREATE TABLE IF NOT EXISTS platform_settings (
   id                          integer PRIMARY KEY DEFAULT 1,
@@ -12,26 +13,11 @@ CREATE TABLE IF NOT EXISTS platform_settings (
   CONSTRAINT single_row CHECK (id = 1)
 );
 
--- RLS: only platform admins or service role can read/write
+-- RLS: service role only (API routes use service role client; admin check is done in route handler)
 ALTER TABLE platform_settings ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY platform_settings_admin_only ON platform_settings
-  USING (
-    auth.jwt() ->> 'role' = 'service_role'
-    OR auth.uid() IN (
-      SELECT user_id FROM user_profiles WHERE is_platform_admin = true
-    )
-  );
+CREATE POLICY platform_settings_service_only ON platform_settings
+  USING (auth.role() = 'service_role');
 
--- Add is_platform_admin flag to user_profiles
-ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS is_platform_admin boolean DEFAULT false;
-
--- Add meta_byo provider support (no schema change, just comment for clarity)
--- integrations.provider = 'meta_byo' stores per-org Meta App override
-
--- Seed Om as platform admin (update email to match actual signup email)
-UPDATE user_profiles
-SET is_platform_admin = true
-WHERE user_id = (
-  SELECT id FROM auth.users WHERE email = '0mnaarkar2673@gmail.com'
-);
+-- meta_byo provider: integrations.provider = 'meta_byo' stores per-org Meta App override
+-- No schema change needed — uses existing integrations table with a new provider value.
