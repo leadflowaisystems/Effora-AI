@@ -1,4 +1,6 @@
-﻿/**
+export const dynamic = "force-dynamic";
+
+/**
  * /org/[slug]/settings — Settings index
  * 2-column grid of setting category cards with status pills.
  */

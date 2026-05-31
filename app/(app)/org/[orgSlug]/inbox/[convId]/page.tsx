@@ -1,4 +1,6 @@
-﻿/**
+export const dynamic = "force-dynamic";
+
+/**
  * /org/[slug]/inbox/[convId]
  *
  * Thin server shell — only does auth + org-id lookup (2 fast queries).

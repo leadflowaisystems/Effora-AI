@@ -1,4 +1,6 @@
-﻿/**
+export const dynamic = "force-dynamic";
+
+/**
  * /org/[slug]/dashboard
  * Server component — loads pre-aggregated 30-day metrics, renders DashboardView.
  */

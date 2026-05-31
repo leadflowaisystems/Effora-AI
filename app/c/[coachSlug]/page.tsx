@@ -1,4 +1,6 @@
-﻿/**
+export const dynamic = "force-dynamic";
+
+/**
  * /c/[coachSlug] — Public coach funnel page. No auth required.
  * Leads fill in name, Instagram handle, goal → creates lead in Effora AI.
  */

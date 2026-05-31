@@ -1,4 +1,6 @@
-﻿/**
+export const dynamic = "force-dynamic";
+
+/**
  * /org/[slug]/settings/whatsapp
  * WhatsApp Business Click-to-Chat URL generator + QR code.
  */

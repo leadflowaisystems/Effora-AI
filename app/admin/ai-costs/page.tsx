@@ -1,3 +1,5 @@
+﻿export const dynamic = "force-dynamic";
+
 import { createServiceClient } from "@/lib/supabase/server";
 
 export default async function AdminAiCostsPage() {

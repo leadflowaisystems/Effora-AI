@@ -1,5 +1,7 @@
 "use client";
 
+export const dynamic = "force-dynamic";
+
 /**
  * /org/[slug]/settings/security — Two-factor authentication (Supabase TOTP MFA)
  */

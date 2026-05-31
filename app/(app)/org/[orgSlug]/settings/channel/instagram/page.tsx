@@ -1,4 +1,6 @@
-﻿/**
+export const dynamic = "force-dynamic";
+
+/**
  * /org/[slug]/settings/channel/instagram
  *
  * Three sections:

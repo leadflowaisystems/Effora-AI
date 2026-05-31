@@ -1,4 +1,6 @@
-﻿/**
+export const dynamic = "force-dynamic";
+
+/**
  * /org/[slug]/payments
  * Server component — loads payments + leads, renders PaymentsView.
  * Passes isDev so the client can show/hide the Simulate payment tool.

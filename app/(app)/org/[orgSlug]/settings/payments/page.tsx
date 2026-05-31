@@ -1,4 +1,6 @@
-﻿/**
+export const dynamic = "force-dynamic";
+
+/**
  * /org/[slug]/settings/payments — Razorpay integration (per-org collection)
  * Coaches connect their own Razorpay account to collect coaching fees.
  */

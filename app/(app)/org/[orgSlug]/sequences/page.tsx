@@ -1,4 +1,6 @@
-﻿/**
+export const dynamic = "force-dynamic";
+
+/**
  * /org/[slug]/sequences
  * Server component — loads sequence runs + inactive leads, renders SequencesView.
  */

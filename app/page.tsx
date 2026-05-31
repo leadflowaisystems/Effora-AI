@@ -1,4 +1,6 @@
-﻿/**
+﻿export const dynamic = "force-dynamic";
+
+/**
  * Root page — the public-facing landing page.
  * Authenticated users are redirected straight to their org.
  */

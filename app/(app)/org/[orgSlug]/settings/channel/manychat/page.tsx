@@ -1,4 +1,6 @@
-﻿/**
+export const dynamic = "force-dynamic";
+
+/**
  * /org/[slug]/settings/channel/manychat
  * Guides coaches to use ManyChat free triggers to send leads to Effora AI funnel URL.
  * No External Request, webhook, or paid ManyChat plan required.

@@ -1,4 +1,6 @@
-﻿import { createClient, createServiceClient } from "@/lib/supabase/server";
+export const dynamic = "force-dynamic";
+
+import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { redirect, notFound } from "next/navigation";
 import { CoachView } from "@/components/coach/coach-view";
 import { getAccessState } from "@/lib/access";

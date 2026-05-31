@@ -1,4 +1,6 @@
-﻿/**
+export const dynamic = "force-dynamic";
+
+/**
  * /org/[slug]/settings/funnel — configure the public lead-capture page at /c/[slug].
  */
 

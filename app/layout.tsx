@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Bricolage_Grotesque, Hanken_Grotesk } from "next/font/google";
 import { GeistMono } from "geist/font/mono";
 import { Toaster } from "@/components/ui/toaster";
@@ -20,8 +20,11 @@ export const metadata: Metadata = {
   title: "Effora AI — AI Inbox for Service Businesses",
   description: "Turn every Instagram DM into booked revenue. AI replies in your voice. Real-time inbox, bookings, payments, CRM — all automated.",
   manifest: "/manifest.json",
-  themeColor: "#36E6A0",
   appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Effora AI" },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#36E6A0",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

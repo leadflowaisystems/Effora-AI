@@ -1,4 +1,6 @@
-﻿/**
+export const dynamic = "force-dynamic";
+
+/**
  * /org/[slug]/bookings
  * Server component — loads bookings + leads, renders BookingsView.
  * Passes isDev so the client can show/hide the Simulate booking tool.

@@ -1,4 +1,6 @@
-﻿/**
+export const dynamic = "force-dynamic";
+
+/**
  * /org/[slug]/settings/cal — Cal.com integration
  * Let coaches paste their Cal.com booking link.
  * The AI includes this link in reply drafts for hot leads.

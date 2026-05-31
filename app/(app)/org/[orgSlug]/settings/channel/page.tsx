@@ -1,4 +1,6 @@
-﻿/**
+export const dynamic = "force-dynamic";
+
+/**
  * /org/[slug]/settings/channel — Channel integrations
  * Instagram: disabled (Meta API approval required) with tooltip explanation.
  * ManyChat: links to /settings/channel/manychat with webhook setup.
