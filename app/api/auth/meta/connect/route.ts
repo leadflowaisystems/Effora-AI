@@ -6,7 +6,8 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createClient }              from "@/lib/supabase/server";
+import { getMetaConfig }             from "@/lib/meta-config";
 
 const SCOPES = [
   "pages_show_list",
@@ -24,19 +25,34 @@ export async function GET(req: NextRequest) {
   const orgSlug = req.nextUrl.searchParams.get("orgSlug");
   if (!orgSlug) return NextResponse.json({ error: "orgSlug is required" }, { status: 400 });
 
-  const appId      = process.env.META_APP_ID;
+  // Resolve orgId from slug so we can look up BYO creds
+  const { data: orgRow } = await supabase
+    .from("orgs")
+    .select("id")
+    .eq("slug", orgSlug)
+    .maybeSingle();
+
+  const orgId  = (orgRow as { id: string } | null)?.id ?? "";
+  const metaCfg = await getMetaConfig(orgId).catch(() => null);
+
+  if (!metaCfg) {
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai.vercel.app";
+    return NextResponse.redirect(
+      new URL(
+        `/org/${orgSlug}/health?error=meta_not_configured`,
+        appUrl,
+      ).toString()
+    );
+  }
+
   const appUrl     = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai.vercel.app";
   const redirectUri = `${appUrl}/api/auth/meta/callback`;
-
-  if (!appId) {
-    return NextResponse.json({ error: "Meta app not configured" }, { status: 500 });
-  }
 
   // Encode orgSlug + userId in state so callback can verify and associate
   const state = Buffer.from(JSON.stringify({ orgSlug, userId: user.id })).toString("base64url");
 
   const oauthUrl = new URL("https://www.facebook.com/v18.0/dialog/oauth");
-  oauthUrl.searchParams.set("client_id",     appId);
+  oauthUrl.searchParams.set("client_id",     metaCfg.app_id);
   oauthUrl.searchParams.set("redirect_uri",  redirectUri);
   oauthUrl.searchParams.set("scope",         SCOPES);
   oauthUrl.searchParams.set("response_type", "code");

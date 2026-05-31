@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { Instagram, Phone, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { timeAgo } from "@/lib/time";
@@ -32,6 +33,12 @@ function initials(name: string | null, fallback: string): string {
     .slice(0, 2)
     .map((w) => w[0]?.toUpperCase() ?? "")
     .join("") || "?";
+}
+
+function ChannelIcon({ provider }: { provider: string }) {
+  if (provider === "meta_instagram") return <Instagram className="h-2.5 w-2.5 text-pink-400" />;
+  if (provider === "whatsapp_cloud") return <Phone className="h-2.5 w-2.5 text-[var(--brand)]" />;
+  return <MessageSquare className="h-2.5 w-2.5 text-[var(--text-3)]" />;
 }
 
 export function ConversationItem({ conv, href, active }: Props) {
@@ -78,6 +85,10 @@ export function ConversationItem({ conv, href, active }: Props) {
 
         {/* Badges row */}
         <div className="mt-1.5 flex items-center gap-1.5">
+          {/* Channel icon */}
+          <span className="flex items-center gap-0.5 text-[var(--text-3)]">
+            <ChannelIcon provider={conv.channel_provider} />
+          </span>
           {lead?.stage && (
             <Badge variant={colors.badge as Parameters<typeof Badge>[0]["variant"]} className="text-[10px] px-1.5 py-0">
               {lead.stage.charAt(0).toUpperCase() + lead.stage.slice(1)}

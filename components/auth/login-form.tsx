@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -11,12 +12,13 @@ export function LoginForm() {
   const supabase = createClient();
   const router   = useRouter();
 
-  const [tab,      setTab]      = useState<Tab>("password");
-  const [email,    setEmail]    = useState("");
-  const [password, setPassword] = useState("");
-  const [loading,  setLoading]  = useState(false);
-  const [sent,     setSent]     = useState(false);
-  const [error,    setError]    = useState<string | null>(null);
+  const [tab,        setTab]        = useState<Tab>("password");
+  const [email,      setEmail]      = useState("");
+  const [password,   setPassword]   = useState("");
+  const [showPass,   setShowPass]   = useState(false);
+  const [loading,    setLoading]    = useState(false);
+  const [sent,       setSent]       = useState(false);
+  const [error,      setError]      = useState<string | null>(null);
 
   // ── Email/password sign in ────────────────────────────────────
   async function handlePassword(e: React.FormEvent) {
@@ -103,8 +105,8 @@ export function LoginForm() {
     else      { setError(null); setSent(true); }
   }
 
-  const inputCls = "w-full rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring";
-  const btnCls   = "w-full rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-opacity";
+  const inputCls = "w-full rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-3)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-3)] focus:outline-none focus:ring-1 focus:ring-[var(--brand)]";
+  const btnCls   = "w-full rounded-[var(--radius-sm)] bg-[var(--brand)] text-[#0A0A0C] px-4 py-2.5 text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition-opacity";
 
   // Magic link sent confirmation
   if (sent) {
@@ -128,15 +130,15 @@ export function LoginForm() {
   return (
     <div className="space-y-5">
       {/* Tabs */}
-      <div className="flex rounded-lg border overflow-hidden">
+      <div className="flex rounded-[var(--radius-sm)] border border-[var(--border)] overflow-hidden">
         {(["password", "magic", "google"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => { setTab(t); setError(null); setSent(false); }}
             className={`flex-1 py-2 text-xs font-medium transition-colors ${
               tab === t
-                ? "bg-primary text-primary-foreground"
-                : "bg-background text-muted-foreground hover:text-foreground hover:bg-muted"
+                ? "bg-[var(--brand)] text-[#0A0A0C]"
+                : "bg-[var(--bg-2)] text-[var(--text-3)] hover:text-[var(--text)] hover:bg-[var(--bg-3)]"
             }`}
           >
             {t === "password" ? "Email/Password" : t === "magic" ? "Magic Link" : "Google"}
@@ -161,11 +163,17 @@ export function LoginForm() {
             <label htmlFor="ep-pass" className="text-sm font-medium">
               Password <span className="text-[var(--brand)]">*</span>
             </label>
-            <input
-              id="ep-pass" type="password" required autoComplete="current-password"
-              value={password} onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••" className={inputCls}
-            />
+            <div className="relative">
+              <input
+                id="ep-pass" type={showPass ? "text" : "password"} required autoComplete="current-password"
+                value={password} onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••" className={`${inputCls} pr-10`}
+              />
+              <button type="button" onClick={() => setShowPass((v) => !v)}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-3)] hover:text-[var(--text-2)]">
+                {showPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <button type="submit" disabled={loading} className={btnCls}>

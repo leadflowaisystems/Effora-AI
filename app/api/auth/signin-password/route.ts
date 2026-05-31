@@ -36,8 +36,10 @@ export async function POST(req: NextRequest) {
   const { email, password } = parsed.data;
 
   // SSR client — signInWithPassword sets session cookies automatically
+  const t0 = Date.now();
   const supabase = createClient();
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  console.log(`[signin-password] signInWithPassword took ${Date.now() - t0}ms`, { ok: !error });
 
   const svc = createServiceClient();
 

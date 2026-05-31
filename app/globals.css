@@ -171,6 +171,59 @@
   }
 }
 
+/* ── Auth page — animated blob background + glassmorphism card ── */
+@keyframes blob-float-1 {
+  0%   { transform: translate(0, 0)    scale(1); }
+  33%  { transform: translate(60px, -40px) scale(1.08); }
+  66%  { transform: translate(-40px, 30px) scale(0.95); }
+  100% { transform: translate(0, 0)    scale(1); }
+}
+@keyframes blob-float-2 {
+  0%   { transform: translate(0, 0)    scale(1); }
+  33%  { transform: translate(-50px, 50px) scale(1.06); }
+  66%  { transform: translate(30px, -30px) scale(0.97); }
+  100% { transform: translate(0, 0)    scale(1); }
+}
+@keyframes auth-card-in {
+  from { opacity: 0; transform: scale(0.96) translateY(8px); }
+  to   { opacity: 1; transform: scale(1)    translateY(0); }
+}
+
+.auth-blob {
+  position: absolute;
+  border-radius: 50%;
+  will-change: transform;
+  filter: blur(80px);
+  opacity: 0.55;
+}
+.auth-blob-1 {
+  width: 700px;
+  height: 500px;
+  top: -10%;
+  left: -10%;
+  background: radial-gradient(ellipse, rgba(54, 230, 160, 0.28) 0%, transparent 70%);
+  animation: blob-float-1 20s ease-in-out infinite;
+}
+.auth-blob-2 {
+  width: 600px;
+  height: 600px;
+  bottom: -15%;
+  right: -5%;
+  background: radial-gradient(ellipse, rgba(26, 13, 46, 0.9) 0%, rgba(54, 230, 160, 0.12) 60%, transparent 80%);
+  animation: blob-float-2 25s ease-in-out infinite;
+}
+
+.auth-card {
+  background: rgba(20, 20, 24, 0.60);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(54, 230, 160, 0.12);
+  border-radius: var(--radius-lg);
+  padding: 2rem;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+  animation: auth-card-in 0.4s ease-out both;
+}
+
 /* ── Atmosphere utilities ── */
 @layer utilities {
   /* Film grain overlay — attach to a ::before pseudo or wrapper */

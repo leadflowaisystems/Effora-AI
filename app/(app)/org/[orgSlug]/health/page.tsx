@@ -228,19 +228,26 @@ export default async function HealthPage({ params }: { params: { orgSlug: string
         />
 
         {/* WhatsApp */}
-        <SimpleCard
-          icon={<Phone className="h-5 w-5" />}
-          name="WhatsApp Business"
-          connected={!!intMap["whatsapp"]?.active}
-          description={
-            intMap["whatsapp"]?.active
-              ? "WhatsApp messages are syncing automatically."
-              : "Configure your WhatsApp Business number for automated follow-ups."
-          }
-          meta={intMap["whatsapp"] ? `Configured ${fmtDate(intMap["whatsapp"].updated_at)}` : undefined}
-          actionLabel={intMap["whatsapp"]?.active ? "Manage →" : "Set up →"}
-          actionHref={`/org/${params.orgSlug}/settings/whatsapp`}
-        />
+        {(() => {
+          const waCloud  = intMap["whatsapp_cloud"];
+          const waActive = !!waCloud?.active;
+          const waPhone  = (waCloud?.config as Record<string, string> | undefined)?.display_phone_number ?? "";
+          return (
+            <SimpleCard
+              icon={<Phone className="h-5 w-5" />}
+              name="WhatsApp Business"
+              connected={waActive}
+              description={
+                waActive
+                  ? `Cloud API active · ${waPhone}`
+                  : "Connect WhatsApp Cloud API to receive and reply to DMs in Effora AI."
+              }
+              meta={waCloud ? `Connected ${fmtDate(waCloud.updated_at)}` : undefined}
+              actionLabel={waActive ? "Manage →" : "Connect →"}
+              actionHref={`/org/${params.orgSlug}/settings/whatsapp`}
+            />
+          );
+        })()}
       </div>
 
       {/* Quota */}
