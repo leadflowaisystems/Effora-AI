@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
  * Server component — loads pre-aggregated 30-day metrics, renders DashboardView.
  */
 
-import { redirect, notFound } from "next/navigation";
+import { redirect } from "next/navigation";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { DashboardView, type DashboardData } from "@/components/dashboard/dashboard-view";
 
@@ -43,7 +43,7 @@ export default async function DashboardPage({ params }: Props) {
     .eq("slug", params.orgSlug).single();
 
   const org = orgRow as { id: string } | null;
-  if (!org) notFound();
+  if (!org) redirect("/onboarding"); // new user — org not provisioned yet
 
   const svc   = createServiceClient();
   const orgId = org.id;

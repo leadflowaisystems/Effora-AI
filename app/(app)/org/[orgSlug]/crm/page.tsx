@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import { createClient, createServiceClient } from "@/lib/supabase/server";
-import { redirect, notFound } from "next/navigation";
+import { redirect } from "next/navigation";
 import { CrmView } from "@/components/crm/crm-view";
 
 export async function generateMetadata() {
@@ -17,7 +17,7 @@ export default async function CrmPage({ params }: Props) {
 
   const { data: orgRow } = await supabase
     .from("orgs").select("id").eq("slug", params.orgSlug).single();
-  if (!orgRow) notFound();
+  if (!orgRow) redirect("/onboarding"); // new user — org not provisioned yet
   const org = orgRow as { id: string };
 
   // Initial load — client fetches more with pagination

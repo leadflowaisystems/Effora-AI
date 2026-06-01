@@ -5,7 +5,7 @@
  */
 
 import { createClient, createServiceClient } from "@/lib/supabase/server";
-import { redirect, notFound } from "next/navigation";
+import { redirect } from "next/navigation";
 import { Zap, MessageSquare, IndianRupee, TrendingUp } from "lucide-react";
 import { HomeClient } from "@/components/home/home-client";
 import { getPlanLimits } from "@/lib/plan";
@@ -58,7 +58,9 @@ export default async function OrgHomePage({ params }: Props) {
     .eq("slug", params.orgSlug)
     .single();
 
-  if (!orgRow) notFound();
+  // If org doesn't exist (new user whose org wasn't provisioned yet),
+  // send to onboarding instead of 404 to avoid infinite loading.
+  if (!orgRow) redirect("/onboarding");
   const org = orgRow as {
     id: string; name: string; plan: string;
     trial_ends_at: string | null; monthly_ai_msg_count: number;
