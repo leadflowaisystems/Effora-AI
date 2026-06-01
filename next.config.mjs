@@ -1,7 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  webpack: (config, { dev }) => {
-    if (!dev) {
+  webpack: (config, { dev, nextRuntime }) => {
+    // Disable persistent cache on server/client builds to reduce memory pressure.
+    // Explicitly exclude the edge runtime pass — disabling its cache can corrupt
+    // the edge bundle and cause MIDDLEWARE_INVOCATION_FAILED on Vercel.
+    if (!dev && nextRuntime !== "edge") {
       config.cache = false;
     }
     return config;
