@@ -1,19 +1,30 @@
 /**
  * lib/sanitize.ts — strips HTML/script tags and prompt-injection patterns from user-supplied text.
  *
- * Uses isomorphic-dompurify so it works on both server (Node) and client.
- * Config: ALLOWED_TAGS: [] means all HTML is stripped, leaving plain text only.
+ * Pure JavaScript implementation — no external DOM library required.
+ * (Previously used isomorphic-dompurify which crashes on Vercel serverless
+ * cold-starts because it tries to initialise a jsdom environment at module
+ * load time. Replaced with a regex-based stripper that is equivalent for our
+ * use-case: we only need plain text out of user inputs, not safe HTML output.)
  */
 
-import DOMPurify from "isomorphic-dompurify";
-
 /**
- * Strips all HTML tags and attributes from a string.
- * Safe to call on any user input before persisting to DB.
+ * Strips all HTML tags and attributes from a string, returning plain text.
+ * Safe to call on any user input before persisting to DB or passing to LLMs.
  */
 export function sanitizeText(input: string | undefined | null): string {
   if (!input) return "";
-  return DOMPurify.sanitize(input, { ALLOWED_TAGS: [], ALLOWED_ATTR: [] }).trim();
+  return input
+    // Remove all HTML/XML tags
+    .replace(/<[^>]*>/g, "")
+    // Decode common HTML entities
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .trim();
 }
 
 const INJECTION_PATTERNS: [RegExp, string][] = [
