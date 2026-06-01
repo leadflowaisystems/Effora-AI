@@ -25,20 +25,23 @@ export async function POST(req: NextRequest) {
 
   const { to } = parsed.data;
 
-  // Check env vars
+  // Check env vars (match exactly what lib/email.ts reads)
   const envCheck = {
-    SMTP_HOST:    process.env.SMTP_HOST     ?? "(not set — defaults to smtp-relay.brevo.com)",
-    SMTP_PORT:    process.env.SMTP_PORT     ?? "(not set — defaults to 587)",
-    SMTP_USER:    process.env.SMTP_USER     ? "✓ set" : "✗ MISSING",
-    SMTP_PASS:    process.env.SMTP_PASS     ? "✓ set" : "✗ MISSING",
-    SMTP_FROM:    process.env.SMTP_FROM     ?? "(not set — uses SMTP_USER)",
-    APP_URL:      process.env.NEXT_PUBLIC_APP_URL ?? "(not set)",
+    SMTP_HOST: process.env.SMTP_HOST ?? "(not set — defaults to smtp-relay.brevo.com)",
+    SMTP_PORT: process.env.SMTP_PORT ?? "(not set — defaults to 587)",
+    SMTP_USER: process.env.SMTP_USER ? `✓ set (${process.env.SMTP_USER.slice(0, 8)}...)` : "✗ MISSING — get from https://app.brevo.com/settings/keys/smtp",
+    SMTP_PASS: process.env.SMTP_PASS ? `✓ set (length: ${process.env.SMTP_PASS.length})` : "✗ MISSING — SMTP key, NOT your Brevo login password",
+    SMTP_FROM: process.env.SMTP_FROM ?? "(not set — uses SMTP_USER as From address)",
+    APP_URL:   process.env.NEXT_PUBLIC_APP_URL ?? "(not set)",
+    runtime:   process.env.VERCEL ? "vercel" : "local",
   };
 
   if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
     return NextResponse.json({
       success: false,
-      error:   "SMTP_USER or SMTP_PASS env var is missing. Configure Brevo SMTP in Vercel.",
+      error:   "SMTP_USER or SMTP_PASS env var is missing. Add Brevo SMTP credentials in " +
+               "Vercel → Project Settings → Environment Variables. " +
+               "Get credentials at https://app.brevo.com/settings/keys/smtp",
       env:     envCheck,
     }, { status: 500 });
   }
