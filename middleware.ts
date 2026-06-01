@@ -1,91 +1,103 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
-import { NextResponse, type NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-export async function middleware(request: NextRequest) {
+export async function middleware(req: NextRequest) {
   try {
-    // Forward the pathname so Server Component layouts can read it via headers().
-    const requestHeaders = new Headers(request.headers);
-    requestHeaders.set("x-pathname", request.nextUrl.pathname);
+    const pathname = req.nextUrl.pathname;
 
-    let supabaseResponse = NextResponse.next({
-      request: { headers: requestHeaders },
-    });
-
-    const supabaseUrl  = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-    // If env vars are missing, skip auth and pass the request through.
-    if (!supabaseUrl || !supabaseAnon) {
-      console.error("[middleware] Supabase env vars missing — skipping auth");
-      return supabaseResponse;
-    }
-
-    const supabase = createServerClient(supabaseUrl, supabaseAnon, {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll();
-        },
-        setAll(cookiesToSet: { name: string; value: string; options?: CookieOptions }[]) {
-          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
-          supabaseResponse = NextResponse.next({
-            request: { headers: requestHeaders },
-          });
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
-          );
-        },
-      },
-    });
-
-    // Refresh session — required for auth state to propagate.
-    let user = null;
-    try {
-      const { data } = await supabase.auth.getUser();
-      user = data.user;
-    } catch (authErr) {
-      console.error("[middleware] supabase.auth.getUser failed:", authErr);
-      // Auth check failed — let the route handler deal with it.
-    }
-
-    const { pathname } = request.nextUrl;
-
-    const isPublicPath =
-      pathname.startsWith("/login") ||
-      pathname.startsWith("/auth") ||
-      pathname.startsWith("/api/inngest") ||
-      pathname.startsWith("/styleguide") ||
+    // Skip middleware entirely for these paths
+    if (
       pathname.startsWith("/_next") ||
-      /\.(svg|png|jpg|jpeg|gif|webp|ico|css|js)$/.test(pathname);
-
-    if (!user && !isPublicPath) {
-      const loginUrl = request.nextUrl.clone();
-      loginUrl.pathname = "/login";
-      loginUrl.searchParams.set("next", pathname);
-      return NextResponse.redirect(loginUrl);
+      pathname.startsWith("/api/webhooks") ||
+      pathname.startsWith("/api/inngest") ||
+      pathname === "/favicon.ico" ||
+      pathname === "/manifest.json" ||
+      pathname === "/sw.js" ||
+      pathname.startsWith("/icon-") ||
+      pathname.startsWith("/apple-touch-icon")
+    ) {
+      return NextResponse.next();
     }
 
-    if (user && pathname === "/login") {
-      const homeUrl = request.nextUrl.clone();
-      homeUrl.pathname = "/";
-      homeUrl.searchParams.delete("next");
-      return NextResponse.redirect(homeUrl);
+    // Supabase session refresh + auth redirect logic
+    try {
+      const requestHeaders = new Headers(req.headers);
+      requestHeaders.set("x-pathname", pathname);
+
+      let supabaseResponse = NextResponse.next({
+        request: { headers: requestHeaders },
+      });
+
+      const supabaseUrl  = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const supabaseAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+      if (!supabaseUrl || !supabaseAnon) {
+        console.error("[middleware] Supabase env vars missing — skipping auth");
+        return NextResponse.next();
+      }
+
+      const supabase = createServerClient(supabaseUrl, supabaseAnon, {
+        cookies: {
+          getAll() {
+            return req.cookies.getAll();
+          },
+          setAll(cookiesToSet: { name: string; value: string; options?: CookieOptions }[]) {
+            cookiesToSet.forEach(({ name, value }) => req.cookies.set(name, value));
+            supabaseResponse = NextResponse.next({
+              request: { headers: requestHeaders },
+            });
+            cookiesToSet.forEach(({ name, value, options }) =>
+              supabaseResponse.cookies.set(name, value, options)
+            );
+          },
+        },
+      });
+
+      let user = null;
+      try {
+        const { data } = await supabase.auth.getUser();
+        user = data.user;
+      } catch (authErr) {
+        console.error("[middleware] auth refresh failed:", authErr);
+        // Continue without auth — never crash the request
+      }
+
+      const isPublicPath =
+        pathname.startsWith("/login") ||
+        pathname.startsWith("/auth") ||
+        pathname.startsWith("/styleguide") ||
+        /\.(svg|png|jpg|jpeg|gif|webp|ico|css|js)$/.test(pathname);
+
+      if (!user && !isPublicPath) {
+        const loginUrl = req.nextUrl.clone();
+        loginUrl.pathname = "/login";
+        loginUrl.searchParams.set("next", pathname);
+        return NextResponse.redirect(loginUrl);
+      }
+
+      if (user && pathname === "/login") {
+        const homeUrl = req.nextUrl.clone();
+        homeUrl.pathname = "/";
+        homeUrl.searchParams.delete("next");
+        return NextResponse.redirect(homeUrl);
+      }
+
+      supabaseResponse.headers.set("x-pathname", pathname);
+      return supabaseResponse;
+    } catch (authErr) {
+      console.error("[middleware] auth refresh failed:", authErr);
+      // Continue without auth — never crash the request
     }
 
-    // Propagate x-pathname to the response headers too
-    supabaseResponse.headers.set("x-pathname", pathname);
-
-    return supabaseResponse;
+    return NextResponse.next();
   } catch (err) {
-    console.error("[middleware] unhandled error:", err);
-    // CRITICAL: never throw — always return NextResponse.next() so requests
-    // still reach their route handlers even if middleware crashes.
+    console.error("[middleware] caught fatal error:", err);
     return NextResponse.next();
   }
 }
 
 export const config = {
   matcher: [
-    // Match all routes EXCEPT static assets, api/webhooks/*, and api/inngest
-    "/((?!_next/static|_next/image|favicon.ico|api/webhooks|api/inngest).*)",
+    "/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|icon-|apple-touch-icon|api/webhooks|api/inngest).*)",
   ],
 };
