@@ -7,6 +7,26 @@
 import nodemailer from "nodemailer";
 import { createServiceClient } from "@/lib/supabase/server";
 
+// ── Env-var resolution ────────────────────────────────────────────────────────
+// Support both SMTP_* (canonical) and BREVO_SMTP_* / BREVO_FROM_* aliases so
+// that Vercel projects configured with either naming convention work out of the box.
+function smtpUser() {
+  return process.env.SMTP_USER ?? process.env.BREVO_SMTP_USER ?? "";
+}
+function smtpPass() {
+  return process.env.SMTP_PASS ?? process.env.BREVO_SMTP_PASS ?? "";
+}
+function smtpFrom() {
+  return (
+    process.env.SMTP_FROM ??
+    process.env.BREVO_FROM_EMAIL ??
+    smtpUser()
+  );
+}
+function smtpFromName() {
+  return process.env.BREVO_FROM_NAME ?? "Effora AI";
+}
+
 // Pooled SMTP transport — keeps connections warm so sends are ~instant (no TLS handshake per message)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _transport: any | null = null;
@@ -22,8 +42,8 @@ function getTransport() {
       rateDelta:       1000,
       rateLimit:       10,
       auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
+        user: smtpUser(),
+        pass: smtpPass(),
       },
     });
   }
@@ -42,11 +62,11 @@ interface SendOptions {
 }
 
 export async function sendEmail(opts: SendOptions): Promise<void> {
-  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) return; // silently skip when unconfigured
+  if (!smtpUser() || !smtpPass()) return; // silently skip when unconfigured
 
   const transport = getTransport();
   await transport.sendMail({
-    from:    `"${opts.fromName ?? "Effora AI"}" <${process.env.SMTP_FROM ?? process.env.SMTP_USER}>`,
+    from:    `"${opts.fromName ?? smtpFromName()}" <${smtpFrom()}>`,
     to:      opts.to,
     subject: opts.subject,
     html:    opts.html,
