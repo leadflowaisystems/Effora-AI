@@ -86,6 +86,6 @@ export const env = {
 
   // ── App ──────────────────────────────────────────────────────────────────────
   get NEXT_PUBLIC_APP_URL() {
-    return get("NEXT_PUBLIC_APP_URL", "http://localhost:3000");
+    return get("NEXT_PUBLIC_APP_URL", "https://effora-ai-qh35.vercel.app");
   },
 };

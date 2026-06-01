@@ -1,4 +1,4 @@
-﻿/**
+/**
  * POST /api/orgs/[orgId]/account/delete  — initiate 30-day soft-delete
  * DELETE /api/orgs/[orgId]/account/delete — cancel pending soft-delete
  */
@@ -49,7 +49,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       html: `
         <p>Hi,</p>
         <p>Your Effora AI account and all associated data have been scheduled for <strong>permanent deletion in 30 days</strong>.</p>
-        <p>If this was a mistake, simply <a href="${process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai.vercel.app"}/login">log back in</a> and cancel the deletion from Settings → Account.</p>
+        <p>If this was a mistake, simply <a href="${process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai-qh35.vercel.app"}/login">log back in</a> and cancel the deletion from Settings → Account.</p>
         <p>If you take no action, all your data will be permanently erased on <strong>${new Date(scheduledAt).toDateString()}</strong>.</p>
         <p>— Effora AI</p>
       `,

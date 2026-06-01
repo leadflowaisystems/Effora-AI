@@ -76,11 +76,12 @@ export default async function DashboardPage({ params }: Props) {
   let dashData: DashboardData;
 
   if (metricRows.length === 0) {
-    // compute live from raw tables
+    // compute live from raw tables — guarded by 8s timeout so mobile never hangs
     const sinceFull = new Date(Date.now() - days * 86400000).toISOString();
+    const timeout8s = new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000));
 
-    const [convR, qualR, bookedR, showedR, paidR, pipeR, noshowR, dunnR, revR, srcR] =
-      await Promise.all([
+    const liveResult = await Promise.race([
+      Promise.all([
         svc.from("conversations").select("id", { count: "exact", head: true })
           .eq("org_id", orgId).gte("created_at", sinceFull),
         svc.from("leads").select("id", { count: "exact", head: true })
@@ -101,7 +102,21 @@ export default async function DashboardPage({ params }: Props) {
           .eq("org_id", orgId).eq("type", "ghost_revival"),
         svc.from("leads").select("id, source").eq("org_id", orgId)
           .gte("created_at", sinceFull),
-      ]);
+      ]),
+      timeout8s,
+    ]);
+
+    // Timeout hit — render with empty/zero state rather than blocking forever
+    if (!liveResult) {
+      console.warn("[dashboard] live-fallback queries timed out — returning empty state");
+      dashData = {
+        funnel: { dms: 0, qualified: 0, booked: 0, showed: 0, paid: 0 },
+        revenue: { paid: 0, dunning: 0, revival: 0, noshow: 0, pipeline: 0 },
+        speed_ms: null, ai: { messages: 0, tokens: 0, cost_inr: 0 },
+        sources: [], sparkline: [], days, is_live_fallback: true,
+      };
+    } else {
+    const [convR, qualR, bookedR, showedR, paidR, pipeR, noshowR, dunnR, revR, srcR] = liveResult;
 
     const paidRows  = (paidR.data ?? []) as { amount_inr: number; lead_id: string }[];
     const totalPaid = paidRows.reduce((s, r) => s + r.amount_inr, 0);
@@ -156,6 +171,7 @@ export default async function DashboardPage({ params }: Props) {
       days,
       is_live_fallback: true,
     };
+    } // end liveResult else
   } else {
     // Aggregate from metrics_daily rows
     const totals = metricRows.reduce(

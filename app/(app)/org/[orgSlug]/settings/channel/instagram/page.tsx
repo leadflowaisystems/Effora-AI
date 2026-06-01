@@ -69,7 +69,7 @@ export default async function InstagramSettingsPage({ params, searchParams }: Pr
     verified: boolean; created_at: string;
   }[];
 
-  const appUrl   = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai.vercel.app";
+  const appUrl   = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai-qh35.vercel.app";
   const connectUrl = `/api/auth/meta/connect?orgSlug=${params.orgSlug}`;
 
   return (

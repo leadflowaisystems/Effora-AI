@@ -76,6 +76,7 @@ const CreateSchema = z.object({
 );
 
 export async function POST(req: NextRequest, { params }: Params) {
+  try {
   const user = await assertMember(params.orgId);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -163,4 +164,11 @@ export async function POST(req: NextRequest, { params }: Params) {
   }
 
   return NextResponse.json({ lead: newLead, conversation_id: conversationId });
+  } catch (err) {
+    console.error("[leads POST] unhandled error:", err);
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Unknown error" },
+      { status: 500 }
+    );
+  }
 }

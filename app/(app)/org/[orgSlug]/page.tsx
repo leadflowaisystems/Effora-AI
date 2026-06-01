@@ -71,20 +71,13 @@ export default async function OrgHomePage({ params }: Props) {
   const thirtyDaysAgo  = new Date(Date.now() - 30 * 86400000).toISOString();
   const monthStart     = new Date().toISOString().slice(0, 7) + "-01";
 
-  const [
-    leadsWeekRes,
-    aiUsageRes,
-    revenueMonthRes,
-    integrationsRes,
-    voiceRes,
-    recentLeadsRes,
-    recentBookingsRes,
-    recentPaymentsRes,
-    recentMsgsRes,
-    sparkLeadsRes,
-    sparkAiRes,
-    sparkRevRes,
-  ] = await Promise.all([
+  // Race all 12 parallel queries against an 8-second timeout.
+  // On slow mobile connections, a timeout returns null and we render with
+  // zero/empty metrics rather than blocking the page indefinitely.
+  const homeTimeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000));
+
+  const homeResult = await Promise.race([
+    Promise.all([
     // Leads this week
     svc.from("leads").select("id", { count: "exact", head: true })
       .eq("org_id", org.id).gte("created_at", sevenDaysAgo),
@@ -132,7 +125,28 @@ export default async function OrgHomePage({ params }: Props) {
     svc.from("metrics_daily").select("date, revenue_paid_inr")
       .eq("org_id", org.id).gte("date", new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10))
       .order("date"),
+    ]),
+    homeTimeout,
   ]);
+
+  // Zero-state defaults used on timeout or query failure
+  const EMPTY_RES = { data: [], count: 0, error: null };
+  const [
+    leadsWeekRes   = EMPTY_RES,
+    aiUsageRes     = EMPTY_RES,
+    revenueMonthRes = EMPTY_RES,
+    integrationsRes = EMPTY_RES,
+    voiceRes        = EMPTY_RES,
+    recentLeadsRes  = EMPTY_RES,
+    recentBookingsRes = EMPTY_RES,
+    recentPaymentsRes = EMPTY_RES,
+    recentMsgsRes   = EMPTY_RES,
+    sparkLeadsRes   = EMPTY_RES,
+    sparkAiRes      = EMPTY_RES,
+    sparkRevRes     = EMPTY_RES,
+  ] = homeResult ?? [];
+
+  if (!homeResult) console.warn("[org-home] parallel queries timed out — rendering empty state");
 
   // ── Process metrics ─────────────────────────────────────────
   const leadsThisWeek = leadsWeekRes.count ?? 0;

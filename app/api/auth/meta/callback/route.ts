@@ -1,4 +1,4 @@
-﻿/**
+/**
  * GET /api/auth/meta/callback?code=...&state=...
  *
  * OAuth callback from Facebook.
@@ -20,7 +20,7 @@ import {
 } from "@/lib/integrations/meta-instagram";
 
 export async function GET(req: NextRequest) {
-  const appUrl    = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai.vercel.app";
+  const appUrl    = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai-qh35.vercel.app";
   const appId     = process.env.META_APP_ID;
   const appSecret = process.env.META_APP_SECRET;
 

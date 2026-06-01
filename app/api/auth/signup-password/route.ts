@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
 
   // Use SSR client — sets session cookies automatically
   const supabase = createClient();
-  const appUrl   = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai.vercel.app";
+  const appUrl   = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai-qh35.vercel.app";
 
   const { data, error } = await supabase.auth.signUp({
     email,
@@ -65,10 +65,14 @@ export async function POST(req: NextRequest) {
 
   if (error) {
     console.error("[signup-password]", error.message);
-    const msg = error.message.includes("already registered")
-      ? "An account with this email already exists. Please sign in instead."
-      : error.message;
-    return NextResponse.json({ error: msg }, { status: 400 });
+    let msg = error.message;
+    if (error.message.includes("already registered") || error.message.includes("already exists")) {
+      msg = "An account with this email already exists. Please sign in instead.";
+    } else if (error.message.toLowerCase().includes("rate") || error.message.includes("429")) {
+      msg = "Email service is rate-limited (Supabase allows 4 confirmation emails/hour on free tier). " +
+            "Wait 1 hour and retry, or configure custom SMTP in your Supabase project settings.";
+    }
+    return NextResponse.json({ error: msg }, { status: error.message.includes("rate") ? 429 : 400 });
   }
 
   // Send welcome email

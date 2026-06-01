@@ -1,4 +1,4 @@
-﻿/**
+/**
  * POST /api/auth/magic-link
  *
  * Server-side magic link sender:
@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
   }
 
   const svc    = createServiceClient();
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai.vercel.app";
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai-qh35.vercel.app";
   const cbUrl  = redirectTo ?? `${appUrl}/auth/callback`;
 
   // Generate the magic link URL (does NOT send email — we send it below via Brevo)

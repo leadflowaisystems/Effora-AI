@@ -27,7 +27,7 @@ export default async function AssistantPage({ params }: Props) {
     .eq("org_id", org.id).eq("provider", "calcom").eq("active", true).maybeSingle();
   const calLink = ((calRow?.config as Record<string,string> | null)?.booking_url) ?? null;
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai.vercel.app";
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai-qh35.vercel.app";
   const funnelUrl = `${appUrl}/c/${params.orgSlug}`;
 
   return (

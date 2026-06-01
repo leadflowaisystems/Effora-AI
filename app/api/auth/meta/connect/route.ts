@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
   const metaCfg = await getMetaConfig(orgId).catch(() => null);
 
   if (!metaCfg) {
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai.vercel.app";
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai-qh35.vercel.app";
     return NextResponse.redirect(
       new URL(
         `/org/${orgSlug}/health?error=meta_not_configured`,
@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const appUrl     = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai.vercel.app";
+  const appUrl     = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai-qh35.vercel.app";
   const redirectUri = `${appUrl}/api/auth/meta/callback`;
 
   // Encode orgSlug + userId in state so callback can verify and associate

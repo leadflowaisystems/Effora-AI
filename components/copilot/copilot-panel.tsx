@@ -41,15 +41,23 @@ export function CopilotPanel({ orgId }: Props) {
     setMessages((m) => [...m, { role: "user", content }]);
     setLoading(true);
     try {
-      const res  = await fetch(`/api/orgs/${orgId}/copilot/message`, {
+      const res = await fetch(`/api/orgs/${orgId}/copilot/message`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({ message: content }),
       });
-      const data = await res.json();
-      if (data.reply) setMessages((m) => [...m, { role: "assistant", content: data.reply }]);
-    } catch {
-      setMessages((m) => [...m, { role: "assistant", content: "Something went wrong. Try again." }]);
+      let data: Record<string, unknown> = {};
+      try { data = await res.json(); } catch { /* non-json body */ }
+
+      if (!res.ok) {
+        const errMsg = (data.error as string) ?? `Error ${res.status}`;
+        setMessages((m) => [...m, { role: "assistant", content: `⚠️ ${errMsg}` }]);
+      } else if (data.reply) {
+        setMessages((m) => [...m, { role: "assistant", content: data.reply as string }]);
+      }
+    } catch (fetchErr) {
+      const msg = fetchErr instanceof Error ? fetchErr.message : "Network error";
+      setMessages((m) => [...m, { role: "assistant", content: `⚠️ ${msg}` }]);
     } finally {
       setLoading(false);
     }

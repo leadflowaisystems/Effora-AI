@@ -28,76 +28,114 @@ async function assertMember(orgId: string) {
 const Schema = z.object({ message: z.string().min(1).max(2000) });
 
 export async function POST(req: NextRequest, { params }: Params) {
-  const user = await assertMember(params.orgId);
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const orgId = params.orgId;
 
-  const access = await getAccessState(params.orgId);
-  if (!access.canUseCopilot) {
-    return NextResponse.json({ error: "Copilot is not available on your current plan. Upgrade to access Ace." }, { status: 403 });
+  try {
+    const user = await assertMember(orgId);
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    console.log("[copilot/message] orgId:", orgId, "userId:", user.id);
+
+    const access = await getAccessState(orgId);
+    if (!access.canUseCopilot) {
+      return NextResponse.json({ error: "Copilot is not available on your current plan. Upgrade to access Ace." }, { status: 403 });
+    }
+
+    const msgLimit = access.copilotDailyLimit > 0 ? access.copilotDailyLimit : 60;
+    const { allowed } = await rateLimitAsync(`copilot:${orgId}`, { limit: msgLimit });
+    if (!allowed) return NextResponse.json({ error: "Daily copilot message limit reached. Resets tomorrow." }, { status: 429 });
+
+    const raw    = await req.json().catch(() => ({}));
+    const parsed = Schema.safeParse(raw);
+    if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message }, { status: 400 });
+
+    const message = sanitizeText(parsed.data.message);
+    console.log("[copilot/message] message:", message.slice(0, 80));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const svc = createServiceClient() as any;
+
+    // Load chat history
+    const { data: historyRows } = await svc
+      .from("copilot_chats").select("role, content").eq("org_id", orgId)
+      .order("created_at", { ascending: false }).limit(20);
+    const history = ((historyRows ?? []) as { role: string; content: string }[]).reverse();
+
+    // Extract entities + fetch business data — guarded: copilot_chats table might not exist yet
+    let ctxBlock = "No prior context available.";
+    let bizDataName = "your business";
+    try {
+      const entities = extractEntities(message);
+      const bizData  = await fetchRelevantData(orgId, entities);
+      ctxBlock = buildContextPrompt(bizData);
+      bizDataName = bizData.org.name;
+    } catch (ctxErr) {
+      console.warn("[copilot/message] context fetch failed (non-fatal):", ctxErr);
+    }
+
+    const systemPrompt = [
+      `You are Ace, a strategic business advisor for ${bizDataName}.`,
+      `You have direct access to their live business data (leads, bookings, payments, revenue).`,
+      ``,
+      `PERSONALITY:`,
+      `- Sharp, direct, no filler. Never start with "Great question!" or any opener.`,
+      `- End EVERY response with exactly one concrete next action prefixed "Next action:"`,
+      `- No em dashes. Short sentences. Max 180 words.`,
+      `- Cite specific numbers from the data whenever relevant.`,
+      `- If asked about a lead not in context, say you don't have their data and suggest checking CRM.`,
+      ``,
+      `LIVE BUSINESS DATA:`,
+      ctxBlock,
+    ].filter(Boolean).join("\n");
+
+    const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+      { role: "system", content: systemPrompt },
+      ...history.map((h) => ({ role: h.role as "user" | "assistant", content: h.content })),
+      { role: "user", content: message },
+    ];
+
+    // Resolve API key — fail fast if missing
+    const apiKey = process.env.GROQ_API_KEYS?.split(",")[0]?.trim() || process.env.LLM_API_KEY;
+    if (!apiKey) {
+      console.error("[copilot/message] No AI API key configured (GROQ_API_KEYS / LLM_API_KEY missing)");
+      return NextResponse.json({ error: "AI not configured — contact support." }, { status: 500 });
+    }
+
+    const model = process.env.LLM_MODEL_SMART ?? "llama-3.3-70b-versatile";
+    console.log("[copilot/message] calling LLM model:", model, "prompt chars:", systemPrompt.length + message.length);
+
+    const client = new OpenAI({
+      apiKey,
+      baseURL: process.env.LLM_BASE_URL ?? "https://api.groq.com/openai/v1",
+      maxRetries: 1,
+      timeout: 20_000,
+    });
+
+    const resp = await client.chat.completions.create({
+      model,
+      max_tokens:  280,
+      temperature: 0.65,
+      messages,
+    });
+
+    const reply             = resp.choices[0]?.message?.content?.trim() ?? "...";
+    const actionMatch       = reply.match(/Next action:(.*?)(?:\n|$)/i);
+    const suggested_action  = actionMatch?.[1]?.trim() ?? null;
+
+    await svc.from("copilot_chats").insert([
+      { org_id: orgId, role: "user",      content: message },
+      { org_id: orgId, role: "assistant", content: reply   },
+    ]).catch((e: unknown) => {
+      // Non-fatal — reply is still delivered even if history save fails
+      console.warn("[copilot/message] chat history save failed:", e);
+    });
+
+    console.log("[copilot/message] ✓ reply length:", reply.length);
+    return NextResponse.json({ reply, suggested_action });
+
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[copilot/message] unhandled error:", err);
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
-
-  const msgLimit = access.copilotDailyLimit > 0 ? access.copilotDailyLimit : 60;
-  const { allowed } = await rateLimitAsync(`copilot:${params.orgId}`, { limit: msgLimit });
-  if (!allowed) return NextResponse.json({ error: "Daily copilot message limit reached. Resets tomorrow." }, { status: 429 });
-
-  const raw    = await req.json().catch(() => ({}));
-  const parsed = Schema.safeParse(raw);
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message }, { status: 400 });
-
-  const message = sanitizeText(parsed.data.message);
-  const orgId   = params.orgId;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const svc = createServiceClient() as any;
-
-  // Load chat history
-  const { data: historyRows } = await svc
-    .from("copilot_chats").select("role, content").eq("org_id", orgId)
-    .order("created_at", { ascending: false }).limit(20);
-  const history = ((historyRows ?? []) as { role: string; content: string }[]).reverse();
-
-  // Extract entities + fetch business data
-  const entities = extractEntities(message);
-  const bizData  = await fetchRelevantData(orgId, entities);
-  const ctxBlock = buildContextPrompt(bizData);
-
-  const systemPrompt = [
-    `You are Ace, a strategic business advisor for ${bizData.org.name}.`,
-    `You have direct access to their live business data (leads, bookings, payments, revenue).`,
-    ``,
-    `PERSONALITY:`,
-    `- Sharp, direct, no filler. Never start with "Great question!" or any opener.`,
-    `- End EVERY response with exactly one concrete next action prefixed "Next action:"`,
-    `- No em dashes. Short sentences. Max 180 words.`,
-    `- Cite specific numbers from the data whenever relevant.`,
-    `- If asked about a lead not in context, say you don't have their data and suggest checking CRM.`,
-    ``,
-    `LIVE BUSINESS DATA:`,
-    ctxBlock,
-  ].filter(Boolean).join("\n");
-
-  const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-    { role: "system", content: systemPrompt },
-    ...history.map((h) => ({ role: h.role as "user" | "assistant", content: h.content })),
-    { role: "user", content: message },
-  ];
-
-  const apiKey = process.env.GROQ_API_KEYS?.split(",")[0]?.trim() ?? process.env.LLM_API_KEY ?? "no-key";
-  const client = new OpenAI({ apiKey, baseURL: process.env.LLM_BASE_URL ?? "https://api.groq.com/openai/v1", maxRetries: 1, timeout: 20_000 });
-  const resp = await client.chat.completions.create({
-    model: process.env.LLM_MODEL_SMART ?? "llama-3.3-70b-versatile",
-    max_tokens:  280,
-    temperature: 0.65,
-    messages,
-  });
-
-  const reply          = resp.choices[0]?.message?.content?.trim() ?? "...";
-  const actionMatch    = reply.match(/Next action:(.*?)(?:\n|$)/i);
-  const suggested_action = actionMatch?.[1]?.trim() ?? null;
-
-  await svc.from("copilot_chats").insert([
-    { org_id: orgId, role: "user",      content: message },
-    { org_id: orgId, role: "assistant", content: reply   },
-  ]);
-
-  return NextResponse.json({ reply, suggested_action });
 }
