@@ -152,7 +152,11 @@ export function WizardClient({ orgId, orgSlug, orgName, userEmail }: Props) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ name: d.orgName.trim() }),
           });
-          if (!r.ok) throw new Error((await r.json()).error ?? "Failed to save workspace");
+          if (!r.ok) {
+            let msg = "Failed to save workspace";
+            try { msg = (await r.json()).error ?? msg; } catch { /* non-JSON body */ }
+            throw new Error(msg);
+          }
         }
         break;
       }
@@ -168,7 +172,11 @@ export function WizardClient({ orgId, orgSlug, orgName, userEmail }: Props) {
               : {},
           }),
         });
-        if (!r.ok) throw new Error((await r.json()).error ?? "Failed to save channel");
+        if (!r.ok) {
+          let msg = "Failed to save channel";
+          try { msg = (await r.json()).error ?? msg; } catch { /* non-JSON body */ }
+          throw new Error(msg);
+        }
         break;
       }
       case 2: {
@@ -186,7 +194,11 @@ export function WizardClient({ orgId, orgSlug, orgName, userEmail }: Props) {
               active: true,
             }),
           });
-          if (!r.ok) throw new Error((await r.json()).error ?? "Failed to save Cal.com");
+          if (!r.ok) {
+            let msg = "Failed to save Cal.com";
+            try { msg = (await r.json()).error ?? msg; } catch { /* non-JSON body */ }
+            throw new Error(msg);
+          }
         }
         break;
       }
@@ -205,7 +217,11 @@ export function WizardClient({ orgId, orgSlug, orgName, userEmail }: Props) {
               active: true,
             }),
           });
-          if (!r.ok) throw new Error((await r.json()).error ?? "Failed to save Razorpay");
+          if (!r.ok) {
+            let msg = "Failed to save Razorpay";
+            try { msg = (await r.json()).error ?? msg; } catch { /* non-JSON body */ }
+            throw new Error(msg);
+          }
         }
         break;
       }
@@ -223,7 +239,11 @@ export function WizardClient({ orgId, orgSlug, orgName, userEmail }: Props) {
             extra_context: d.extraContext,
           }),
         });
-        if (!r.ok) throw new Error((await r.json()).error ?? "Failed to save voice profile");
+        if (!r.ok) {
+          let msg = "Failed to save voice profile";
+          try { msg = (await r.json()).error ?? msg; } catch { /* non-JSON body */ }
+          throw new Error(msg);
+        }
         break;
       }
     }
@@ -236,7 +256,11 @@ export function WizardClient({ orgId, orgSlug, orgName, userEmail }: Props) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ onboarding_completed_at: new Date().toISOString() }),
     });
-    if (!r.ok) throw new Error((await r.json()).error ?? "Failed to complete onboarding");
+    if (!r.ok) {
+      let msg = "Failed to complete onboarding";
+      try { msg = (await r.json()).error ?? msg; } catch { /* non-JSON body */ }
+      throw new Error(msg);
+    }
     router.push(`/org/${orgSlug}/process`);
   }
 

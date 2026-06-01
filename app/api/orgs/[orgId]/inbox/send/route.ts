@@ -133,11 +133,14 @@ export const POST = withErrorHandler("inbox/send", async (req: NextRequest, { pa
     last_message_preview: content.slice(0, 80),
   }).eq("id", conversationId);
 
-  // ── Emit Inngest event ─────────────────────────────────────
-  await inngest.send({
+  // ── Emit Inngest event (fire-and-forget — never block the HTTP response) ──
+  // On Vercel, awaiting inngest.send() can cause a cold-start timeout if the
+  // Inngest API endpoint is slow. The message is already persisted in DB; the
+  // AI pipeline picks it up asynchronously.
+  void inngest.send({
     name: "dm.received",
     data: { orgId: params.orgId, leadId, conversationId, messageId },
-  });
+  }).catch((e) => console.error("[inbox/send] inngest.send failed (non-fatal):", e));
 
   return NextResponse.json({ conversationId, leadId, messageId });
 });

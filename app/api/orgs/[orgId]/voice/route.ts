@@ -42,8 +42,10 @@ export async function GET(_req: NextRequest, { params }: Params) {
 }
 
 const VoiceSchema = z.object({
-  tone:          z.string().min(1).max(500).optional(),
-  offer:         z.string().min(1).max(500).optional(),
+  // min(0) — the wizard sends empty strings for unpopulated fields; treat them
+  // as "not set" rather than a validation error (min(1) was incorrectly strict).
+  tone:          z.string().min(0).max(500).optional(),
+  offer:         z.string().min(0).max(500).optional(),
   price_range:   z.string().max(200).optional(),
   sells:         z.string().max(1000).optional(),
   objections:    z.array(z.string().max(200)).max(10).optional(),
@@ -51,57 +53,66 @@ const VoiceSchema = z.object({
 }).refine((d) => Object.keys(d).length > 0, { message: "No fields provided" });
 
 export async function PUT(req: NextRequest, { params }: Params) {
-  const user = await assertMember(params.orgId);
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  try {
+    const user = await assertMember(params.orgId);
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const raw = await req.json().catch(() => ({}));
-  const parsed = VoiceSchema.safeParse(raw);
-  if (!parsed.success) {
+    const raw = await req.json().catch(() => ({}));
+    const parsed = VoiceSchema.safeParse(raw);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.issues?.[0]?.message ?? "Invalid input" },
+        { status: 400 }
+      );
+    }
+    const fields = {
+      ...raw,
+      ...(raw.tone          !== undefined && { tone:          sanitizeText(raw.tone) }),
+      ...(raw.offer         !== undefined && { offer:         sanitizeText(raw.offer) }),
+      ...(raw.price_range   !== undefined && { price_range:   sanitizeText(raw.price_range) }),
+      ...(raw.sells         !== undefined && { sells:         sanitizeText(raw.sells) }),
+      ...(raw.extra_context !== undefined && { extra_context: sanitizeText(raw.extra_context) }),
+      ...(raw.objections    !== undefined && { objections:    raw.objections.map(sanitizeText) }),
+    };
+
+    const now = new Date().toISOString();
+    const service = createServiceClient();
+
+    // Use maybeSingle() so "no rows" returns null instead of a PGRST116 error.
+    const { data: existing } = await service
+      .from("voice_profiles")
+      .select("id")
+      .eq("org_id", params.orgId)
+      .maybeSingle();
+
+    let result;
+    if (existing) {
+      result = await service
+        .from("voice_profiles")
+        .update({ ...fields, updated_at: now })
+        .eq("org_id", params.orgId)
+        .select("*")
+        .single();
+    } else {
+      result = await service
+        .from("voice_profiles")
+        .insert({ org_id: params.orgId, ...fields, updated_at: now })
+        .select("*")
+        .single();
+    }
+
+    if (result.error) {
+      return NextResponse.json({ error: result.error.message }, { status: 500 });
+    }
+    void logAudit(service, params.orgId, user.id, "voice.update", {
+      updated_fields: Object.keys(fields),
+    });
+    return NextResponse.json({ voiceProfile: result.data });
+  } catch (err) {
+    console.error("[voice/PUT] unhandled error:", err);
     return NextResponse.json(
-      { error: parsed.error.issues?.[0]?.message ?? "Invalid input" },
-      { status: 400 }
+      { error: err instanceof Error ? err.message : "Internal server error" },
+      { status: 500 },
     );
   }
-  const fields = {
-    ...raw,
-    ...(raw.tone          !== undefined && { tone:          sanitizeText(raw.tone) }),
-    ...(raw.offer         !== undefined && { offer:         sanitizeText(raw.offer) }),
-    ...(raw.price_range   !== undefined && { price_range:   sanitizeText(raw.price_range) }),
-    ...(raw.sells         !== undefined && { sells:         sanitizeText(raw.sells) }),
-    ...(raw.extra_context !== undefined && { extra_context: sanitizeText(raw.extra_context) }),
-    ...(raw.objections    !== undefined && { objections:    raw.objections.map(sanitizeText) }),
-  };
-
-  const now = new Date().toISOString();
-  const service = createServiceClient();
-
-  const { data: existing } = await service
-    .from("voice_profiles")
-    .select("id")
-    .eq("org_id", params.orgId)
-    .single();
-
-  let result;
-  if (existing) {
-    result = await service
-      .from("voice_profiles")
-      .update({ ...fields, updated_at: now })
-      .eq("org_id", params.orgId)
-      .select("*")
-      .single();
-  } else {
-    result = await service
-      .from("voice_profiles")
-      .insert({ org_id: params.orgId, ...fields, updated_at: now })
-      .select("*")
-      .single();
-  }
-
-  if (result.error) {
-    return NextResponse.json({ error: result.error.message }, { status: 500 });
-  }
-  void logAudit(service, params.orgId, user.id, "voice.update", {
-    updated_fields: Object.keys(fields),
-  });
-  return NextResponse.json({ voiceProfile: result.data });
 }

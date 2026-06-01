@@ -20,7 +20,8 @@ export async function getOrCreateConversation(
   const svc = createServiceClient() as any;
   const now = new Date().toISOString();
 
-  // Try to find an existing conversation
+  // Try to find an existing conversation.
+  // Use maybeSingle() so "no rows" returns null rather than a PGRST116 error.
   const { data: existing } = await svc
     .from("conversations")
     .select("id")
@@ -28,18 +29,19 @@ export async function getOrCreateConversation(
     .eq("lead_id", leadId)
     .order("created_at", { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle();
 
   if (existing?.id) return (existing as { id: string }).id;
 
-  // Create a new one
+  // Create a new one.
+  // NOTE: do NOT include `status` here — that column was never added to the
+  // conversations table schema and PostgREST will reject the insert if present.
   const { data: newConv, error } = await svc
     .from("conversations")
     .insert({
       org_id:               orgId,
       lead_id:              leadId,
       channel_provider:     channelProvider,
-      status:               "active",
       last_message_at:      now,
       last_message_preview: "",
     })

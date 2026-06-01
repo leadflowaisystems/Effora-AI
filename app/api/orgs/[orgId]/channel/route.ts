@@ -56,44 +56,52 @@ export async function GET(_req: NextRequest, { params }: Params) {
 }
 
 export async function PATCH(req: NextRequest, { params }: Params) {
-  const user = await assertMember(params.orgId);
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  try {
+    const user = await assertMember(params.orgId);
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const body = await req.json().catch(() => ({}));
-  const { channel, settings = {} } = body as {
-    channel: ChannelId;
-    settings?: Record<string, string>;
-  };
+    const body = await req.json().catch(() => ({}));
+    const { channel, settings = {} } = body as {
+      channel: ChannelId;
+      settings?: Record<string, string>;
+    };
 
-  const valid: ChannelId[] = ["manual", "manychat", "meta"];
-  if (!valid.includes(channel)) {
-    return NextResponse.json({ error: "Invalid channel" }, { status: 400 });
-  }
+    const valid: ChannelId[] = ["manual", "manychat", "meta"];
+    if (!valid.includes(channel)) {
+      return NextResponse.json({ error: "Invalid channel" }, { status: 400 });
+    }
 
-  // Encrypt any secret fields the caller supplied
-  const encryptedSettings: Record<string, string> = {};
-  for (const [k, v] of Object.entries(settings)) {
-    if (v) {
-      try {
-        encryptedSettings[k] = encryptSecret(v);
-      } catch {
-        // ENCRYPTION_KEY not set — fine for manual channel
-        encryptedSettings[k] = v;
+    // Encrypt any secret fields the caller supplied
+    const encryptedSettings: Record<string, string> = {};
+    for (const [k, v] of Object.entries(settings)) {
+      if (v) {
+        try {
+          encryptedSettings[k] = encryptSecret(v);
+        } catch {
+          // ENCRYPTION_KEY not set — fine for manual channel
+          encryptedSettings[k] = v;
+        }
       }
     }
+
+    const service = createServiceClient();
+    const { data, error } = await service
+      .from("orgs")
+      .update({
+        active_channel: channel,
+        channel_config: { provider: channel, settings: encryptedSettings },
+      })
+      .eq("id", params.orgId)
+      .select("active_channel, channel_config")
+      .single();
+
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ activeChannel: data.active_channel });
+  } catch (err) {
+    console.error("[channel/PATCH] unhandled error:", err);
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Internal server error" },
+      { status: 500 },
+    );
   }
-
-  const service = createServiceClient();
-  const { data, error } = await service
-    .from("orgs")
-    .update({
-      active_channel: channel,
-      channel_config: { provider: channel, settings: encryptedSettings },
-    })
-    .eq("id", params.orgId)
-    .select("active_channel, channel_config")
-    .single();
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ activeChannel: data.active_channel });
 }

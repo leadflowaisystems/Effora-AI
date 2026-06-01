@@ -80,75 +80,84 @@ export async function GET(_req: NextRequest, { params }: Params) {
 }
 
 export async function PUT(req: NextRequest, { params }: Params) {
-  const user = await assertMember(params.orgId);
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  try {
+    const user = await assertMember(params.orgId);
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const body = await req.json().catch(() => ({}));
-  const { provider, config = {}, active = true } = body as {
-    provider: Provider;
-    config: Record<string, string>;
-    active?: boolean;
-  };
+    const body = await req.json().catch(() => ({}));
+    const { provider, config = {}, active = true } = body as {
+      provider: Provider;
+      config: Record<string, string>;
+      active?: boolean;
+    };
 
-  if (!ALLOWED_PROVIDERS.includes(provider)) {
-    return NextResponse.json({ error: "Unknown provider" }, { status: 400 });
-  }
+    if (!ALLOWED_PROVIDERS.includes(provider)) {
+      return NextResponse.json({ error: "Unknown provider" }, { status: 400 });
+    }
 
-  // Encrypt secret fields
-  const storedConfig: Record<string, string> = {};
-  const secretFields = SECRET_FIELDS[provider] ?? [];
-  for (const [k, v] of Object.entries(config)) {
-    if (typeof v !== "string" || v === "") continue;
-    if (secretFields.some((s) => k === s)) {
-      try {
-        storedConfig[`${k}_enc`] = encryptSecret(v);
-      } catch {
-        // ENCRYPTION_KEY not set — store raw (development only)
+    // Encrypt secret fields
+    const storedConfig: Record<string, string> = {};
+    const secretFields = SECRET_FIELDS[provider] ?? [];
+    for (const [k, v] of Object.entries(config)) {
+      if (typeof v !== "string" || v === "") continue;
+      if (secretFields.some((s) => k === s)) {
+        try {
+          storedConfig[`${k}_enc`] = encryptSecret(v);
+        } catch {
+          // ENCRYPTION_KEY not set — store raw (development only)
+          storedConfig[k] = v;
+        }
+      } else {
         storedConfig[k] = v;
       }
-    } else {
-      storedConfig[k] = v;
     }
-  }
 
-  const now = new Date().toISOString();
-  const service = createServiceClient();
+    const now = new Date().toISOString();
+    const service = createServiceClient();
 
-  // Upsert on (org_id, provider)
-  const { data: existing } = await service
-    .from("integrations")
-    .select("id")
-    .eq("org_id", params.orgId)
-    .eq("provider", provider)
-    .single();
-
-  let result;
-  if (existing) {
-    result = await service
+    // Upsert on (org_id, provider).
+    // Use maybeSingle() so "no rows" returns null instead of a PGRST116 error.
+    const { data: existing } = await service
       .from("integrations")
-      .update({ config: storedConfig, active, updated_at: now })
-      .eq("id", existing.id)
-      .select("id, provider, active, updated_at")
-      .single();
-  } else {
-    result = await service
-      .from("integrations")
-      .insert({
-        org_id: params.orgId,
-        provider,
-        config: storedConfig,
-        active,
-        updated_at: now,
-      })
-      .select("id, provider, active, updated_at")
-      .single();
-  }
+      .select("id")
+      .eq("org_id", params.orgId)
+      .eq("provider", provider)
+      .maybeSingle();
 
-  if (result.error) {
-    return NextResponse.json({ error: result.error.message }, { status: 500 });
+    let result;
+    if (existing) {
+      result = await service
+        .from("integrations")
+        .update({ config: storedConfig, active, updated_at: now })
+        .eq("id", (existing as { id: string }).id)
+        .select("id, provider, active, updated_at")
+        .single();
+    } else {
+      result = await service
+        .from("integrations")
+        .insert({
+          org_id: params.orgId,
+          provider,
+          config: storedConfig,
+          active,
+          updated_at: now,
+        })
+        .select("id, provider, active, updated_at")
+        .single();
+    }
+
+    if (result.error) {
+      return NextResponse.json({ error: result.error.message }, { status: 500 });
+    }
+    void logAudit(service, params.orgId, user.id, "integration.update", { provider });
+    return NextResponse.json({ integration: result.data });
+  } catch (err) {
+    console.error("[integrations/PUT] unhandled error:", err);
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Internal server error" },
+      { status: 500 },
+    );
   }
-  void logAudit(service, params.orgId, user.id, "integration.update", { provider });
-  return NextResponse.json({ integration: result.data });
 }
 
 export async function DELETE(req: NextRequest, { params }: Params) {

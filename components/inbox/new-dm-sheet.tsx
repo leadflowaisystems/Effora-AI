@@ -36,8 +36,9 @@ export function NewDmSheet({ open, onOpenChange, orgId, orgSlug }: Props) {
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({ senderName: name, senderHandle: handle, content }),
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Failed to send");
+      let json: Record<string, unknown> = {};
+      try { json = await res.json(); } catch { /* non-JSON body — server 5xx HTML */ }
+      if (!res.ok) throw new Error((json.error as string) ?? `Server error ${res.status}`);
 
       toast({ title: "DM queued", description: "AI is qualifying the lead…", variant: "success" });
       onOpenChange(false);

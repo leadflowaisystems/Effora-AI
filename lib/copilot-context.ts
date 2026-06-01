@@ -97,7 +97,19 @@ export interface CopilotData {
   topSources:  Array<{ source: string; count: number; revenue: number }>;
 }
 
+/**
+ * Wraps fetchRelevantDataInner with a 7-second timeout so the copilot
+ * route never exceeds Vercel's serverless function limit even on the
+ * first (cache-miss) call that makes many parallel DB queries.
+ */
 export async function fetchRelevantData(orgId: string, entities: ExtractedEntities): Promise<CopilotData> {
+  const timeout = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error("Context fetch timed out")), 7_000)
+  );
+  return Promise.race([fetchRelevantDataInner(orgId, entities), timeout]);
+}
+
+async function fetchRelevantDataInner(orgId: string, entities: ExtractedEntities): Promise<CopilotData> {
   const cacheKey = `copilot-ctx:${orgId}`;
   const cached   = await cache.get<CopilotData>(cacheKey);
   if (cached) return cached;
