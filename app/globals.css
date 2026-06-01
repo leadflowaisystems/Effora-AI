@@ -1,0 +1,269 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─────────────────────────────────────────────────────────────
+   QUIET MONEY TERMINAL — Design Tokens
+   Dark is the default. Add class="light" to <html> for light.
+───────────────────────────────────────────────────────────── */
+
+@layer base {
+  :root {
+    /* ── Surface ── */
+    --bg:          #0A0A0C;
+    --bg-1:        #121216;
+    --bg-2:        #1A1A20;
+    --bg-3:        #232329;
+
+    /* ── Border ── */
+    --border:       rgba(244, 240, 232, 0.09);
+    --border-strong:rgba(244, 240, 232, 0.16);
+
+    /* ── Text ── */
+    --text:         #F4F0E8;
+    --text-2:       #B6B4AE;
+    --text-3:       #7C7A75;
+
+    /* ── Brand ── */
+    --brand:        #36E6A0;
+    --brand-deep:   #0FAE73;
+    --brand-glow:   rgba(54, 230, 160, 0.15);
+
+    /* ── Status ── */
+    --warn:         #F6B860;
+    --danger:       #FF5D5D;
+
+    /* ── Radius ── */
+    --radius-sm:    8px;
+    --radius-md:    12px;
+    --radius-lg:    16px;
+    --radius-pill:  999px;
+
+    /* ── Spacing base ── */
+    --space:        4px;
+
+    /* ── Shadows ── */
+    --shadow-card:  0 1px 3px rgba(0,0,0,0.4), 0 4px 16px rgba(0,0,0,0.3);
+    --shadow-elevated: 0 2px 8px rgba(0,0,0,0.5), 0 8px 32px rgba(0,0,0,0.4);
+    --shadow-jade:  0 0 24px rgba(54, 230, 160, 0.18);
+
+    /* ── shadcn compatibility aliases ── */
+    --background:      var(--bg);
+    --foreground:      var(--text);
+    --card:            var(--bg-2);
+    --card-foreground: var(--text);
+    --popover:         var(--bg-2);
+    --popover-foreground: var(--text);
+    --primary:         var(--brand);
+    --primary-foreground: #0A0A0C;
+    --secondary:       var(--bg-3);
+    --secondary-foreground: var(--text-2);
+    --muted:           var(--bg-2);
+    --muted-foreground: var(--text-3);
+    --accent:          var(--bg-3);
+    --accent-foreground: var(--text);
+    --destructive:     var(--danger);
+    --destructive-foreground: var(--text);
+    --border-color:    var(--border);
+    --input:           var(--bg-3);
+    --ring:            var(--brand);
+    --radius:          var(--radius-md);
+  }
+
+  /* ── Light theme ── */
+  .light {
+    --bg:          #FAF8F4;
+    --bg-1:        #F3F1EC;
+    --bg-2:        #EEECE6;
+    --bg-3:        #E5E3DC;
+
+    --border:       rgba(30, 28, 22, 0.09);
+    --border-strong:rgba(30, 28, 22, 0.18);
+
+    --text:         #1C1A14;
+    --text-2:       #4A4842;
+    --text-3:       #8C8A84;
+
+    --brand:        #0FAE73;
+    --brand-deep:   #098A5A;
+    --brand-glow:   rgba(15, 174, 115, 0.12);
+
+    --warn:         #D4820A;
+    --danger:       #D93B3B;
+
+    --shadow-card:  0 1px 3px rgba(0,0,0,0.07), 0 4px 16px rgba(0,0,0,0.06);
+    --shadow-elevated: 0 2px 8px rgba(0,0,0,0.08), 0 8px 32px rgba(0,0,0,0.06);
+    --shadow-jade:  0 0 24px rgba(15, 174, 115, 0.12);
+
+    --background:      var(--bg);
+    --foreground:      var(--text);
+    --card:            var(--bg-2);
+    --card-foreground: var(--text);
+    --popover:         var(--bg-2);
+    --popover-foreground: var(--text);
+    --primary:         var(--brand);
+    --primary-foreground: #FAF8F4;
+    --secondary:       var(--bg-3);
+    --secondary-foreground: var(--text-2);
+    --muted:           var(--bg-2);
+    --muted-foreground: var(--text-3);
+    --accent:          var(--bg-3);
+    --accent-foreground: var(--text);
+    --destructive:     var(--danger);
+    --destructive-foreground: #FAF8F4;
+    --border-color:    var(--border);
+    --input:           var(--bg-3);
+    --ring:            var(--brand);
+  }
+}
+
+/* ── Base resets ── */
+@layer base {
+  * {
+    border-color: var(--border);
+    box-sizing: border-box;
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    background-color: var(--bg);
+    color: var(--text);
+    font-family: var(--font-hanken), system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  /* Tight display line heights */
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-bricolage), sans-serif;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+  }
+
+  /* Mono numbers — tabular */
+  .tabular, code, pre, [data-mono] {
+    font-family: var(--font-geist-mono), "JetBrains Mono", monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--bg-3); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+
+  /* Focus ring */
+  :focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  /* Selection */
+  ::selection {
+    background: var(--brand-glow);
+    color: var(--text);
+  }
+}
+
+/* ── Auth page — animated blob background + glassmorphism card ── */
+@keyframes blob-float-1 {
+  0%   { transform: translate(0, 0)    scale(1); }
+  33%  { transform: translate(60px, -40px) scale(1.08); }
+  66%  { transform: translate(-40px, 30px) scale(0.95); }
+  100% { transform: translate(0, 0)    scale(1); }
+}
+@keyframes blob-float-2 {
+  0%   { transform: translate(0, 0)    scale(1); }
+  33%  { transform: translate(-50px, 50px) scale(1.06); }
+  66%  { transform: translate(30px, -30px) scale(0.97); }
+  100% { transform: translate(0, 0)    scale(1); }
+}
+@keyframes auth-card-in {
+  from { opacity: 0; transform: scale(0.96) translateY(8px); }
+  to   { opacity: 1; transform: scale(1)    translateY(0); }
+}
+
+.auth-blob {
+  position: absolute;
+  border-radius: 50%;
+  will-change: transform;
+  filter: blur(80px);
+  opacity: 0.55;
+}
+.auth-blob-1 {
+  width: 700px;
+  height: 500px;
+  top: -10%;
+  left: -10%;
+  background: radial-gradient(ellipse, rgba(54, 230, 160, 0.28) 0%, transparent 70%);
+  animation: blob-float-1 20s ease-in-out infinite;
+}
+.auth-blob-2 {
+  width: 600px;
+  height: 600px;
+  bottom: -15%;
+  right: -5%;
+  background: radial-gradient(ellipse, rgba(26, 13, 46, 0.9) 0%, rgba(54, 230, 160, 0.12) 60%, transparent 80%);
+  animation: blob-float-2 25s ease-in-out infinite;
+}
+
+.auth-card {
+  background: rgba(20, 20, 24, 0.60);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(54, 230, 160, 0.12);
+  border-radius: var(--radius-lg);
+  padding: 2rem;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+  animation: auth-card-in 0.4s ease-out both;
+}
+
+/* ── Atmosphere utilities ── */
+@layer utilities {
+  /* Film grain overlay — attach to a ::before pseudo or wrapper */
+  .grain {
+    position: relative;
+    isolation: isolate;
+  }
+  .grain::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+    background-size: 200px 200px;
+    opacity: 0.03;
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  /* Radial jade glow — decorative background */
+  .jade-glow {
+    background: radial-gradient(
+      ellipse 60% 40% at 50% 0%,
+      rgba(54, 230, 160, 0.06) 0%,
+      transparent 70%
+    );
+  }
+
+  /* Jade text glow */
+  .text-glow-jade {
+    text-shadow: 0 0 20px rgba(54, 230, 160, 0.4);
+  }
+
+  /* Surface variants */
+  .surface     { background-color: var(--bg-1); }
+  .surface-2   { background-color: var(--bg-2); }
+  .surface-3   { background-color: var(--bg-3); }
+  .surface-card { background-color: var(--bg-2); border: 1px solid var(--border); box-shadow: var(--shadow-card); }
+  .surface-elevated { background-color: var(--bg-2); border: 1px solid var(--border-strong); box-shadow: var(--shadow-elevated); }
+
+  /* Hide scrollbar but keep scrollable */
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+}
