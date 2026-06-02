@@ -19,6 +19,9 @@ export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
   const next = searchParams.get("next") ?? "/";
+  // type=recovery is appended by login-form.tsx to the redirectTo URL so
+  // the callback can distinguish a password-reset flow from a normal sign-in.
+  const flowType = searchParams.get("type");
 
   if (!code) {
     return NextResponse.redirect(`${origin}/login?error=auth_callback_failed`);
@@ -77,6 +80,14 @@ export async function GET(request: NextRequest) {
   }
 
   // ── Redirect logic ────────────────────────────────────────────
+  // 0. Password recovery — ALWAYS go to the update form, never to dashboard.
+  //    This is the most important check: it must come before org provisioning
+  //    so a recovery flow never accidentally creates a new org.
+  if (flowType === "recovery") {
+    console.log("[auth/callback] recovery flow — redirecting to /reset/update");
+    return NextResponse.redirect(`${origin}/reset/update`);
+  }
+
   // 1. If we just provisioned a new org, go straight there
   if (resolvedOrgSlug) {
     return NextResponse.redirect(`${origin}/org/${resolvedOrgSlug}`);

@@ -1,141 +1,129 @@
 "use client";
 
 /**
- * /reset — Password reset page.
- * Supabase redirects here after the user clicks "Reset password" in their email.
- * The URL will contain #access_token=... which Supabase SDK handles automatically.
+ * /reset — Request a password reset email.
+ *
+ * This page ONLY handles the "enter your email" step.
+ * When the user clicks the link in the email they arrive at /auth/callback
+ * (which exchanges the PKCE code and detects type=recovery), and are then
+ * forwarded to /reset/update where they set the new password.
  */
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { useRouter } from "next/navigation";
 
-export default function ResetPasswordPage() {
+export default function ResetPage() {
   const supabase = createClient();
-  const router   = useRouter();
 
-  const [password,  setPassword]  = useState("");
-  const [confirm,   setConfirm]   = useState("");
-  const [loading,   setLoading]   = useState(false);
-  const [error,     setError]     = useState<string | null>(null);
-  const [success,   setSuccess]   = useState(false);
-  const [hasSession, setHasSession] = useState(false);
-
-  // Supabase fires SIGNED_IN with type=RECOVERY when the reset link is clicked
-  useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === "PASSWORD_RECOVERY") setHasSession(true);
-    });
-    // Also check if already signed in (direct navigation after clicking link)
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) setHasSession(true);
-    });
-    return () => subscription.unsubscribe();
-  }, []);
-
-  function passwordStrength(p: string): { label: string; color: string } {
-    if (p.length < 8) return { label: "Too short", color: "text-red-400" };
-    const hasLetter = /[a-zA-Z]/.test(p);
-    const hasNum    = /[0-9]/.test(p);
-    const hasSpec   = /[^a-zA-Z0-9]/.test(p);
-    if (hasLetter && hasNum && hasSpec && p.length >= 12) return { label: "Strong", color: "text-green-400" };
-    if (hasLetter && hasNum) return { label: "Medium", color: "text-amber-400" };
-    return { label: "Weak", color: "text-red-400" };
-  }
+  const [email,   setEmail]   = useState("");
+  const [loading, setLoading] = useState(false);
+  const [sent,    setSent]    = useState(false);
+  const [error,   setError]   = useState<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (password !== confirm) { setError("Passwords don't match."); return; }
-    if (password.length < 8) { setError("Password must be at least 8 characters."); return; }
-    if (!/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
-      setError("Password must contain at least one letter and one number.");
-      return;
-    }
     setLoading(true);
     setError(null);
-    const { error: err } = await supabase.auth.updateUser({ password });
+
+    const appUrl = window.location.origin;
+
+    // redirectTo must go through the server Route Handler (/auth/callback)
+    // so it can exchange the PKCE code. We tag it with type=recovery so the
+    // callback skips org-provisioning and forwards to /reset/update instead.
+    const { error: err } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${appUrl}/auth/callback?type=recovery`,
+    });
+
     setLoading(false);
-    if (err) { setError(err.message); return; }
-    setSuccess(true);
-    setTimeout(() => router.push("/"), 2000);
+    if (err) {
+      setError(err.message);
+    } else {
+      setSent(true);
+    }
   }
 
-  const strength = passwordStrength(password);
+  const inputCls =
+    "w-full rounded-md border border-[var(--border)] bg-[var(--bg-3)] px-3 py-2 text-sm " +
+    "text-[var(--text)] placeholder:text-[var(--text-3)] focus:outline-none focus:ring-1 focus:ring-[var(--brand)]";
 
-  if (!hasSession) {
+  if (sent) {
     return (
-      <main className="min-h-screen flex items-center justify-center p-4">
+      <main className="min-h-screen flex items-center justify-center p-4 bg-[#0A0A0C]">
         <div className="w-full max-w-sm space-y-4 text-center">
-          <h1 className="font-display text-2xl font-semibold">Reset your password</h1>
-          <p className="text-sm text-muted-foreground">
-            This link has expired or is invalid. Please request a new password reset from the login page.
+          <div className="text-4xl">✉️</div>
+          <h1 className="font-display text-2xl font-semibold text-[var(--text)]">
+            Check your inbox
+          </h1>
+          <p className="text-sm text-[var(--text-2)]">
+            We sent a password reset link to <strong>{email}</strong>.
+            Click it to set a new password — the link expires in 1 hour.
           </p>
-          <a href="/login" className="inline-block rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium">
-            Back to login
+          <p className="text-xs text-[var(--text-3)]">
+            Didn&apos;t receive it? Check your spam folder, or{" "}
+            <button
+              onClick={() => setSent(false)}
+              className="underline text-[var(--text-3)] hover:text-[var(--text)]"
+            >
+              try again
+            </button>
+            .
+          </p>
+          <a
+            href="/login"
+            className="inline-block text-sm text-[var(--brand)] hover:underline mt-2"
+          >
+            ← Back to login
           </a>
         </div>
       </main>
     );
   }
 
-  if (success) {
-    return (
-      <main className="min-h-screen flex items-center justify-center p-4">
-        <div className="w-full max-w-sm text-center space-y-3">
-          <div className="text-4xl">✓</div>
-          <h1 className="font-display text-xl font-semibold">Password updated!</h1>
-          <p className="text-sm text-muted-foreground">Redirecting to your dashboard…</p>
-        </div>
-      </main>
-    );
-  }
-
   return (
-    <main className="min-h-screen flex items-center justify-center p-4">
+    <main className="min-h-screen flex items-center justify-center p-4 bg-[#0A0A0C]">
       <div className="w-full max-w-sm space-y-6">
         <div className="space-y-1 text-center">
-          <h1 className="font-display text-2xl font-semibold tracking-tight">Set new password</h1>
-          <p className="text-sm text-muted-foreground">Choose a strong password for your account.</p>
+          <h1 className="font-display text-2xl font-semibold tracking-tight text-[var(--text)]">
+            Reset your password
+          </h1>
+          <p className="text-sm text-[var(--text-3)]">
+            Enter your account email and we&apos;ll send you a reset link.
+          </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1">
-            <label className="text-sm font-medium">New password <span className="text-[var(--brand)]">*</span></label>
+            <label htmlFor="reset-email" className="text-sm font-medium text-[var(--text)]">
+              Email <span className="text-[var(--brand)]">*</span>
+            </label>
             <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required minLength={8}
-              className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-            {password.length > 0 && (
-              <p className={`text-xs ${strength.color}`}>{strength.label}</p>
-            )}
-          </div>
-
-          <div className="space-y-1">
-            <label className="text-sm font-medium">Confirm password <span className="text-[var(--brand)]">*</span></label>
-            <input
-              type="password"
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
+              id="reset-email"
+              type="email"
               required
-              className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+              className={inputCls}
             />
-            {confirm.length > 0 && password !== confirm && (
-              <p className="text-xs text-red-400">Passwords don&apos;t match</p>
-            )}
           </div>
 
           {error && <p className="text-sm text-destructive">{error}</p>}
 
           <button
             type="submit"
-            disabled={loading || password.length < 8}
-            className="w-full rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-opacity"
+            disabled={loading || !email}
+            className="w-full rounded-md bg-[var(--brand)] text-[#0A0A0C] px-4 py-2.5 text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition-opacity"
           >
-            {loading ? "Updating…" : "Update password"}
+            {loading ? "Sending…" : "Send reset link"}
           </button>
+
+          <p className="text-center text-xs text-[var(--text-3)]">
+            Remember your password?{" "}
+            <a href="/login" className="text-[var(--brand)] hover:underline font-medium">
+              Sign in
+            </a>
+          </p>
         </form>
       </div>
     </main>

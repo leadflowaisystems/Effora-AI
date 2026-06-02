@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 type Tab = "password" | "magic" | "google";
+type SentReason = "magic" | "reset" | null;
 
 export function LoginForm() {
   const supabase = createClient();
@@ -17,8 +18,9 @@ export function LoginForm() {
   const [password,   setPassword]   = useState("");
   const [showPass,   setShowPass]   = useState(false);
   const [loading,    setLoading]    = useState(false);
-  const [sent,       setSent]       = useState(false);
+  const [sentReason, setSentReason] = useState<SentReason>(null);
   const [error,      setError]      = useState<string | null>(null);
+  const [errorCode,  setErrorCode]  = useState<string | null>(null);
 
   // ── Email/password sign in ────────────────────────────────────
   async function handlePassword(e: React.FormEvent) {
@@ -35,6 +37,7 @@ export function LoginForm() {
 
     if (!res.ok) {
       setError(data.error ?? "Sign in failed. Please check your credentials.");
+      setErrorCode(data.error_code ?? null);
       setLoading(false);
       return;
     }
@@ -44,40 +47,29 @@ export function LoginForm() {
     router.refresh();
   }
 
-  // ── Magic link — optimistic: show "check email" in 300ms, fire API in background ──
+  // ── Magic link ───────────────────────────────────────────────────────────────
+  // Await the API — don't show success until we know the email was actually sent.
   async function handleMagicLink(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError(null);
-
-    // Optimistically show success after 300ms so user perceives instant response
-    const optimisticTimer = setTimeout(() => { setSent(true); setLoading(false); }, 300);
-
-    const controller = new AbortController();
-    const timeoutId  = setTimeout(() => controller.abort(), 5000);
 
     try {
       const res  = await fetch("/api/auth/magic-link", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({ email, redirectTo: `${location.origin}/auth/callback` }),
-        signal:  controller.signal,
       });
-      clearTimeout(optimisticTimer);
-      clearTimeout(timeoutId);
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setSent(false);
-        setLoading(false);
         setError(data.error ?? "Could not send magic link. Please try email/password instead.");
       } else {
-        setSent(true);
-        setLoading(false);
+        setSentReason("magic");
       }
     } catch {
-      clearTimeout(optimisticTimer);
-      clearTimeout(timeoutId);
-      // If network error after optimistic, leave the "check email" state — email may still arrive
+      setError("Network error. Please check your connection and try again.");
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -93,32 +85,43 @@ export function LoginForm() {
   }
 
   // ── Forgot password ───────────────────────────────────────────
+  // redirectTo must go through /auth/callback so the server Route Handler
+  // can exchange the PKCE code, then forward to /reset/update.
+  // We include type=recovery so the callback knows NOT to provision an org
+  // or redirect to the dashboard — it should redirect to the update form.
   async function handleForgotPassword() {
-    if (!email) { setError("Enter your email first."); return; }
+    if (!email) { setError("Enter your email address first."); return; }
     setLoading(true);
     setError(null);
     const { error: err } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${location.origin}/reset`,
+      redirectTo: `${location.origin}/auth/callback?type=recovery`,
     });
     setLoading(false);
     if (err) { setError(err.message); }
-    else      { setError(null); setSent(true); }
+    else      { setError(null); setSentReason("reset"); }
   }
 
   const inputCls = "w-full rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-3)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-3)] focus:outline-none focus:ring-1 focus:ring-[var(--brand)]";
   const btnCls   = "w-full rounded-[var(--radius-sm)] bg-[var(--brand)] text-[#0A0A0C] px-4 py-2.5 text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition-opacity";
 
-  // Magic link sent confirmation
-  if (sent) {
+  // Email sent confirmation screen
+  if (sentReason) {
     return (
       <div className="rounded-lg border p-4 text-sm text-center space-y-2">
         <p className="font-semibold text-base">Check your inbox ✓</p>
-        {tab === "magic"
-          ? <p className="text-muted-foreground">We sent a sign-in link to <strong>{email}</strong>.</p>
-          : <p className="text-muted-foreground">We sent a password reset link to <strong>{email}</strong>.</p>
-        }
+        {sentReason === "magic" && (
+          <p className="text-muted-foreground">
+            We sent a sign-in link to <strong>{email}</strong>. It expires in 1 hour.
+          </p>
+        )}
+        {sentReason === "reset" && (
+          <p className="text-muted-foreground">
+            We sent a password reset link to <strong>{email}</strong>.
+            Click it to set a new password — don&apos;t close that tab.
+          </p>
+        )}
         <button
-          onClick={() => { setSent(false); setError(null); }}
+          onClick={() => { setSentReason(null); setError(null); setErrorCode(null); }}
           className="text-xs text-primary underline underline-offset-2 mt-1"
         >
           ← Back to login
@@ -134,7 +137,7 @@ export function LoginForm() {
         {(["password", "magic", "google"] as Tab[]).map((t) => (
           <button
             key={t}
-            onClick={() => { setTab(t); setError(null); setSent(false); }}
+            onClick={() => { setTab(t); setError(null); setErrorCode(null); setSentReason(null); }}
             className={`flex-1 py-2 text-xs font-medium transition-colors ${
               tab === t
                 ? "bg-[var(--brand)] text-[#0A0A0C]"
@@ -175,7 +178,31 @@ export function LoginForm() {
               </button>
             </div>
           </div>
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && (
+            <div className="space-y-1">
+              <p className="text-sm text-destructive">{error}</p>
+              {errorCode === "email_not_confirmed" && (
+                <p className="text-xs text-muted-foreground">
+                  Didn&apos;t get the email?{" "}
+                  <button
+                    type="button"
+                    className="underline hover:text-foreground"
+                    onClick={async () => {
+                      setLoading(true);
+                      const { error: err } = await supabase.auth.resend({
+                        type: "signup", email,
+                      });
+                      setLoading(false);
+                      if (err) setError(err.message);
+                      else { setError(null); setErrorCode(null); setSentReason("magic"); }
+                    }}
+                  >
+                    Resend confirmation email
+                  </button>
+                </p>
+              )}
+            </div>
+          )}
           <button type="submit" disabled={loading} className={btnCls}>
             {loading ? "Signing in…" : "Sign in"}
           </button>

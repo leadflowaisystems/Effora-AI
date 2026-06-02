@@ -14,7 +14,12 @@ const CHANGELOG = [
   { date: "May 28", text: "Platform Meta credentials admin UI — configure once, works for all orgs" },
 ];
 
-export default function LoginPage() {
+export default function LoginPage({
+  searchParams,
+}: {
+  searchParams?: Record<string, string | string[] | undefined>;
+}) {
+  const message = typeof searchParams?.message === "string" ? searchParams.message : null;
   return (
     <main className="relative min-h-screen flex overflow-hidden bg-[#0A0A0C]">
       {/* Animated gradient blobs */}
@@ -77,6 +82,11 @@ export default function LoginPage() {
               <span className="font-display font-bold text-base text-[var(--text)]">Effora AI</span>
             </div>
             <h2 className="font-display text-2xl font-semibold text-[var(--text)]">Log in to Effora AI</h2>
+            {message === "password_updated" && (
+              <div className="rounded-md bg-green-500/10 border border-green-500/20 px-3 py-2 text-sm text-green-400">
+                ✓ Password updated — sign in with your new password
+              </div>
+            )}
             <p className="text-sm text-[var(--text-3)]">
               Don&apos;t have an account?{" "}
               <a href="/signup" className="text-[var(--brand)] hover:underline font-medium">Create one free →</a>

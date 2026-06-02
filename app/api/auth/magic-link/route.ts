@@ -82,34 +82,46 @@ export async function POST(req: NextRequest) {
   }
 
   const actionLink = linkData.properties.action_link;
-  console.log(`[magic-link] action_link ready, firing email async (total so far: ${Date.now() - t0}ms)`);
+  console.log(`[magic-link] action_link ready, sending email (total so far: ${Date.now() - t0}ms)`);
 
-  // Fire email in background — do NOT await. Return 200 immediately.
-  // Brevo SMTP delivery is async; user already has the link queued server-side.
-  void sendEmail({
-    to:       email,
-    subject:  "Sign in to Effora AI",
-    template: "magic_link",
-    html: `
-      <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
-        <h2 style="font-size:20px;font-weight:700;margin-bottom:8px">Sign in to Effora AI</h2>
-        <p style="color:#555;margin-bottom:24px">Click the button below to sign in. This link expires in 1 hour.</p>
-        <a href="${actionLink}"
-           style="display:inline-block;background:#C1F15C;color:#0A0A0C;padding:12px 28px;border-radius:8px;font-weight:700;text-decoration:none;font-size:15px">
-          Sign in to Effora AI →
-        </a>
-        <p style="color:#999;font-size:12px;margin-top:32px">
-          Or copy this link:<br/>
-          <a href="${actionLink}" style="color:#888;word-break:break-all">${actionLink}</a>
-        </p>
-        <p style="color:#ccc;font-size:11px;margin-top:16px">
-          If you didn't request this, you can safely ignore this email.
-        </p>
-      </div>
-    `,
-  }).then(() => console.log("[magic-link] email sent to:", email))
-    .catch((e) => console.error("[magic-link] Brevo send failed (non-fatal):", e));
+  // Await the send so we can surface errors to the user instead of silently
+  // failing. A 5-second SMTP timeout is generous enough for Brevo.
+  try {
+    await sendEmail({
+      to:       email,
+      subject:  "Sign in to Effora AI",
+      template: "magic_link",
+      html: `
+        <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
+          <h2 style="font-size:20px;font-weight:700;margin-bottom:8px">Sign in to Effora AI</h2>
+          <p style="color:#555;margin-bottom:24px">Click the button below to sign in. This link expires in 1 hour.</p>
+          <a href="${actionLink}"
+             style="display:inline-block;background:#C1F15C;color:#0A0A0C;padding:12px 28px;border-radius:8px;font-weight:700;text-decoration:none;font-size:15px">
+            Sign in to Effora AI →
+          </a>
+          <p style="color:#999;font-size:12px;margin-top:32px">
+            Or copy this link:<br/>
+            <a href="${actionLink}" style="color:#888;word-break:break-all">${actionLink}</a>
+          </p>
+          <p style="color:#ccc;font-size:11px;margin-top:16px">
+            If you didn&apos;t request this, you can safely ignore this email.
+          </p>
+        </div>
+      `,
+    });
+    console.log(`[magic-link] email sent to: ${email} (total: ${Date.now() - t0}ms)`);
+  } catch (emailErr) {
+    console.error("[magic-link] Brevo send FAILED:", emailErr);
+    // Surface the error — the user needs to know email didn't go through
+    return NextResponse.json(
+      {
+        error: "Could not deliver the magic link email. " +
+               "Please check your email address or use Email/Password sign-in instead. " +
+               `(SMTP error: ${emailErr instanceof Error ? emailErr.message : String(emailErr)})`,
+      },
+      { status: 500 }
+    );
+  }
 
-  console.log(`[magic-link] returning 200 at ${Date.now() - t0}ms`);
   return NextResponse.json({ ok: true });
 }
