@@ -3,9 +3,14 @@
  * Create account with email + password.
  *
  * Supabase sends the confirmation email via its own configured SMTP (Brevo in dashboard).
- * We do NOT call lib/email.ts here — that avoids any dependency on our BREVO_SMTP_* env vars.
+ * We do NOT call lib/email.ts here.
  *
  * Rate limit: 10 signups per IP per hour.
+ *
+ * Three success states from supabase.auth.signUp():
+ *  1. data.session present      → email confirmations OFF → user is logged in now
+ *  2. data.user.identities = [] → email already registered (Supabase fake-user pattern)
+ *  3. data.user, no session     → email confirmations ON  → user must check inbox
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -28,7 +33,6 @@ const Schema = z.object({
 export async function POST(req: NextRequest) {
   const ip = getIp(req);
 
-  // Raised from 3 → 10 per hour (previous limit was too aggressive for normal users)
   const rl = await rateLimitAsync(`signup:${ip}`, { limit: 10, windowMs: 60 * 60_000 });
   if (!rl.allowed) {
     return NextResponse.json({ error: "Too many signup attempts. Try again in 1 hour." }, { status: 429 });
@@ -43,10 +47,7 @@ export async function POST(req: NextRequest) {
   const { email, password } = parsed.data;
 
   if (isDisposableEmail(email)) {
-    return NextResponse.json(
-      { error: "Please use a permanent email address." },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Please use a permanent email address." }, { status: 400 });
   }
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai-qh35.vercel.app";
@@ -65,56 +66,75 @@ export async function POST(req: NextRequest) {
     }
   );
 
-  // Supabase sends the confirmation email via its own configured SMTP.
-  // emailRedirectTo becomes the ?next= after /auth/confirm verifies.
+  // emailRedirectTo becomes the ?next= param in the Supabase confirmation email link.
+  // Must be a URL in your Supabase project's "Redirect URLs" allowlist.
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
     options: {
-      emailRedirectTo: `${appUrl}/`,   // post-confirm destination (dashboard root)
+      emailRedirectTo: `${appUrl}/auth/confirm?next=/onboarding`,
     },
   });
 
   void logAudit(createServiceClient(), null, data?.user?.id ?? null, "auth.signup", {
     email_domain: email.split("@")[1],
     ip,
-    method:  "email_password",
-    success: !error,
+    method:     "email_password",
+    success:    !error,
     error_code: error?.code,
   });
 
   if (error) {
-    console.error("[signup-password]", error.message, "| code:", error?.code);
+    console.error("[signup-password] Supabase error:", error.message, "| code:", error?.code);
 
-    const msg = error.message ?? "";
-    const msgLower = msg.toLowerCase();
-
+    const msgLower = (error.message ?? "").toLowerCase();
     let clientMsg: string;
     let status = 400;
 
     if (msgLower.includes("already registered") || msgLower.includes("already exists") || error.code === "user_already_exists") {
-      clientMsg = "An account with this email already exists. Please sign in instead.";
+      clientMsg = "This email is already registered. Try logging in instead.";
+      status = 409;
     } else if (msgLower.includes("rate") || error.status === 429) {
-      clientMsg = "Too many sign-up emails sent — Supabase allows 4 confirmation emails/hour on the free tier. " +
-                  "Wait a few minutes and try again.";
+      clientMsg = "Too many sign-up emails sent. Supabase allows 4 confirmation emails/hour on the free tier. Wait a few minutes and try again.";
       status = 429;
     } else {
-      clientMsg = msg;
+      clientMsg = error.message;
     }
 
     return NextResponse.json({ error: clientMsg }, { status });
   }
 
-  // Build response and stamp any cookies Supabase set (e.g. if email confirm is disabled
-  // and a session was created immediately)
-  const requiresConfirm = !data?.session;
-  const response = NextResponse.json({
-    ok:                     true,
-    user_id:                data?.user?.id,
-    requires_email_confirm: requiresConfirm,
-  });
+  // Guard: signUp() should always return a user on success, but be defensive
+  if (!data.user) {
+    console.error("[signup-password] no user returned and no error — unexpected Supabase state");
+    return NextResponse.json({ error: "Signup failed — please try again." }, { status: 500 });
+  }
+
+  // ── Supabase "fake user" pattern: email already exists ─────────────────────
+  // When the email is already registered, Supabase returns error=null and a
+  // fake user object with identities=[] to prevent email enumeration.
+  // We must check this explicitly — it will never have a session.
+  if (data.user.identities && data.user.identities.length === 0) {
+    console.log("[signup-password] identities=[] — email already registered:", email.split("@")[1]);
+    return NextResponse.json(
+      { error: "This email is already registered. Try logging in instead." },
+      { status: 409 }
+    );
+  }
+
+  // ── Build response and stamp cookies ───────────────────────────────────────
+  const response = NextResponse.json(
+    data.session
+      ? // Email confirmations OFF in Supabase — user is immediately logged in
+        { success: true, needsConfirmation: false, message: "Account created. Redirecting…" }
+      : // Email confirmations ON — user must verify their inbox
+        { success: true, needsConfirmation: true,  message: "Check your email to confirm your account." }
+  );
+
   pendingCookies.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
 
-  console.log(`[signup-password] user created for ${email.split("@")[1]} | requiresConfirm: ${requiresConfirm}`);
+  console.log(
+    `[signup-password] created user for ${email.split("@")[1]} | session:${!!data.session} needsConfirmation:${!data.session}`
+  );
   return response;
 }

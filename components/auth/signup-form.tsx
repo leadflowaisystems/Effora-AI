@@ -25,14 +25,16 @@ export function SignupForm() {
   const [confirm,  setConfirm]  = useState("");
   const [loading,  setLoading]  = useState(false);
   const [error,    setError]    = useState<string | null>(null);
-  const [done,     setDone]     = useState<"confirm" | "in" | null>(null);
+  // "confirm" = waiting for email confirmation
+  // "in"      = already logged in (confirmations disabled)
+  const [done, setDone] = useState<"confirm" | "in" | null>(null);
 
   const strength = passwordStrength(password);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (password !== confirm) { setError("Passwords don't match."); return; }
-    if (strength.level === 0) { setError("Password must be at least 8 characters."); return; }
+    if (password !== confirm)                           { setError("Passwords don't match."); return; }
+    if (strength.level === 0)                           { setError("Password must be at least 8 characters."); return; }
     if (!/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
       setError("Password must contain at least one letter and one number.");
       return;
@@ -48,31 +50,67 @@ export function SignupForm() {
     });
     const data = await res.json().catch(() => ({}));
 
-    if (!res.ok) { setLoading(false); setError(data.error ?? "Signup failed."); return; }
+    setLoading(false);
 
-    if (data.requires_email_confirm) {
-      setLoading(false);
+    if (!res.ok) {
+      // 409 = already registered — direct the user to login instead
+      if (res.status === 409) {
+        setError(
+          data.error ??
+          "This email is already registered. Please sign in instead."
+        );
+      } else {
+        setError(data.error ?? "Signup failed. Please try again.");
+      }
+      return;
+    }
+
+    // API signals whether email confirmation is required
+    if (data.needsConfirmation) {
       setDone("confirm");
     } else {
-      // Immediately push — loading spinner stays briefly, dashboard streams in fast
-      router.push("/");
+      // Confirmations are OFF — user has an active session, push to onboarding
+      router.push("/onboarding");
       router.refresh();
     }
   }
 
-  const inputCls = "w-full rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-3)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-3)] focus:outline-none focus:ring-1 focus:ring-[var(--brand)]";
+  const inputCls =
+    "w-full rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-3)] px-3 py-2 text-sm " +
+    "text-[var(--text)] placeholder:text-[var(--text-3)] focus:outline-none focus:ring-1 focus:ring-[var(--brand)]";
 
+  // ── "Check your inbox" screen ────────────────────────────────────────────────
   if (done === "confirm") {
     return (
-      <div className="rounded-lg border p-4 text-center space-y-2">
-        <p className="font-semibold">Check your inbox ✓</p>
-        <p className="text-sm text-muted-foreground">
-          We sent a confirmation link to <strong>{email}</strong>. Click it to activate your account.
+      <div className="rounded-lg border border-[var(--border)] p-5 text-center space-y-3">
+        <div className="text-3xl">✉️</div>
+        <p className="font-semibold text-[var(--text)]">Check your inbox</p>
+        <p className="text-sm text-[var(--text-2)]">
+          We sent a confirmation link to <strong>{email}</strong>.
+          Click it to activate your account — it expires in 24 hours.
         </p>
+        <p className="text-xs text-[var(--text-3)]">
+          No email?{" "}
+          <button
+            type="button"
+            className="underline hover:text-[var(--text-2)]"
+            onClick={() => { setDone(null); setError(null); }}
+          >
+            Try signing up again
+          </button>{" "}
+          or check your spam folder.
+        </p>
+        <Link
+          href="/login"
+          className="inline-block text-xs text-[var(--brand)] hover:underline mt-1"
+        >
+          Already confirmed? Sign in →
+        </Link>
       </div>
     );
   }
 
+  // ── Signup form ──────────────────────────────────────────────────────────────
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="space-y-1">
@@ -98,8 +136,13 @@ export function SignupForm() {
         {password.length > 0 && (
           <div className="space-y-1 pt-1">
             <div className="flex gap-1">
-              {[1,2,3].map((i) => (
-                <div key={i} className={`h-1 flex-1 rounded-full transition-colors ${i <= strength.level ? STRENGTH_COLOR[strength.level] : "bg-muted"}`} />
+              {[1, 2, 3].map((i) => (
+                <div
+                  key={i}
+                  className={`h-1 flex-1 rounded-full transition-colors ${
+                    i <= strength.level ? STRENGTH_COLOR[strength.level] : "bg-muted"
+                  }`}
+                />
               ))}
             </div>
             <p className={`text-xs ${STRENGTH_TEXT[strength.level]}`}>{strength.label}</p>
@@ -121,7 +164,19 @@ export function SignupForm() {
         )}
       </div>
 
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && (
+        <div className="space-y-1">
+          <p className="text-sm text-destructive">{error}</p>
+          {/* If already registered, surface a direct login link */}
+          {(error.includes("already registered") || error.includes("already exists")) && (
+            <p className="text-xs text-[var(--text-3)]">
+              <Link href="/login" className="underline hover:text-[var(--text-2)]">
+                Go to login →
+              </Link>
+            </p>
+          )}
+        </div>
+      )}
 
       <button
         type="submit"
