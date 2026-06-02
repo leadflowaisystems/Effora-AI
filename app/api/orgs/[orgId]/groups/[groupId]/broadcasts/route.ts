@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { z } from "zod";
 import { getPlanLimits, isAtLimit } from "@/lib/plan";
+import { inngest } from "@/lib/inngest/client";
 
 interface Params { params: { orgId: string; groupId: string } }
 
@@ -105,8 +106,23 @@ export async function POST(req: NextRequest, { params }: Params) {
   }));
   await svc.from("broadcast_deliveries").insert(deliveries);
 
-  // TODO: Trigger Inngest job to process this broadcast sequentially
-  // await inngest.send({ name: "broadcast/process", data: { broadcast_id: bcast.id, org_id: params.orgId } });
+  // Fire Inngest event to process the broadcast (actual message delivery)
+  // If send_at is in the future, the event carries it so Inngest can delay processing.
+  const isScheduled = sendAt > new Date();
+  if (!isScheduled) {
+    // Send now — fire immediately
+    await inngest.send({
+      name: "broadcast.queued",
+      data: { broadcast_id: bcast.id, org_id: params.orgId },
+    });
+  } else {
+    // Schedule — fire at send_at (Inngest handles the delay via event timestamp)
+    await inngest.send({
+      name: "broadcast.queued",
+      data: { broadcast_id: bcast.id, org_id: params.orgId },
+      ts:   sendAt.getTime(),
+    });
+  }
 
   return NextResponse.json({ broadcast: bcast, recipient_count: memberList.length }, { status: 201 });
 }

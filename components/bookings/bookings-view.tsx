@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { BookingCard, type BookingRow } from "./booking-card";
 import { SimulateBookingSheet, type SimulateLead } from "./simulate-booking-sheet";
-import { ManualBookingSheet } from "./manual-booking-sheet";
+import { ManualBookingSheet, type ManualBookingGroup } from "./manual-booking-sheet";
 import { TimeRangeFilter, readStoredFilter } from "@/components/filters/time-range-filter";
 import { SubCategoryTabs } from "@/components/filters/sub-category-tabs";
 import { parseRange, getRangeBounds, getFutureBounds, isInRange, isInFutureRange, type Range } from "@/lib/range";
@@ -31,6 +31,7 @@ interface Props {
   orgId:           string;
   isDev:           boolean;
   leads:           SimulateLead[];
+  groups?:         ManualBookingGroup[];
 }
 
 interface BookingStats {
@@ -137,7 +138,7 @@ function CollapsibleRows({ rows, orgSlug, orgId, onUpdate, onDelete }: {
   );
 }
 
-export function BookingsView({ initialBookings, orgSlug, orgId, isDev, leads }: Props) {
+export function BookingsView({ initialBookings, orgSlug, orgId, isDev, leads, groups = [] }: Props) {
   const router       = useRouter();
   const pathname     = usePathname();
   const searchParams = useSearchParams();
@@ -234,7 +235,7 @@ export function BookingsView({ initialBookings, orgSlug, orgId, isDev, leads }: 
 
   const devBar = (
     <div className="flex flex-wrap items-center gap-2">
-      <ManualBookingSheet orgId={orgId} leads={leads} onDone={handleUpdate} />
+      <ManualBookingSheet orgId={orgId} leads={leads} groups={groups} onDone={handleUpdate} />
       {isDev && (
         <div className="flex items-center gap-2 rounded-[var(--radius-sm)] border border-dashed border-amber-500/20 bg-amber-500/5 px-3 py-1.5">
           <span className="text-[11px] text-amber-500/70 font-mono uppercase tracking-wide">dev</span>

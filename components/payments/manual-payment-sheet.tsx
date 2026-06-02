@@ -1,15 +1,17 @@
 "use client";
 
 import * as React from "react";
-import { PlusCircle, Loader2, X } from "lucide-react";
+import { PlusCircle, Loader2, X, Users, AlertTriangle } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
 
-export interface ManualPaymentLead { id: string; name: string | null; channel: string }
+export interface ManualPaymentLead  { id: string; name: string | null; channel: string }
+export interface ManualPaymentGroup { id: string; name: string; tag: string; channel: string; member_count: number }
 
 interface Props {
   orgId:  string;
   leads:  ManualPaymentLead[];
+  groups?: ManualPaymentGroup[];
   onDone: () => void;
 }
 
@@ -20,36 +22,57 @@ const METHODS = [
   { value: "other",         label: "Other"         },
 ] as const;
 
-export function ManualPaymentSheet({ orgId, leads, onDone }: Props) {
-  const [open,        setOpen]       = React.useState(false);
-  const [leadId,      setLeadId]     = React.useState("");
-  const [amount,      setAmount]     = React.useState("");
-  const [method,      setMethod]     = React.useState<"upi"|"bank_transfer"|"cash"|"other">("upi");
-  const [receivedAt,  setReceivedAt] = React.useState(new Date().toISOString().slice(0, 10));
-  const [description, setDescription]= React.useState("");
-  const [saving,      setSaving]     = React.useState(false);
+export function ManualPaymentSheet({ orgId, leads, groups = [], onDone }: Props) {
+  const [open,         setOpen]        = React.useState(false);
+  const [recipientVal, setRecipientVal] = React.useState(""); // "lead:ID" or "group:ID"
+  const [amount,       setAmount]      = React.useState("");
+  const [method,       setMethod]      = React.useState<"upi"|"bank_transfer"|"cash"|"other">("upi");
+  const [receivedAt,   setReceivedAt]  = React.useState(new Date().toISOString().slice(0, 10));
+  const [description,  setDescription] = React.useState("");
+  const [saving,       setSaving]      = React.useState(false);
+
+  const selectedGroup = recipientVal.startsWith("group:") ? groups.find((g) => g.id === recipientVal.slice(6)) : null;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!leadId || !amount) return;
+    if (!recipientVal || !amount) return;
     setSaving(true);
     try {
-      const res = await fetch(`/api/orgs/${orgId}/payments/manual`, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({
-          lead_id:        leadId,
-          amount_inr:     Number(amount),
-          payment_method: method,
-          received_at:    new Date(receivedAt).toISOString(),
-          description:    description || undefined,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed");
-      toast({ title: "Payment recorded", description: "Lead marked as Won.", variant: "success" });
+      if (selectedGroup) {
+        // Group payment — fan-out to all members
+        const res = await fetch(`/api/orgs/${orgId}/payments/group`, {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({
+            group_id:       selectedGroup.id,
+            amount_inr:     Number(amount),
+            payment_method: method,
+            received_at:    new Date(receivedAt).toISOString(),
+            description:    description || undefined,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "Failed");
+        toast({ title: `${data.count} payment records created`, description: `One per member of "${selectedGroup.name}".`, variant: "success" });
+      } else {
+        const leadId = recipientVal.replace("lead:", "");
+        const res = await fetch(`/api/orgs/${orgId}/payments/manual`, {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({
+            lead_id:        leadId,
+            amount_inr:     Number(amount),
+            payment_method: method,
+            received_at:    new Date(receivedAt).toISOString(),
+            description:    description || undefined,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "Failed");
+        toast({ title: "Payment recorded", description: "Lead marked as Won.", variant: "success" });
+      }
       setOpen(false);
-      setLeadId(""); setAmount(""); setMethod("upi"); setDescription("");
+      setRecipientVal(""); setAmount(""); setMethod("upi"); setDescription("");
       onDone();
     } catch (err) {
       toast({ title: "Error", description: err instanceof Error ? err.message : "Something went wrong", variant: "destructive" });
@@ -75,7 +98,7 @@ export function ManualPaymentSheet({ orgId, leads, onDone }: Props) {
           <div className="absolute inset-0 bg-black/50" />
           <form
             onSubmit={submit}
-            className="relative z-10 w-full max-w-sm bg-[var(--bg-1)] border border-[var(--border)] rounded-t-2xl sm:rounded-2xl p-6 space-y-4"
+            className="relative z-10 w-full max-w-sm bg-[var(--bg-1)] border border-[var(--border)] rounded-t-2xl sm:rounded-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">
@@ -85,12 +108,32 @@ export function ManualPaymentSheet({ orgId, leads, onDone }: Props) {
 
             <div className="space-y-3">
               <div className="space-y-1">
-                <label className="text-xs font-medium text-[var(--text-2)]">Lead <span className="text-[var(--brand)]">*</span></label>
-                <select value={leadId} onChange={(e) => setLeadId(e.target.value)} required className={inputCls}>
-                  <option value="">Select a lead…</option>
-                  {leads.map((l) => <option key={l.id} value={l.id}>{l.name ?? "Unnamed"} ({l.channel})</option>)}
+                <label className="text-xs font-medium text-[var(--text-2)]">Lead or Group <span className="text-[var(--brand)]">*</span></label>
+                <select value={recipientVal} onChange={(e) => setRecipientVal(e.target.value)} required className={inputCls}>
+                  <option value="">Select lead or group…</option>
+                  {leads.length > 0 && (
+                    <optgroup label="Individual leads">
+                      {leads.map((l) => <option key={l.id} value={`lead:${l.id}`}>{l.name ?? "Unnamed"} ({l.channel})</option>)}
+                    </optgroup>
+                  )}
+                  {groups.length > 0 && (
+                    <optgroup label="Groups (creates one payment per member)">
+                      {groups.map((g) => <option key={g.id} value={`group:${g.id}`}>Group: {g.name} · {g.member_count} members</option>)}
+                    </optgroup>
+                  )}
                 </select>
               </div>
+
+              {/* Group fan-out preview */}
+              {selectedGroup && (
+                <div className="flex items-start gap-2 rounded-[var(--radius-sm)] border border-amber-500/20 bg-amber-500/5 px-3 py-2">
+                  <Users className="h-3.5 w-3.5 text-amber-400 shrink-0 mt-0.5" />
+                  <div className="text-xs text-amber-400/90 leading-relaxed">
+                    <p className="font-medium">Group payment</p>
+                    <p>This will create <strong>{selectedGroup.member_count}</strong> payment records — one per member of &ldquo;{selectedGroup.name}&rdquo;. Each member gets a ₹{amount || "—"} payment entry.</p>
+                  </div>
+                </div>
+              )}
 
               <div className="space-y-1">
                 <label className="text-xs font-medium text-[var(--text-2)]">Amount (₹) <span className="text-[var(--brand)]">*</span></label>
@@ -113,14 +156,21 @@ export function ManualPaymentSheet({ orgId, leads, onDone }: Props) {
                 <label className="text-xs font-medium text-[var(--text-2)]">Description <span className="text-[var(--text-3)] text-[11px]">(optional)</span></label>
                 <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="3-month coaching program" className={inputCls} />
               </div>
+
+              {selectedGroup && (
+                <div className="flex items-start gap-1.5 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-3)] px-2.5 py-2">
+                  <AlertTriangle className="h-3 w-3 text-[var(--text-3)] shrink-0 mt-0.5" />
+                  <p className="text-[10px] text-[var(--text-3)]">By confirming, you state all group members have consented to receive payment requests from you.</p>
+                </div>
+              )}
             </div>
 
             <div className="flex gap-3 pt-1">
               <button type="button" onClick={() => setOpen(false)} className="flex-1 rounded-[var(--radius)] border border-[var(--border)] py-2.5 text-sm text-[var(--text-2)] hover:bg-[var(--bg-3)] transition-colors">Cancel</button>
-              <button type="submit" disabled={saving || !leadId || !amount}
+              <button type="submit" disabled={saving || !recipientVal || !amount}
                 className="flex-1 rounded-[var(--radius)] bg-[var(--brand)] py-2.5 text-sm font-semibold text-[#0A0A0C] hover:opacity-90 disabled:opacity-50 transition-opacity flex items-center justify-center gap-2">
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                {saving ? "Saving…" : "Record payment"}
+                {saving ? "Saving…" : selectedGroup ? `Record for ${selectedGroup.member_count} members` : "Record payment"}
               </button>
             </div>
           </form>

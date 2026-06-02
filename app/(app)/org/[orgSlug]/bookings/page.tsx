@@ -36,8 +36,9 @@ export default async function BookingsPage({ params }: Props) {
 
   const svc = createServiceClient();
 
-  // Fetch bookings + leads for the simulate picker in parallel
-  const [bookingRes, leadRes] = await Promise.all([
+  // Fetch bookings + leads + groups in parallel
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [bookingRes, leadRes, groupRes] = await Promise.all([
     svc
       .from("bookings")
       .select(`
@@ -56,6 +57,13 @@ export default async function BookingsPage({ params }: Props) {
       .eq("org_id", org.id)
       .order("created_at", { ascending: false })
       .limit(100),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (svc as any)
+      .from("lead_groups")
+      .select("id, name, tag")
+      .eq("org_id", org.id)
+      .is("deleted_at", null)
+      .order("name"),
   ]);
 
   const bookings: BookingRow[] = (bookingRes.data ?? []).map((r) => ({
@@ -86,6 +94,20 @@ export default async function BookingsPage({ params }: Props) {
     channel: l.channel,
   }));
 
+  // Get member counts for groups
+  const rawGroups = (groupRes?.data ?? []) as Array<{ id: string; name: string; tag: string }>;
+  const groupIds  = rawGroups.map((g) => g.id);
+  const memberCounts: Record<string, number> = {};
+  if (groupIds.length > 0) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: mc } = await (svc as any).from("lead_group_members").select("group_id")
+      .in("group_id", groupIds);
+    for (const row of (mc ?? []) as Array<{ group_id: string }>) {
+      memberCounts[row.group_id] = (memberCounts[row.group_id] ?? 0) + 1;
+    }
+  }
+  const bookingGroups = rawGroups.map((g) => ({ ...g, member_count: memberCounts[g.id] ?? 0 }));
+
   const totalUpcoming = bookings.filter(
     (b) => b.status === "confirmed" && b.starts_at && new Date(b.starts_at) > new Date()
   ).length;
@@ -115,6 +137,7 @@ export default async function BookingsPage({ params }: Props) {
         orgId={org.id}
         isDev={isDev}
         leads={leads}
+        groups={bookingGroups}
       />
     </div>
   );

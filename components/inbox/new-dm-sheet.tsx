@@ -2,7 +2,8 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Send } from "lucide-react";
+import { Loader2, Send, UsersRound } from "lucide-react";
+import Link from "next/link";
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
 } from "@/components/ui/sheet";
@@ -65,6 +66,15 @@ export function NewDmSheet({ open, onOpenChange, orgId, orgSlug }: Props) {
           <SheetDescription>
             Sends a manual test message through the AI pipeline — qualify, score, and draft a reply.
           </SheetDescription>
+          {/* Group broadcast shortcut */}
+          <Link
+            href={`/org/${orgSlug}/groups`}
+            onClick={() => onOpenChange(false)}
+            className="mt-2 flex items-center gap-2 rounded-[var(--radius)] border border-[var(--brand)]/20 bg-[var(--brand)]/5 px-3 py-2 text-xs text-[var(--brand)] hover:bg-[var(--brand)]/10 transition-colors"
+          >
+            <UsersRound className="h-3.5 w-3.5 shrink-0" />
+            Want to message multiple leads at once? Go to Groups →
+          </Link>
         </SheetHeader>
 
         {/* Scrollable body */}

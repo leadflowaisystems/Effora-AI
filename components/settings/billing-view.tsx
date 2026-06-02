@@ -1,10 +1,18 @@
 ﻿"use client";
 
 import * as React from "react";
-import { CreditCard, Zap, AlertTriangle } from "lucide-react";
+import { CreditCard, Zap, AlertTriangle, Users, MessageSquare, UsersRound } from "lucide-react";
 import { PricingCards } from "@/components/marketing/pricing-cards";
-import { getPlanLimits, isTrialExpired, PLAN_NAMES } from "@/lib/plan";
+import { getPlanLimits, isTrialExpired, PLAN_NAMES, usagePct } from "@/lib/plan";
 import { cn } from "@/lib/utils";
+import Link from "next/link";
+
+interface UsageCounts {
+  leads:      number;
+  groups:     number;
+  members:    number;
+  broadcasts: number;
+}
 
 interface Props {
   orgId:               string;
@@ -13,6 +21,7 @@ interface Props {
   subscriptionStatus:  string;
   currentPeriodEnd:    string | null;
   monthlyAiMsgCount:   number;
+  usageCounts?:        UsageCounts;
 }
 
 export function BillingView({
@@ -22,6 +31,7 @@ export function BillingView({
   subscriptionStatus,
   currentPeriodEnd,
   monthlyAiMsgCount,
+  usageCounts,
 }: Props) {
   const [loading, setLoading] = React.useState(false);
   const limits = getPlanLimits(plan);
@@ -101,24 +111,87 @@ export function BillingView({
           </span>
         </div>
 
-        {/* AI usage bar */}
+        {/* Usage gauges */}
         {limits.aiMsgsPerMonth > 0 && (
-          <div className="mt-6">
-            <div className="flex items-center justify-between mb-1.5">
-              <div className="flex items-center gap-1.5 text-sm text-[var(--text-3)]">
-                <Zap className="h-3.5 w-3.5 text-[var(--brand)]" />
-                AI replies this month
-              </div>
-              <span className="text-sm text-[var(--text-2)]">
-                {monthlyAiMsgCount.toLocaleString()} / {limits.aiMsgsPerMonth.toLocaleString()}
-              </span>
-            </div>
-            <div className="h-2 rounded-full bg-[var(--bg-3)] overflow-hidden">
-              <div
-                className="h-full rounded-full bg-[var(--brand)] transition-all"
-                style={{ width: `${Math.min(100, (monthlyAiMsgCount / limits.aiMsgsPerMonth) * 100)}%` }}
-              />
-            </div>
+          <div className="mt-6 space-y-4">
+            <p className="text-xs font-medium text-[var(--text-3)] uppercase tracking-wide">Usage this cycle</p>
+            {[
+              {
+                icon: <Zap className="h-3.5 w-3.5 text-[var(--brand)]" />,
+                label: "AI replies this month",
+                used:  monthlyAiMsgCount,
+                limit: limits.aiMsgsPerMonth,
+                resetsMonthly: true,
+              },
+              ...(usageCounts ? [
+                {
+                  icon: <Users className="h-3.5 w-3.5 text-blue-400" />,
+                  label: "Leads",
+                  used:  usageCounts.leads,
+                  limit: limits.leadsAllowed,
+                  resetsMonthly: false,
+                },
+                {
+                  icon: <UsersRound className="h-3.5 w-3.5 text-purple-400" />,
+                  label: "Groups",
+                  used:  usageCounts.groups,
+                  limit: limits.groupsAllowed,
+                  resetsMonthly: false,
+                },
+                {
+                  icon: <Users className="h-3.5 w-3.5 text-amber-400" />,
+                  label: "Group members total",
+                  used:  usageCounts.members,
+                  limit: limits.groupMembersTotal,
+                  resetsMonthly: false,
+                },
+                {
+                  icon: <MessageSquare className="h-3.5 w-3.5 text-pink-400" />,
+                  label: "Broadcasts this month",
+                  used:  usageCounts.broadcasts,
+                  limit: limits.broadcastsPerMonth,
+                  resetsMonthly: true,
+                },
+              ] : []),
+            ].map(({ icon, label, used, limit, resetsMonthly }) => {
+              if (limit === 0) return null;
+              const pct = usagePct(used, limit);
+              const unlimited = limit === -1;
+              const barColor = !pct ? "bg-[var(--brand)]" : pct >= 100 ? "bg-red-400" : pct >= 80 ? "bg-amber-400" : "bg-[var(--brand)]";
+
+              return (
+                <div key={label}>
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-1.5 text-xs text-[var(--text-3)]">
+                      {icon} {label}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-[var(--text-2)]">
+                        {used.toLocaleString()} {unlimited ? "" : `/ ${limit.toLocaleString()}`}
+                        {unlimited && <span className="text-[var(--text-3)]"> (unlimited)</span>}
+                      </span>
+                      {pct !== null && pct >= 80 && pct < 100 && (
+                        <span className="text-[10px] text-amber-400">Approaching limit</span>
+                      )}
+                      {pct !== null && pct >= 100 && (
+                        <Link href="/pricing" className="text-[10px] font-medium text-red-400 hover:underline">Limit reached — upgrade</Link>
+                      )}
+                    </div>
+                  </div>
+                  {!unlimited && (
+                    <div className="h-1.5 rounded-full bg-[var(--bg-3)] overflow-hidden">
+                      <div className={cn("h-full rounded-full transition-all", barColor)}
+                        style={{ width: `${Math.min(100, pct ?? 0)}%` }} />
+                    </div>
+                  )}
+                  {pct !== null && pct >= 80 && pct < 100 && resetsMonthly && (
+                    <p className="text-[10px] text-[var(--text-3)] mt-0.5">
+                      Resets on the 1st. Upgrade to {plan === "starter" ? "Growth" : "Pro"} for {plan === "starter" ? "4×" : "unlimited"} headroom.
+                    </p>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 
