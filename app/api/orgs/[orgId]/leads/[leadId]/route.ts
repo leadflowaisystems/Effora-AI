@@ -15,6 +15,43 @@ async function assertMember(orgId: string) {
   return data ? user : null;
 }
 
+/** GET /api/orgs/[orgId]/leads/[leadId] — full lead profile */
+export async function GET(_req: NextRequest, { params }: Params) {
+  const user = await assertMember(params.orgId);
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const svc = createServiceClient() as any;
+
+  const [leadRes, convsRes, bookingsRes, paymentsRes] = await Promise.all([
+    svc.from("leads")
+       .select("id,name,external_id,channel,score,stage,tags,notes,ltv_inr,last_seen_at,created_at,source,avatar_url,metadata")
+       .eq("id", params.leadId).eq("org_id", params.orgId).single(),
+    svc.from("conversations")
+       .select("id,channel_provider,last_message_at,last_message_preview,created_at")
+       .eq("org_id", params.orgId).eq("lead_id", params.leadId)
+       .order("last_message_at", { ascending: false }),
+    svc.from("bookings")
+       .select("id,status,starts_at,ends_at,meeting_url,attendee_name,attendee_email,recovery_attempt,created_at")
+       .eq("org_id", params.orgId).eq("lead_id", params.leadId)
+       .is("deleted_at", null)
+       .order("starts_at", { ascending: false }),
+    svc.from("payments")
+       .select("id,amount_inr,status,payment_link_url,notes,created_at,updated_at")
+       .eq("org_id", params.orgId).eq("lead_id", params.leadId)
+       .order("created_at", { ascending: false }),
+  ]);
+
+  if (!leadRes.data) return NextResponse.json({ error: "Lead not found" }, { status: 404 });
+
+  return NextResponse.json({
+    lead:          leadRes.data,
+    conversations: convsRes.data   ?? [],
+    bookings:      bookingsRes.data ?? [],
+    payments:      paymentsRes.data ?? [],
+  });
+}
+
 const UpdateSchema = z.object({
   name:    z.string().min(1).max(200).optional(),
   stage:   z.string().max(30).optional(),

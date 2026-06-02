@@ -4,7 +4,7 @@ import * as React from "react";
 import {
   Search, Plus, Download, X, Loader2, MoreHorizontal,
   MessageSquare, Calendar, CreditCard, StickyNote, FileText,
-  Phone, Instagram, ChevronRight, RefreshCw,
+  Phone, Instagram, ChevronRight, RefreshCw, ExternalLink,
 } from "lucide-react";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -392,7 +392,17 @@ export function CrmView({ orgId, orgSlug, initialLeads }: Props) {
                   className="border-b border-[var(--border)] bg-[var(--bg)] hover:bg-[var(--bg-2)] cursor-pointer transition-colors"
                 >
                   <td className="px-4 py-3">
-                    <p className="font-medium text-[var(--text)] truncate max-w-[150px]">{lead.name ?? "Unnamed"}</p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="font-medium text-[var(--text)] truncate max-w-[140px]">{lead.name ?? "Unnamed"}</p>
+                      <a
+                        href={`/org/${orgSlug}/leads/${lead.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="shrink-0 text-[var(--text-3)] hover:text-[var(--brand)] transition-colors"
+                        title="Open lead profile"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    </div>
                     <p className="text-[10px] text-[var(--text-3)] md:hidden truncate max-w-[120px]">
                       {ig ?? phone ?? ""}
                     </p>
