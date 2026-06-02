@@ -23,6 +23,7 @@ import {
   Users,
   Target,
   UserCircle,
+  UsersRound,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
@@ -62,6 +63,7 @@ const mainNav = [
   { href: "inbox",     label: "Inbox",      icon: Inbox           },
   { href: "crm",       label: "CRM",        icon: Users           },
   { href: "leads",     label: "Leads",      icon: UserCircle      },
+  { href: "groups",    label: "Groups",     icon: UsersRound      },
   { href: "bookings",  label: "Bookings",   icon: CalendarDays    },
   { href: "payments",  label: "Payments",   icon: CreditCard      },
   { href: "sequences", label: "Sequences",  icon: GitBranch       },

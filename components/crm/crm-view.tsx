@@ -137,16 +137,19 @@ export function CrmView({ orgId, orgSlug, initialLeads }: Props) {
   const [menuOpenId,  setMenuOpenId]  = React.useState<string | null>(null);
 
   // Add lead form state
-  const [newName,    setNewName]    = React.useState("");
-  const [newHandle,  setNewHandle]  = React.useState("");
-  const [newPhone,   setNewPhone]   = React.useState("");
-  const [newEmail,   setNewEmail]   = React.useState("");
-  const [newStage,   setNewStage]   = React.useState("cold");
-  const [newTags,    setNewTags]    = React.useState("");
-  const [newNotes,   setNewNotes]   = React.useState("");
-  const [newSource,  setNewSource]  = React.useState("Manual");
-  const [addError,   setAddError]   = React.useState<string | null>(null);
-  const [saving,     setSaving]     = React.useState(false);
+  const [newName,      setNewName]      = React.useState("");
+  const [newHandle,    setNewHandle]    = React.useState("");
+  const [newPhone,     setNewPhone]     = React.useState("");
+  const [newEmail,     setNewEmail]     = React.useState("");
+  const [newStage,     setNewStage]     = React.useState("cold");
+  const [newTags,      setNewTags]      = React.useState("");
+  const [newNotes,     setNewNotes]     = React.useState("");
+  const [newSource,    setNewSource]    = React.useState("Manual");
+  const [newChannel,   setNewChannel]   = React.useState<"instagram" | "whatsapp" | "both">("instagram");
+  const [addError,     setAddError]     = React.useState<string | null>(null);
+  const [saving,       setSaving]       = React.useState(false);
+  // Channel filter for CRM list
+  const [channelFilter, setChannelFilter] = React.useState("");
 
   // ── CRM stats + range ──────────────────────────────────────────────────
   const [range, setRangeState]      = React.useState<Range>(() => readStoredFilter(CRM_STORAGE_KEY)?.range ?? parseRange(searchParams.get("range")));
@@ -204,6 +207,7 @@ export function CrmView({ orgId, orgSlug, initialLeads }: Props) {
       const p = new URLSearchParams({ limit: "50", sort: sortBy, dateField: df });
       if (search)                   p.set("search",  search);
       if (stageFilter)              p.set("stage",   stageFilter);
+      if (channelFilter)            p.set("channel", channelFilter);
       if (!reset && nextCursor)     p.set("cursor",  nextCursor);
       // Pass range bounds so the server filters the list the same way the stats do
       if (r !== "all" && rf)        p.set("from", rf);
@@ -223,16 +227,27 @@ export function CrmView({ orgId, orgSlug, initialLeads }: Props) {
     const t = setTimeout(() => fetchLeads(true), 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, stageFilter, sortBy]);
+  }, [search, stageFilter, sortBy, channelFilter]);
 
   async function addLead(e: React.FormEvent) {
     e.preventDefault();
-    if (!newHandle.trim() && !newPhone.trim()) {
-      setAddError("Please provide an Instagram handle or phone number.");
+    // Channel-conditional validation
+    if ((newChannel === "instagram" || newChannel === "both") && !newHandle.trim()) {
+      setAddError("Instagram handle is required for the selected channel.");
+      return;
+    }
+    if ((newChannel === "whatsapp" || newChannel === "both") && !newPhone.trim()) {
+      setAddError("Phone number is required for the selected channel.");
       return;
     }
     setSaving(true);
     setAddError(null);
+    // Auto-tags based on channel
+    const channelTags = newChannel === "both"
+      ? ["instagram", "whatsapp", "both"]
+      : [newChannel];
+    const userTags = newTags ? newTags.split(",").map((t) => t.trim()).filter(Boolean) : [];
+    const allTags  = Array.from(new Set([...channelTags, ...userTags]));
     try {
       const res  = await fetch(`/api/orgs/${orgId}/leads`, {
         method:  "POST",
@@ -242,8 +257,9 @@ export function CrmView({ orgId, orgSlug, initialLeads }: Props) {
           handle:  newHandle || undefined,
           phone:   newPhone  || undefined,
           email:   newEmail  || undefined,
+          channel: newChannel === "both" ? "instagram" : newChannel,
           stage:   newStage,
-          tags:    newTags ? newTags.split(",").map((t) => t.trim()).filter(Boolean) : [],
+          tags:    allTags,
           notes:   newNotes  || undefined,
           source:  newSource.toLowerCase(),
         }),
@@ -280,6 +296,7 @@ export function CrmView({ orgId, orgSlug, initialLeads }: Props) {
   function resetAddForm() {
     setNewName(""); setNewHandle(""); setNewPhone(""); setNewEmail("");
     setNewStage("cold"); setNewTags(""); setNewNotes(""); setNewSource("Manual");
+    setNewChannel("instagram");
     setAddError(null);
   }
 
@@ -322,6 +339,15 @@ export function CrmView({ orgId, orgSlug, initialLeads }: Props) {
           className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--brand)]">
           <option value="">All stages</option>
           {STAGES.map((s) => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1).replace("_"," ")}</option>)}
+        </select>
+
+        {/* Channel filter */}
+        <select value={channelFilter} onChange={(e) => setChannelFilter(e.target.value)}
+          className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--brand)]">
+          <option value="">All channels</option>
+          <option value="instagram">Instagram</option>
+          <option value="whatsapp">WhatsApp</option>
+          <option value="manual">Manual</option>
         </select>
 
         <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}
@@ -445,7 +471,18 @@ export function CrmView({ orgId, orgSlug, initialLeads }: Props) {
                           <Phone className="h-3 w-3 shrink-0" />{phone}
                         </a>
                       )}
-                      {!ig && !phone && (
+                      {/* Channel badge */}
+                      {lead.channel === "instagram" && (
+                        <span className="flex items-center gap-0.5 text-[10px] px-1 py-0.5 rounded bg-pink-500/10 text-pink-400 border border-pink-500/20">
+                          <Instagram className="h-2.5 w-2.5" /> IG
+                        </span>
+                      )}
+                      {lead.channel === "whatsapp" && (
+                        <span className="flex items-center gap-0.5 text-[10px] px-1 py-0.5 rounded bg-[var(--brand)]/10 text-[var(--brand)] border border-[var(--brand)]/20">
+                          <Phone className="h-2.5 w-2.5" /> WA
+                        </span>
+                      )}
+                      {!ig && !phone && lead.channel !== "instagram" && lead.channel !== "whatsapp" && (
                         <span className="text-xs text-[var(--text-3)]">{lead.channel}</span>
                       )}
                     </div>
@@ -555,20 +592,56 @@ export function CrmView({ orgId, orgSlug, initialLeads }: Props) {
                 </label>
                 <input required value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Priya Sharma" className={inputCls} />
               </div>
+
+              {/* ── Channel selector ─────────────────────────────── */}
               <div>
-                <label className="block text-xs font-medium text-[var(--text-2)] mb-1">
-                  Instagram handle{" "}
-                  <span className="text-[var(--text-3)] font-normal">(required if no phone)</span>
+                <label className="block text-xs font-medium text-[var(--text-2)] mb-1.5">
+                  Channel <span className="text-[var(--brand)]">*</span>
                 </label>
-                <input value={newHandle} onChange={(e) => setNewHandle(e.target.value)} placeholder="@username or username" className={inputCls} />
+                <div className="grid grid-cols-3 gap-1.5">
+                  {(["instagram", "whatsapp", "both"] as const).map((ch) => (
+                    <button key={ch} type="button" onClick={() => setNewChannel(ch)}
+                      className={cn(
+                        "rounded-[var(--radius-sm)] border py-2 text-xs font-medium transition-colors",
+                        newChannel === ch
+                          ? "border-[var(--brand)]/40 bg-[var(--brand)]/10 text-[var(--brand)]"
+                          : "border-[var(--border)] bg-[var(--bg-2)] text-[var(--text-3)] hover:text-[var(--text-2)]"
+                      )}>
+                      {ch === "instagram" ? "Instagram" : ch === "whatsapp" ? "WhatsApp" : "Both"}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-[var(--text-2)] mb-1">
-                  Phone number{" "}
-                  <span className="text-[var(--text-3)] font-normal">(required if no IG)</span>
-                </label>
-                <input type="tel" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} placeholder="+91 98765 43210" className={inputCls} />
-              </div>
+
+              {/* ── IG handle — required for Instagram / Both ──── */}
+              {(newChannel === "instagram" || newChannel === "both") && (
+                <div>
+                  <label className="block text-xs font-medium text-[var(--text-2)] mb-1">
+                    Instagram handle{" "}
+                    <span className="text-[var(--brand)]">{newChannel === "both" ? "*" : "*"}</span>
+                  </label>
+                  <input
+                    value={newHandle} onChange={(e) => setNewHandle(e.target.value)}
+                    placeholder="@username or username"
+                    className={inputCls}
+                    required={newChannel === "instagram" || newChannel === "both"}
+                  />
+                </div>
+              )}
+
+              {/* ── Phone — required for WhatsApp / Both ────────── */}
+              {(newChannel === "whatsapp" || newChannel === "both") && (
+                <div>
+                  <label className="block text-xs font-medium text-[var(--text-2)] mb-1">
+                    Phone number <span className="text-[var(--brand)]">*</span>
+                  </label>
+                  <input
+                    type="tel" value={newPhone} onChange={(e) => setNewPhone(e.target.value)}
+                    placeholder="+91 98765 43210" className={inputCls}
+                    required={newChannel === "whatsapp" || newChannel === "both"}
+                  />
+                </div>
+              )}
               <div>
                 <label className="block text-xs font-medium text-[var(--text-2)] mb-1">
                   Email <span className="text-[var(--text-3)] font-normal">(optional)</span>

@@ -118,6 +118,7 @@ export function ThreadPage({ orgId, convId, orgSlug }: Props) {
       orgSlug={orgSlug}
       convId={convId}
       lead={lead}
+      channelProvider={data.conversation.channel_provider}
       initialMessages={messages}
       initialDraft={data.pendingDraft}
     />

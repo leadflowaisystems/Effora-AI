@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Instagram, Phone, MessageSquare } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn }        from "@/lib/utils";
 import { Badge }     from "@/components/ui/badge";
@@ -15,12 +15,33 @@ import { createClient } from "@/lib/supabase/client";
 import type { InboxMessage, InboxDraft, InboxLead } from "@/types/inbox";
 
 interface Props {
-  orgId:        string;
-  orgSlug:      string;
-  convId:       string;
-  lead:         InboxLead | null;
-  initialMessages: InboxMessage[];
-  initialDraft: InboxDraft | null;
+  orgId:            string;
+  orgSlug:          string;
+  convId:           string;
+  lead:             InboxLead | null;
+  channelProvider?: string;
+  initialMessages:  InboxMessage[];
+  initialDraft:     InboxDraft | null;
+}
+
+function ChannelTag({ provider }: { provider?: string }) {
+  if (!provider) return null;
+  if (provider === "meta_instagram") return (
+    <span className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full bg-pink-500/10 text-pink-400 border border-pink-500/20 shrink-0">
+      <Instagram className="h-2.5 w-2.5" /> Instagram
+    </span>
+  );
+  if (provider === "whatsapp_cloud") return (
+    <span className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full bg-[var(--brand)]/10 text-[var(--brand)] border border-[var(--brand)]/20 shrink-0">
+      <Phone className="h-2.5 w-2.5" /> WhatsApp
+    </span>
+  );
+  if (provider === "manual" || provider === "manual_crm") return null;
+  return (
+    <span className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full bg-[var(--bg-3)] text-[var(--text-3)] border border-[var(--border)] shrink-0">
+      <MessageSquare className="h-2.5 w-2.5" /> {provider}
+    </span>
+  );
 }
 
 /* ── Stage badge styling ── */
@@ -64,7 +85,7 @@ function MessageBubble({ msg }: { msg: InboxMessage }) {
 }
 
 /* ── Thread view ── */
-export function ThreadView({ orgId, orgSlug, convId, lead, initialMessages, initialDraft }: Props) {
+export function ThreadView({ orgId, orgSlug, convId, lead, channelProvider, initialMessages, initialDraft }: Props) {
   const router   = useRouter();
   const [messages, setMessages] = React.useState<InboxMessage[]>(initialMessages);
   const [draft,    setDraft]    = React.useState<InboxDraft | null>(initialDraft);
@@ -157,7 +178,7 @@ export function ThreadView({ orgId, orgSlug, convId, lead, initialMessages, init
           <ArrowLeft className="h-4 w-4" />
         </Link>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="font-display text-sm font-semibold text-[var(--text)] truncate">
               {lead?.name ?? lead?.external_id ?? "Unknown lead"}
             </span>
@@ -166,6 +187,7 @@ export function ThreadView({ orgId, orgSlug, convId, lead, initialMessages, init
                 {stage.charAt(0).toUpperCase() + stage.slice(1)}
               </Badge>
             )}
+            <ChannelTag provider={channelProvider} />
           </div>
           <p className="text-xs text-[var(--text-3)] truncate">
             {lead?.external_id ?? ""}{score > 0 ? ` · ${score}/100` : ""}

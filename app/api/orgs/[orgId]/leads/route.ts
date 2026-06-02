@@ -27,9 +27,10 @@ export async function GET(req: NextRequest, { params }: Params) {
   const sp         = req.nextUrl.searchParams;
   const cursor     = sp.get("cursor");
   const limit      = Math.min(Number(sp.get("limit") ?? 50), 100);
-  const search     = sp.get("search") ?? "";
-  const stage      = sp.get("stage")  ?? "";
-  const tag        = sp.get("tag")    ?? "";
+  const search     = sp.get("search")  ?? "";
+  const stage      = sp.get("stage")   ?? "";
+  const tag        = sp.get("tag")     ?? "";
+  const channel    = sp.get("channel") ?? "";
   // Range filtering — used by CRM page to sync list with metric tiles
   const rangeFrom  = sp.get("from");   // ISO string or null
   const rangeTo    = sp.get("to");     // ISO string or null
@@ -47,6 +48,7 @@ export async function GET(req: NextRequest, { params }: Params) {
 
   if (cursor)    query = query.lt("last_seen_at", cursor);
   if (stage)     query = query.eq("stage", stage);
+  if (channel)   query = query.eq("channel", channel);
   if (search)    query = query.ilike("name", `%${search}%`);
   if (tag)       query = query.contains("tags", [tag]);
   if (rangeFrom) query = query.gte(dateField, rangeFrom);
