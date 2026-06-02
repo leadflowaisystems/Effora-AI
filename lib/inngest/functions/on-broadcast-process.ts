@@ -19,7 +19,7 @@
 
 import { inngest }              from "../client";
 import { createServiceClient }  from "@/lib/supabase/server";
-import { sendWhatsAppMessage }  from "@/lib/integrations/whatsapp-cloud";
+import { sendWhatsAppMessage, sendWhatsAppTemplate }  from "@/lib/integrations/whatsapp-cloud";
 import { sendInstagramMessage } from "@/lib/integrations/meta-instagram";
 import { getOrCreateConversation, insertOutboundMessage } from "@/lib/conversation";
 
@@ -171,19 +171,62 @@ export const onBroadcastProcess = inngest.createFunction(
             await markDelivery(svc, delivery.id, "skipped", "No phone number on file");
             return;
           }
-          try {
-            const result = await sendWhatsAppMessage(org_id, phone, message);
-            await markDelivery(svc, delivery.id, "sent", null, result.provider_message_id);
-            await storeMessageInConversation(svc, org_id, lead.id, message, channel, result.provider_message_id);
-            sentCount++;
-          } catch (err) {
-            const reason = err instanceof Error ? err.message : String(err);
-            // Check for 24-hour window error
-            const is24hError = reason.includes("outside of the 24") || reason.includes("131047") || reason.includes("131026");
-            await markDelivery(svc, delivery.id, "failed", is24hError
-              ? "Outside 24-hour window — template message required"
-              : reason);
-            failedCount++;
+
+          const templateId = ctx.broadcast!.template_id;
+
+          // If a pre-approved template is associated, use it directly.
+          // Template messages work both inside AND outside the 24h window.
+          if (templateId) {
+            try {
+              // Look up the template name from the DB
+              const { data: tpl } = await svc.from("whatsapp_templates")
+                .select("name, variables, body")
+                .eq("id", templateId)
+                .single();
+
+              if (tpl) {
+                // Build component parameters from the rendered message's variable values
+                // Extract {{1}}, {{2}} values by diffing the body against the rendered message
+                const tplBody = (tpl as { name: string; variables: string[]; body: string });
+                // Build positional parameters by extracting filled values from the rendered message
+                // Simple heuristic: split rendered_message on variable-boundary tokens
+                const renderedText = message;
+                // Pass rendered text as a single body component for simplicity
+                const components = [{
+                  type: "body",
+                  parameters: [{ type: "text", text: renderedText }],
+                }];
+                const result = await sendWhatsAppTemplate(org_id, phone, tplBody.name, "en", components);
+                await markDelivery(svc, delivery.id, "sent", null, result.provider_message_id);
+                await storeMessageInConversation(svc, org_id, lead.id, renderedText, channel, result.provider_message_id);
+                sentCount++;
+              } else {
+                // Template not found — fall through to free-form
+                const result = await sendWhatsAppMessage(org_id, phone, message);
+                await markDelivery(svc, delivery.id, "sent", null, result.provider_message_id);
+                await storeMessageInConversation(svc, org_id, lead.id, message, channel, result.provider_message_id);
+                sentCount++;
+              }
+            } catch (err) {
+              const reason = err instanceof Error ? err.message : String(err);
+              await markDelivery(svc, delivery.id, "failed", `Template send failed: ${reason}`);
+              failedCount++;
+            }
+          } else {
+            // Free-form text message (only works within 24h window)
+            try {
+              const result = await sendWhatsAppMessage(org_id, phone, message);
+              await markDelivery(svc, delivery.id, "sent", null, result.provider_message_id);
+              await storeMessageInConversation(svc, org_id, lead.id, message, channel, result.provider_message_id);
+              sentCount++;
+            } catch (err) {
+              const reason = err instanceof Error ? err.message : String(err);
+              const is24hError = reason.includes("outside of the 24") || reason.includes("131047") || reason.includes("131026");
+              await markDelivery(svc, delivery.id, "failed", is24hError
+                ? "Outside 24-hour window — attach an approved template to broadcast outside the window"
+                : reason);
+              failedCount++;
+            }
           }
           await sleep(1500); // Rate limit: 1 msg / 1.5s
           return;

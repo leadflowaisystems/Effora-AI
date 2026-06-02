@@ -47,6 +47,46 @@ export async function sendWhatsAppMessage(
   return { provider_message_id: data.messages?.[0]?.id ?? "" };
 }
 
+// ── Send template message (approved Meta template, works outside 24h window) ─
+
+export async function sendWhatsAppTemplate(
+  orgId:          string,
+  recipientPhone: string,
+  templateName:   string,
+  languageCode:   string = "en",
+  components?:    Array<{ type: string; parameters: Array<{ type: string; text: string }> }>,
+): Promise<{ provider_message_id: string }> {
+  const config = await loadWhatsAppConfig(orgId);
+
+  const body: Record<string, unknown> = {
+    messaging_product: "whatsapp",
+    recipient_type:    "individual",
+    to:                recipientPhone,
+    type:              "template",
+    template: {
+      name:     templateName,
+      language: { code: languageCode },
+      ...(components ? { components } : {}),
+    },
+  };
+
+  const res = await fetch(`${GRAPH}/${config.phone_number_id}/messages`, {
+    method:  "POST",
+    headers: {
+      "Content-Type":  "application/json",
+      "Authorization": `Bearer ${decryptSecret(config.access_token_enc)}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`WhatsApp template send failed: ${err}`);
+  }
+  const data = await res.json() as { messages: Array<{ id: string }> };
+  return { provider_message_id: data.messages?.[0]?.id ?? "" };
+}
+
 // ── Validate token by fetching phone number info ──────────────────────────────
 
 export async function validateWhatsAppToken(

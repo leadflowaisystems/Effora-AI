@@ -7,6 +7,7 @@ import { IndianRupee, CheckCircle2, Clock, XCircle, ChevronDown, ChevronRight } 
 import { PaymentCard, type PaymentRow } from "./payment-card";
 import { SimulatePaymentSheet, type SimulateLead } from "./simulate-payment-sheet";
 import { PaymentActionsSheet } from "./payment-actions-sheet";
+import { ManualPaymentSheet, type ManualPaymentGroup } from "./manual-payment-sheet";
 import { TimeRangeFilter, readStoredFilter } from "@/components/filters/time-range-filter";
 import { SubCategoryTabs } from "@/components/filters/sub-category-tabs";
 import { parseRange, getRangeBounds, isInRange, type Range } from "@/lib/range";
@@ -29,6 +30,7 @@ interface Props {
   orgSlug:         string;
   isDev:           boolean;
   leads:           SimulateLead[];
+  groups?:         ManualPaymentGroup[];
   pendingPayments: PendingPayment[];
 }
 
@@ -86,7 +88,7 @@ function StatTile({ label, value, color, loading }: { label: string; value: stri
   );
 }
 
-export function PaymentsView({ initialPayments, orgId, orgSlug: _slug, isDev, leads, pendingPayments }: Props) {
+export function PaymentsView({ initialPayments, orgId, orgSlug: _slug, isDev, leads, groups = [], pendingPayments }: Props) {
   const router      = useRouter();
   const pathname    = usePathname();
   const searchParams = useSearchParams();
@@ -177,13 +179,14 @@ export function PaymentsView({ initialPayments, orgId, orgSlug: _slug, isDev, le
     return matchesRange && matchesCategory;
   });
 
-  const groups = groupPayments(visiblePayments, category);
+  const paymentGroups = groupPayments(visiblePayments, category);
 
   return (
     <div className="space-y-5">
       {/* ── Dev / actions bar ──────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-2">
         <PaymentActionsSheet orgId={orgId} leads={leads} onDone={handleUpdate} />
+        <ManualPaymentSheet orgId={orgId} leads={leads} groups={groups} onDone={handleUpdate} />
         {isDev && (
           <div className="flex items-center gap-2 rounded-[var(--radius-sm)] border border-dashed border-amber-500/20 bg-amber-500/5 px-3 py-1.5">
             <span className="text-[11px] text-amber-500/70 font-mono uppercase tracking-wide">dev</span>
@@ -207,7 +210,7 @@ export function PaymentsView({ initialPayments, orgId, orgSlug: _slug, isDev, le
       </div>
 
       {/* ── Empty state ──────────────────────────────────── */}
-      {groups.length === 0 && (
+      {paymentGroups.length === 0 && (
         <div className="flex flex-col items-center justify-center gap-4 py-16 text-center max-w-2xl">
           <div className="flex h-14 w-14 items-center justify-center rounded-[var(--radius-lg)] bg-[var(--bg-3)]">
             <IndianRupee className="h-7 w-7 text-[var(--text-3)]" />
@@ -223,7 +226,7 @@ export function PaymentsView({ initialPayments, orgId, orgSlug: _slug, isDev, le
 
       {/* ── Grouped lists ───────────────────────────────── */}
       <div className="space-y-6 max-w-2xl">
-        {groups.map((group) => {
+        {paymentGroups.map((group) => {
           const isOpen = open[group.key] !== false;
           return (
             <div key={group.key} className="space-y-3">

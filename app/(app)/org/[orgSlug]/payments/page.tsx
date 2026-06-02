@@ -36,8 +36,10 @@ export default async function PaymentsPage({ params }: Props) {
 
   const svc = createServiceClient();
 
-  // Fetch payments + leads in parallel
-  const [paymentRes, leadRes] = await Promise.all([
+  // Fetch payments + leads + groups in parallel
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const svcAny = svc as any;
+  const [paymentRes, leadRes, groupRes] = await Promise.all([
     svc
       .from("payments")
       .select(`
@@ -56,6 +58,12 @@ export default async function PaymentsPage({ params }: Props) {
       .eq("org_id", org.id)
       .order("created_at", { ascending: false })
       .limit(100),
+    svcAny
+      .from("lead_groups")
+      .select("id, name, tag")
+      .eq("org_id", org.id)
+      .is("deleted_at", null)
+      .order("name"),
   ]);
 
   const payments: PaymentRow[] = (paymentRes.data ?? []).map((r) => ({
@@ -81,6 +89,23 @@ export default async function PaymentsPage({ params }: Props) {
     id:      l.id,
     name:    l.name,
     channel: l.channel,
+  }));
+
+  // Enrich groups with member counts
+  const rawGroups = (groupRes?.data ?? []) as Array<{ id: string; name: string; tag: string }>;
+  const groupIds  = rawGroups.map((g) => g.id);
+  const memberCounts: Record<string, number> = {};
+  if (groupIds.length > 0) {
+    const { data: mc } = await svcAny.from("lead_group_members").select("group_id")
+      .in("group_id", groupIds);
+    for (const row of (mc ?? []) as Array<{ group_id: string }>) {
+      memberCounts[row.group_id] = (memberCounts[row.group_id] ?? 0) + 1;
+    }
+  }
+  const paymentGroups = rawGroups.map((g) => ({
+    id: g.id, name: g.name, tag: g.tag,
+    channel: "both" as const,
+    member_count: memberCounts[g.id] ?? 0,
   }));
 
   // Pre-derive pending payments for the simulate picker
@@ -130,6 +155,7 @@ export default async function PaymentsPage({ params }: Props) {
         orgSlug={params.orgSlug}
         isDev={isDev}
         leads={leads}
+        groups={paymentGroups}
         pendingPayments={pendingPayments}
       />
     </div>

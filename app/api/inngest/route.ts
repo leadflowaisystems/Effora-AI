@@ -19,6 +19,7 @@ import { onMonthlyReset }            from "@/lib/inngest/functions/on-monthly-re
 import { onMetaTokenRefresh }           from "@/lib/inngest/functions/on-meta-token-refresh";
 import { onWhatsAppMessageReceived }    from "@/lib/inngest/functions/on-whatsapp-message-received";
 import { onBroadcastProcess }           from "@/lib/inngest/functions/on-broadcast-process";
+import { onBroadcastCron }             from "@/lib/inngest/functions/on-broadcast-cron";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -42,5 +43,6 @@ export const { GET, POST, PUT } = serve({
     onMetaTokenRefresh,
     onWhatsAppMessageReceived,
     onBroadcastProcess,
+    onBroadcastCron,
   ],
 });
