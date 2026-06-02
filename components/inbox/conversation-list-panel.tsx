@@ -1,13 +1,16 @@
 "use client";
 
 import * as React from "react";
-import { Plus, Search, MessageSquareDashed } from "lucide-react";
+import { Plus, Search, MessageSquareDashed, Instagram, Phone, MessageSquare } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
 import { Button }              from "@/components/ui/button";
 import { Input }               from "@/components/ui/input";
 import { ConversationItem }    from "./conversation-item";
+import { cn }                  from "@/lib/utils";
 import type { InboxConversation } from "@/types/inbox";
+
+type ChannelTab = "all" | "instagram" | "whatsapp" | "manual";
 
 interface Props {
   orgSlug:       string;
@@ -17,12 +20,35 @@ interface Props {
   onDelete:      (id: string) => void;
 }
 
+const TABS: { id: ChannelTab; label: string; icon: React.ReactNode; provider?: string }[] = [
+  { id: "all",       label: "All",       icon: <MessageSquare className="h-3 w-3" /> },
+  { id: "instagram", label: "Instagram", icon: <Instagram     className="h-3 w-3" />, provider: "meta_instagram" },
+  { id: "whatsapp",  label: "WhatsApp",  icon: <Phone         className="h-3 w-3" />, provider: "whatsapp_cloud" },
+  { id: "manual",    label: "Manual",    icon: <MessageSquare className="h-3 w-3" />, provider: "manual" },
+];
+
+function tabCount(conversations: InboxConversation[], provider?: string): number {
+  if (!provider) return conversations.length;
+  return conversations.filter((c) => c.channel_provider === provider).length;
+}
+
 export function ConversationListPanel({ orgSlug, orgId, conversations, onNewDm, onDelete }: Props) {
   const pathname = usePathname();
-  const [query,  setQuery]  = React.useState("");
+  const [query,      setQuery]      = React.useState("");
+  const [activeTab,  setActiveTab]  = React.useState<ChannelTab>("all");
+
+  // Only show tabs that have conversations (or "all")
+  const visibleTabs = TABS.filter((t) => t.id === "all" || tabCount(conversations, t.provider) > 0);
+
+  const byChannel = activeTab === "all"
+    ? conversations
+    : conversations.filter((c) => {
+        const tab = TABS.find((t) => t.id === activeTab);
+        return c.channel_provider === tab?.provider;
+      });
 
   const filtered = query.trim()
-    ? conversations.filter((c) => {
+    ? byChannel.filter((c) => {
         const q = query.toLowerCase();
         return (
           c.lead?.name?.toLowerCase().includes(q) ||
@@ -30,7 +56,7 @@ export function ConversationListPanel({ orgSlug, orgId, conversations, onNewDm, 
           c.last_message_preview?.toLowerCase().includes(q)
         );
       })
-    : conversations;
+    : byChannel;
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-[var(--bg-1)]">
@@ -48,6 +74,41 @@ export function ConversationListPanel({ orgSlug, orgId, conversations, onNewDm, 
           <Plus className="h-4 w-4 text-[var(--brand)]" />
         </Button>
       </div>
+
+      {/* Channel tabs — only render if multiple channels have convs */}
+      {visibleTabs.length > 1 && (
+        <div className="flex items-center gap-0.5 px-3 pt-2 pb-1 shrink-0 overflow-x-auto scrollbar-none">
+          {visibleTabs.map((tab) => {
+            const count = tabCount(conversations, tab.provider);
+            const active = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-[var(--radius-sm)] px-2.5 py-1.5 text-xs font-medium transition-colors whitespace-nowrap",
+                  active
+                    ? "bg-[var(--brand)]/12 text-[var(--brand)] border border-[var(--brand)]/20"
+                    : "text-[var(--text-3)] hover:text-[var(--text-2)] hover:bg-[var(--bg-2)]"
+                )}
+              >
+                <span className={cn(active ? "text-[var(--brand)]" : "text-[var(--text-3)]")}>
+                  {tab.icon}
+                </span>
+                {tab.label}
+                {tab.id !== "all" && count > 0 && (
+                  <span className={cn(
+                    "text-[10px] rounded-full px-1.5 py-0 min-w-[18px] text-center",
+                    active ? "bg-[var(--brand)]/20 text-[var(--brand)]" : "bg-[var(--bg-3)] text-[var(--text-3)]"
+                  )}>
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Search */}
       <div className="px-3 py-2 shrink-0">
@@ -68,7 +129,11 @@ export function ConversationListPanel({ orgSlug, orgId, conversations, onNewDm, 
           <div className="flex flex-col items-center justify-center gap-3 py-16 text-center px-4">
             <MessageSquareDashed className="h-8 w-8 text-[var(--text-3)]" />
             <p className="text-xs text-[var(--text-3)]">
-              {query ? "No conversations match." : "No DMs yet. Click + to send a test."}
+              {query
+                ? "No conversations match."
+                : activeTab !== "all"
+                ? `No ${TABS.find((t) => t.id === activeTab)?.label} conversations yet.`
+                : "No DMs yet. Click + to send a test."}
             </p>
           </div>
         ) : (

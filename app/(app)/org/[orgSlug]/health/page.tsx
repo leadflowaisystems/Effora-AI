@@ -235,19 +235,62 @@ export default async function HealthPage({ params }: { params: { orgSlug: string
           const waActive = !!waCloud?.active;
           const waPhone  = (waCloud?.config as Record<string, string> | undefined)?.display_phone_number ?? "";
           return (
-            <SimpleCard
-              icon={<Phone className="h-5 w-5" />}
-              name="WhatsApp Business"
-              connected={waActive}
-              description={
-                waActive
-                  ? `Cloud API active · ${waPhone}`
-                  : "Connect WhatsApp Cloud API to receive and reply to DMs in Effora AI."
-              }
-              meta={waCloud ? `Connected ${fmtDate(waCloud.updated_at)}` : undefined}
-              actionLabel={waActive ? "Manage →" : "Connect →"}
-              actionHref={`/org/${params.orgSlug}/settings/whatsapp`}
-            />
+            <div className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--bg-1)] p-4 space-y-3">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className={cn(
+                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius-sm)]",
+                    waActive ? "bg-[var(--brand)]/10 text-[var(--brand)]" : "bg-[var(--bg-3)] text-[var(--text-3)]",
+                  )}>
+                    <Phone className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-sm font-medium text-[var(--text)]">WhatsApp Business</p>
+                      <span className={cn(
+                        "text-[10px] font-medium px-1.5 py-0.5 rounded-full border",
+                        waActive
+                          ? "border-[var(--brand)]/30 bg-[var(--brand)]/8 text-[var(--brand)]"
+                          : "border-[var(--border)] bg-[var(--bg-3)] text-[var(--text-3)]",
+                      )}>
+                        {waActive ? "Connected" : "Not connected"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-[var(--text-3)] mt-0.5 truncate">
+                      {waActive
+                        ? `Cloud API active · ${waPhone}`
+                        : "Paste your WABA credentials for real-time WhatsApp inbox"}
+                    </p>
+                    {waCloud && <p className="text-[10px] text-[var(--text-3)]/60 mt-0.5">Connected {fmtDate(waCloud.updated_at)}</p>}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Link
+                    href={`/org/${params.orgSlug}/settings/whatsapp`}
+                    className={cn(
+                      "rounded-[var(--radius)] px-3 py-1.5 text-xs font-medium transition-colors",
+                      waActive
+                        ? "border border-[var(--border)] bg-[var(--bg-2)] text-[var(--text-2)] hover:bg-[var(--bg-3)]"
+                        : "bg-[var(--brand)] text-[#0A0A0C] hover:opacity-90",
+                    )}
+                  >
+                    {waActive ? "Manage →" : "Connect →"}
+                  </Link>
+                </div>
+              </div>
+              {waActive && (
+                <div className="flex items-center gap-3 pt-1 border-t border-[var(--border)]">
+                  <Link href={`/org/${params.orgSlug}/broadcast`}
+                    className="text-xs text-[var(--text-3)] hover:text-[var(--brand)] transition-colors">
+                    Broadcast →
+                  </Link>
+                  <Link href={`/org/${params.orgSlug}/settings/whatsapp/templates`}
+                    className="text-xs text-[var(--text-3)] hover:text-[var(--brand)] transition-colors">
+                    Templates →
+                  </Link>
+                </div>
+              )}
+            </div>
           );
         })()}
       </div>

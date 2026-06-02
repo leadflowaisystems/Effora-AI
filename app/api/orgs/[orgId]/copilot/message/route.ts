@@ -1,19 +1,16 @@
 /**
  * POST /api/orgs/[orgId]/copilot/message
- * Sends a message to Ace the strategic copilot.
- *
- * Uses native fetch for the Groq call (avoids the `openai` SDK which can crash
- * at module-load time on Vercel cold-starts due to its HTTP client initialization).
+ * Data-aware Ace copilot using a Groq tool-calling agent loop.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { rateLimitAsync } from "@/lib/ratelimit";
 import { sanitizeText } from "@/lib/sanitize";
-import { extractEntities, fetchRelevantData, buildContextPrompt } from "@/lib/copilot-context";
 import { getAccessState } from "@/lib/access";
+import { runCopilotAgent, buildSystemPrompt } from "@/lib/copilot/agent";
 import { z } from "zod";
 
-export const maxDuration = 30;
+export const maxDuration = 45;
 
 interface Params { params: { orgId: string } }
 
@@ -26,174 +23,96 @@ async function assertMember(orgId: string) {
   return data ? user : null;
 }
 
-const Schema = z.object({ message: z.string().min(1).max(2000) });
+const Schema = z.object({
+  message: z.string().min(1).max(2000),
+});
 
 export async function POST(req: NextRequest, { params }: Params) {
   const orgId = params.orgId;
-  console.log("[copilot] handler entry, orgId:", orgId);
 
   try {
-    // ── Verify env vars early ─────────────────────────────────────
     const apiKey = process.env.GROQ_API_KEYS?.split(",")[0]?.trim() || process.env.LLM_API_KEY;
     if (!apiKey) {
-      console.error("[copilot] no Groq key — set GROQ_API_KEYS or LLM_API_KEY in Vercel env vars");
       return NextResponse.json({ error: "AI not configured — contact support." }, { status: 500 });
     }
 
-    // ── Auth ──────────────────────────────────────────────────────
-    let user;
-    try {
-      user = await assertMember(orgId);
-    } catch (authErr) {
-      console.error("[copilot] auth check threw:", authErr);
-      return NextResponse.json({ error: "Auth check failed" }, { status: 401 });
-    }
+    const user = await assertMember(orgId);
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    console.log("[copilot] authed userId:", user.id);
 
-    // ── Access gate ───────────────────────────────────────────────
     let access;
     try {
       access = await getAccessState(orgId);
-    } catch (accErr) {
-      console.warn("[copilot] access check failed (non-fatal, allowing through):", accErr);
-      // Allow through — don't block the user because of a plan-check failure
+    } catch {
       access = { canUseCopilot: true, copilotDailyLimit: 60 };
     }
     if (!access.canUseCopilot) {
-      return NextResponse.json({ error: "Copilot is not available on your current plan. Upgrade to access Ace." }, { status: 403 });
+      return NextResponse.json({ error: "Copilot is not available on your plan. Upgrade to access Ace." }, { status: 403 });
     }
 
-    // ── Rate limit ────────────────────────────────────────────────
-    const msgLimit = (access.copilotDailyLimit as number) > 0 ? (access.copilotDailyLimit as number) : 60;
+    const msgLimit = Number(access.copilotDailyLimit) > 0 ? Number(access.copilotDailyLimit) : 60;
     try {
       const { allowed } = await rateLimitAsync(`copilot:${orgId}`, { limit: msgLimit });
       if (!allowed) return NextResponse.json({ error: "Daily copilot message limit reached. Resets tomorrow." }, { status: 429 });
-    } catch (rlErr) {
-      console.warn("[copilot] rate-limit check threw (non-fatal):", rlErr);
-    }
+    } catch { /* non-fatal */ }
 
-    // ── Parse body ────────────────────────────────────────────────
     let body: unknown;
-    try {
-      body = await req.json();
-    } catch {
+    try { body = await req.json(); } catch {
       return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
     }
     const parsed = Schema.safeParse(body);
     if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message }, { status: 400 });
-
     const message = sanitizeText(parsed.data.message);
-    console.log("[copilot] message:", message.slice(0, 80));
 
-    // ── Load chat history (best-effort) ───────────────────────────
-    let history: { role: string; content: string }[] = [];
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const svc = createServiceClient() as any;
-      const { data: historyRows } = await svc
-        .from("copilot_chats").select("role, content").eq("org_id", orgId)
-        .order("created_at", { ascending: false }).limit(20);
-      history = ((historyRows ?? []) as { role: string; content: string }[]).reverse();
-    } catch (histErr) {
-      console.warn("[copilot] history load failed (copilot_chats table missing?):", histErr);
-    }
+    // Load history and org context
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const svc = createServiceClient() as any;
 
-    // ── Build context (best-effort) ───────────────────────────────
-    let ctxBlock = "No prior context available.";
-    let bizDataName = "your business";
-    try {
-      const entities = extractEntities(message);
-      const bizData  = await fetchRelevantData(orgId, entities);
-      ctxBlock       = buildContextPrompt(bizData);
-      bizDataName    = bizData.org.name;
-    } catch (ctxErr) {
-      console.warn("[copilot] context fetch failed (non-fatal):", ctxErr);
-    }
+    const [historyRes, orgRes] = await Promise.all([
+      svc.from("copilot_chats").select("role, content").eq("org_id", orgId)
+        .order("created_at", { ascending: false }).limit(20)
+        .then((r: { data: { role: string; content: string }[] | null }) => r),
+      svc.from("orgs").select("name, plan, trial_ends_at").eq("id", orgId).single(),
+    ]);
 
-    // ── Build prompt ──────────────────────────────────────────────
-    const systemPrompt = [
-      `You are Ace, a strategic business advisor for ${bizDataName}.`,
-      `You have direct access to their live business data (leads, bookings, payments, revenue).`,
-      ``,
-      `PERSONALITY:`,
-      `- Sharp, direct, no filler. Never start with "Great question!" or any opener.`,
-      `- End EVERY response with exactly one concrete next action prefixed "Next action:"`,
-      `- No em dashes. Short sentences. Max 180 words.`,
-      `- Cite specific numbers from the data whenever relevant.`,
-      `- If asked about a lead not in context, say you don't have their data and suggest checking CRM.`,
-      ``,
-      `LIVE BUSINESS DATA:`,
-      ctxBlock,
-    ].filter(Boolean).join("\n");
+    const history  = ((historyRes.data ?? []) as { role: string; content: string }[]).reverse();
+    const orgData  = orgRes.data as { name: string; plan: string; trial_ends_at: string | null } | null;
 
-    const messages = [
-      { role: "system",    content: systemPrompt },
-      ...history.map((h) => ({ role: h.role as "user" | "assistant", content: h.content })),
-      { role: "user",      content: message },
-    ];
+    // Total leads count
+    const { count: totalLeads } = await svc.from("leads").select("id", { count: "exact", head: true })
+      .eq("org_id", orgId).is("deleted_at", null);
 
-    const model = process.env.LLM_MODEL_SMART ?? "llama-3.3-70b-versatile";
+    const systemPrompt = buildSystemPrompt({
+      orgName:    orgData?.name ?? "your business",
+      plan:       orgData?.plan ?? "trial",
+      totalLeads: totalLeads ?? 0,
+      trialEndsAt: orgData?.trial_ends_at,
+    });
+
+    const model   = process.env.LLM_MODEL_SMART ?? "llama-3.3-70b-versatile";
     const baseURL = process.env.LLM_BASE_URL ?? "https://api.groq.com/openai/v1";
-    console.log("[copilot] calling LLM:", model, "at", baseURL, "| prompt chars:", systemPrompt.length + message.length);
 
-    // ── Call Groq via native fetch (avoids openai SDK cold-start issues) ─
-    let reply = "";
-    try {
-      const controller = new AbortController();
-      const timeoutId  = setTimeout(() => controller.abort(), 22_000);
-      let groqRes: Response;
-      try {
-        groqRes = await fetch(`${baseURL}/chat/completions`, {
-          method:  "POST",
-          headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ model, max_tokens: 280, temperature: 0.65, messages }),
-          signal: controller.signal,
-        });
-      } finally {
-        clearTimeout(timeoutId);
-      }
+    const { reply, tools_used } = await runCopilotAgent({
+      orgId, message, history, systemPrompt, apiKey, baseURL, model,
+    });
 
-      if (!groqRes.ok) {
-        const errText = await groqRes.text().catch(() => "(unreadable)");
-        console.error("[copilot] Groq error:", groqRes.status, errText.slice(0, 200));
-        return NextResponse.json({ error: `AI service error ${groqRes.status}` }, { status: 500 });
-      }
-
-      const groqData = await groqRes.json() as { choices?: Array<{ message?: { content?: string } }> };
-      reply = groqData.choices?.[0]?.message?.content?.trim() ?? "";
-      if (!reply) {
-        console.error("[copilot] Groq returned empty content:", JSON.stringify(groqData).slice(0, 200));
-        return NextResponse.json({ error: "AI returned empty response" }, { status: 500 });
-      }
-    } catch (groqErr) {
-      const msg = groqErr instanceof Error ? groqErr.message : String(groqErr);
-      console.error("[copilot] Groq call failed:", msg);
-      return NextResponse.json({ error: "AI call failed — check Vercel logs for details." }, { status: 500 });
-    }
-
-    const actionMatch      = reply.match(/Next action:(.*?)(?:\n|$)/i);
+    const actionMatch      = reply.match(/(?:Next action|Suggested action):(.*?)(?:\n|$)/i);
     const suggested_action = actionMatch?.[1]?.trim() ?? null;
-    console.log("[copilot] ✓ reply length:", reply.length);
 
-    // ── Persist to copilot_chats (best-effort) ────────────────────
+    // Persist conversation
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const svc = createServiceClient() as any;
       await svc.from("copilot_chats").insert([
         { org_id: orgId, role: "user",      content: message },
         { org_id: orgId, role: "assistant", content: reply   },
       ]);
     } catch (saveErr) {
-      console.warn("[copilot] history save failed (copilot_chats table missing? — run migration 013):", saveErr);
-      // Non-fatal: user still gets the reply
+      console.warn("[copilot] history save failed:", saveErr);
     }
 
-    return NextResponse.json({ reply, suggested_action });
+    return NextResponse.json({ reply, suggested_action, tools_used });
 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error("[copilot] FATAL unhandled error:", err);
+    console.error("[copilot] error:", msg);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

@@ -38,9 +38,17 @@ function initials(name: string | null, fallback: string): string {
 }
 
 function ChannelIcon({ provider }: { provider: string }) {
-  if (provider === "meta_instagram") return <Instagram className="h-2.5 w-2.5 text-pink-400" />;
-  if (provider === "whatsapp_cloud") return <Phone className="h-2.5 w-2.5 text-[var(--brand)]" />;
-  return <MessageSquare className="h-2.5 w-2.5 text-[var(--text-3)]" />;
+  if (provider === "meta_instagram") return (
+    <span className="flex items-center gap-0.5 rounded px-1 py-0.5 bg-pink-500/10 text-pink-400 text-[10px] font-medium">
+      <Instagram className="h-2.5 w-2.5" /> IG
+    </span>
+  );
+  if (provider === "whatsapp_cloud") return (
+    <span className="flex items-center gap-0.5 rounded px-1 py-0.5 bg-[var(--brand)]/10 text-[var(--brand)] text-[10px] font-medium">
+      <Phone className="h-2.5 w-2.5" /> WA
+    </span>
+  );
+  return null;
 }
 
 export function ConversationItem({ conv, href, active, orgId, onDelete }: Props) {
