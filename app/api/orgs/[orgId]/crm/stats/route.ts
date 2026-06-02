@@ -1,7 +1,11 @@
 /**
- * GET /api/orgs/[orgId]/crm/stats?range=month
+ * GET /api/orgs/[orgId]/crm/stats
  *
- * Returns lead pipeline counts for the given time range (based on created_at).
+ * Query params:
+ *   range     — today | week | month | year | all | custom
+ *   from      — ISO string for custom range
+ *   to        — ISO string for custom range
+ *   dateField — created_at | last_seen_at (default: created_at)
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -24,29 +28,32 @@ export async function GET(req: NextRequest, { params }: Params) {
   const user = await assertMember(params.orgId);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const range = parseRange(req.nextUrl.searchParams.get("range"));
-  const { from, to } = getRangeBounds(range);
+  const sp         = req.nextUrl.searchParams;
+  const range      = parseRange(sp.get("range"));
+  const customFrom = sp.get("from");
+  const customTo   = sp.get("to");
+  const dateField  = sp.get("dateField") === "last_seen_at" ? "last_seen_at" : "created_at";
+
+  const { from, to } = getRangeBounds(range, customFrom, customTo);
 
   const svc = createServiceClient();
-
-  let query = svc
-    .from("leads")
+  let query = svc.from("leads")
     .select("stage, score")
     .eq("org_id", params.orgId)
     .is("deleted_at", null)
-    .lte("created_at", to);
+    .lte(dateField, to);
 
-  if (from) query = query.gte("created_at", from);
+  if (from) query = query.gte(dateField, from);
 
   const { data, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const rows = (data ?? []) as Array<{ stage: string; score: number }>;
+  const rows   = (data ?? []) as Array<{ stage: string; score: number }>;
+  const total  = rows.length;
+  const hot    = rows.filter((r) => r.stage === "hot" || r.score >= 75).length;
+  const booked = rows.filter((r) => r.stage === "booked" || r.stage === "booking_sent").length;
+  const won    = rows.filter((r) => r.stage === "won" || r.stage === "paid").length;
+  const conversionRate = total > 0 ? Math.round((won / total) * 100) : 0;
 
-  const total    = rows.length;
-  const hot      = rows.filter((r) => r.stage === "hot" || r.score >= 75).length;
-  const booked   = rows.filter((r) => r.stage === "booked" || r.stage === "booking_sent").length;
-  const won      = rows.filter((r) => r.stage === "won" || r.stage === "paid").length;
-
-  return NextResponse.json({ range, total, hot, booked, won });
+  return NextResponse.json({ range, dateField, total, hot, booked, won, conversion_rate: conversionRate });
 }

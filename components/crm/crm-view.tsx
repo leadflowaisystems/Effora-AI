@@ -9,7 +9,7 @@ import {
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { toast } from "@/components/ui/use-toast";
-import { RangePicker, readStoredRange } from "@/components/ui/range-picker";
+import { TimeRangeFilter, readStoredFilter } from "@/components/filters/time-range-filter";
 import { parseRange, type Range } from "@/lib/range";
 
 /* ─── Types ────────────────────────────────────────────────────── */
@@ -102,10 +102,12 @@ function getIgHandle(lead: LeadRow): string | null {
 
 const inputCls = "w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-3)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-3)] focus:outline-none focus:ring-1 focus:ring-[var(--brand)]";
 
-interface CrmStats { total: number; hot: number; booked: number; won: number }
+const CRM_STORAGE_KEY = "effora-crm-filter";
+
+interface CrmStats { total: number; hot: number; booked: number; won: number; conversion_rate: number }
 
 function CrmStatTile({ label, value, color, loading }: {
-  label: string; value: number; color: string; loading: boolean;
+  label: string; value: string | number; color: string; loading: boolean;
 }) {
   return (
     <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-2)] p-4 space-y-1">
@@ -147,38 +149,40 @@ export function CrmView({ orgId, orgSlug, initialLeads }: Props) {
   const [saving,     setSaving]     = React.useState(false);
 
   // ── CRM stats + range ──────────────────────────────────────────────────
-  const [range, setRangeState] = React.useState<Range>(() => {
-    const fromUrl = parseRange(typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("range") : null);
-    if (fromUrl !== "month" || typeof window === "undefined") return fromUrl;
-    return readStoredRange() ?? "month";
-  });
+  const [range, setRangeState]      = React.useState<Range>(() => readStoredFilter(CRM_STORAGE_KEY)?.range ?? parseRange(searchParams.get("range")));
+  const [customFrom, setCustomFrom] = React.useState<string | null>(() => readStoredFilter(CRM_STORAGE_KEY)?.from ?? null);
+  const [customTo,   setCustomTo]   = React.useState<string | null>(() => readStoredFilter(CRM_STORAGE_KEY)?.to   ?? null);
+  const [dateField,  setDateField]  = React.useState<"created_at" | "last_seen_at">("created_at");
   const [crmStats, setCrmStats]       = React.useState<CrmStats | null>(null);
   const [statsLoading, setStatsLoading] = React.useState(true);
   const statsAbortRef = React.useRef<AbortController | null>(null);
 
-  const fetchStats = React.useCallback(async (r: Range) => {
+  const fetchStats = React.useCallback(async (r: Range, df: string, cf?: string | null, ct?: string | null) => {
     statsAbortRef.current?.abort();
     const ctrl = new AbortController();
     statsAbortRef.current = ctrl;
     setStatsLoading(true);
     try {
-      const res = await fetch(`/api/orgs/${orgId}/crm/stats?range=${r}`, { signal: ctrl.signal });
+      const p = new URLSearchParams({ range: r, dateField: df });
+      if (r === "custom" && cf) p.set("from", cf);
+      if (r === "custom" && ct) p.set("to", ct);
+      const res = await fetch(`/api/orgs/${orgId}/crm/stats?${p}`, { signal: ctrl.signal });
       if (!res.ok) return;
       const json = await res.json();
-      setCrmStats({ total: json.total, hot: json.hot, booked: json.booked, won: json.won });
+      setCrmStats({ total: json.total, hot: json.hot, booked: json.booked, won: json.won, conversion_rate: json.conversion_rate });
     } catch { /* aborted */ }
     finally { setStatsLoading(false); }
   }, [orgId]);
 
-  const setRange = React.useCallback((r: Range) => {
-    setRangeState(r);
-    fetchStats(r);
-    const params = new URLSearchParams(searchParams.toString());
-    params.set("range", r);
-    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
-  }, [fetchStats, searchParams, pathname, router]);
+  const handleRangeChange = React.useCallback((r: Range, cf?: string | null, ct?: string | null) => {
+    setRangeState(r); setCustomFrom(cf ?? null); setCustomTo(ct ?? null);
+    fetchStats(r, dateField, cf, ct);
+    const p = new URLSearchParams(searchParams.toString());
+    p.set("range", r);
+    router.replace(`${pathname}?${p}`, { scroll: false });
+  }, [fetchStats, dateField, searchParams, pathname, router]);
 
-  React.useEffect(() => { fetchStats(range); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  React.useEffect(() => { fetchStats(range, dateField, customFrom, customTo); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function fetchLeads(reset = true) {
     setLoading(true);
@@ -320,15 +324,34 @@ export function CrmView({ orgId, orgSlug, initialLeads }: Props) {
 
       {/* ── Pipeline stats + range picker ──────────────────── */}
       <div className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-xs font-medium text-[var(--text-3)] uppercase tracking-wide">Pipeline</p>
-          <RangePicker value={range} onChange={setRange} />
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {/* Date field toggle */}
+          <div className="flex items-center gap-1.5 text-xs text-[var(--text-3)]">
+            <span>Filter by:</span>
+            {(["created_at", "last_seen_at"] as const).map((f) => (
+              <button
+                key={f}
+                type="button"
+                onClick={() => { setDateField(f); fetchStats(range, f, customFrom, customTo); }}
+                className={cn(
+                  "rounded-[var(--radius-sm)] px-2 py-0.5 text-xs font-medium transition-colors",
+                  dateField === f
+                    ? "bg-[var(--brand)] text-[#0A0A0C]"
+                    : "border border-[var(--border)] text-[var(--text-3)] hover:text-[var(--text-2)]"
+                )}
+              >
+                {f === "created_at" ? "Created" : "Last contact"}
+              </button>
+            ))}
+          </div>
+          <TimeRangeFilter storageKey={CRM_STORAGE_KEY} value={range} customFrom={customFrom} customTo={customTo} onChange={handleRangeChange} />
         </div>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <CrmStatTile label="Leads"     value={crmStats?.total  ?? 0} color="text-[var(--text)]"  loading={statsLoading} />
-          <CrmStatTile label="Hot"       value={crmStats?.hot    ?? 0} color="text-red-400"         loading={statsLoading} />
-          <CrmStatTile label="Booked"    value={crmStats?.booked ?? 0} color="text-blue-400"        loading={statsLoading} />
-          <CrmStatTile label="Won / Paid" value={crmStats?.won   ?? 0} color="text-[var(--brand)]" loading={statsLoading} />
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+          <CrmStatTile label="Leads"       value={crmStats?.total           ?? 0} color="text-[var(--text)]"  loading={statsLoading} />
+          <CrmStatTile label="Hot"         value={crmStats?.hot             ?? 0} color="text-red-400"         loading={statsLoading} />
+          <CrmStatTile label="Booked"      value={crmStats?.booked          ?? 0} color="text-blue-400"        loading={statsLoading} />
+          <CrmStatTile label="Won / Paid"  value={crmStats?.won             ?? 0} color="text-[var(--brand)]" loading={statsLoading} />
+          <CrmStatTile label="Conv. Rate"  value={`${crmStats?.conversion_rate ?? 0}%`} color="text-amber-400" loading={statsLoading} />
         </div>
       </div>
 

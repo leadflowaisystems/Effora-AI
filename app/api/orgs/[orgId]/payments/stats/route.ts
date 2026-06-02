@@ -1,13 +1,16 @@
 /**
- * GET /api/orgs/[orgId]/payments/stats?range=month
+ * GET /api/orgs/[orgId]/payments/stats
  *
- * Returns payment totals for the given time range.
+ * Query params:
+ *   range  — today | week | month | year | all | custom (default: month)
+ *   from   — ISO string, used when range=custom
+ *   to     — ISO string, used when range=custom
+ *   status — all | paid | pending (default: all)
  *
  * IMPORTANT — Refinement 1 rule:
- *   Soft-deleted payments (deleted_at IS NOT NULL) are EXCLUDED from the
- *   list view but INCLUDED here so that deleting a row for visual tidiness
- *   does not alter reported revenue. We intentionally omit the
- *   .is("deleted_at", null) filter from these aggregate queries.
+ *   Soft-deleted payments (deleted_at IS NOT NULL) are EXCLUDED from list
+ *   views but INCLUDED here so deleting a row for visual tidiness does not
+ *   alter reported revenue.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -30,12 +33,17 @@ export async function GET(req: NextRequest, { params }: Params) {
   const user = await assertMember(params.orgId);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const range = parseRange(req.nextUrl.searchParams.get("range"));
-  const { from, to } = getRangeBounds(range);
+  const sp         = req.nextUrl.searchParams;
+  const range      = parseRange(sp.get("range"));
+  const customFrom = sp.get("from");
+  const customTo   = sp.get("to");
+  const statusFilter = sp.get("status") ?? "all";  // all | paid | pending
+
+  const { from, to } = getRangeBounds(range, customFrom, customTo);
 
   const svc = createServiceClient();
 
-  // Build query — deliberately NO deleted_at filter so totals are accurate
+  // Deliberately NO deleted_at filter — soft-deleted payments still count in totals
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let query = (svc as any)
     .from("payments")
@@ -44,27 +52,17 @@ export async function GET(req: NextRequest, { params }: Params) {
     .lte("created_at", to);
 
   if (from) query = query.gte("created_at", from);
+  if (statusFilter === "paid")    query = query.eq("status", "paid");
+  if (statusFilter === "pending") query = query.eq("status", "pending");
 
   const { data, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   const rows = (data ?? []) as Array<{ status: string; amount_inr: number }>;
 
-  const collected = rows
-    .filter((r) => r.status === "paid")
-    .reduce((s, r) => s + (r.amount_inr ?? 0), 0);
+  const collected = rows.filter((r) => r.status === "paid").reduce((s, r) => s + (r.amount_inr ?? 0), 0);
+  const pending   = rows.filter((r) => r.status === "pending").reduce((s, r) => s + (r.amount_inr ?? 0), 0);
+  const count     = rows.length;
 
-  const pending = rows
-    .filter((r) => r.status === "pending")
-    .reduce((s, r) => s + (r.amount_inr ?? 0), 0);
-
-  const count = rows.length;
-
-  return NextResponse.json({
-    range,
-    collected,
-    pending,
-    pipeline: collected + pending,
-    count,
-  });
+  return NextResponse.json({ range, collected, pending, pipeline: collected + pending, count });
 }
