@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { z } from "zod";
 import { inngest } from "@/lib/inngest/client";
+import { getOrCreateConversation, insertOutboundMessage } from "@/lib/conversation";
 
 interface Params { params: { orgId: string } }
 
@@ -68,8 +69,52 @@ export async function POST(req: NextRequest, { params }: Params) {
   const { data: inserted, error } = await svc.from("bookings").insert(rows).select("id, lead_id");
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  // Fire booking-created events for each
-  const events = ((inserted ?? []) as Array<{ id: string; lead_id: string }>).map((b) => ({
+  const insertedList = (inserted ?? []) as Array<{ id: string; lead_id: string }>;
+
+  // 1. Write booking confirmation to each member's inbox conversation thread NOW
+  //    so /inbox shows it immediately (don't rely on Inngest timing).
+  const dateStr = new Date(parsed.data.starts_at).toLocaleDateString("en-IN", {
+    weekday: "short", day: "numeric", month: "short",
+  });
+  const timeStr = new Date(parsed.data.starts_at).toLocaleTimeString("en-IN", {
+    hour: "2-digit", minute: "2-digit",
+  });
+  const groupName = (group as { name: string }).name;
+
+  // Build member-lead map for personalization
+  const memberMap = new Map<string, string>(
+    (members as Array<{ lead_id: string; lead: { id: string; name: string | null } }>)
+      .map((m) => [m.lead_id, m.lead.name ?? "there"])
+  );
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const svcForConv = createServiceClient() as any;
+
+  await Promise.allSettled(insertedList.map(async (b) => {
+    try {
+      const firstName = (memberMap.get(b.lead_id) ?? "there").split(/\s+/)[0];
+      const msg = [
+        `Hi ${firstName}! Your class booking is confirmed.`,
+        `📅 ${groupName} — ${dateStr} at ${timeStr}`,
+        parsed.data.meeting_url ? `🔗 Join here: ${parsed.data.meeting_url}` : "",
+        `See you there! 🙌`,
+      ].filter(Boolean).join("\n");
+
+      const { data: leadRow } = await svcForConv.from("leads").select("channel").eq("id", b.lead_id).single();
+      const leadChannel = (leadRow as { channel: string } | null)?.channel ?? "manual";
+      const provider =
+        leadChannel === "whatsapp" ? "whatsapp_cloud" :
+        leadChannel === "instagram" ? "meta_instagram" : "manual_crm";
+
+      const convId = await getOrCreateConversation(params.orgId, b.lead_id, provider);
+      await insertOutboundMessage(convId, params.orgId, msg, "group_booking");
+    } catch (e) {
+      console.warn("[bookings/group] inbox message failed for", b.lead_id, e);
+    }
+  }));
+
+  // 2. Also fire booking-created Inngest events (for email confirmations etc.)
+  const events = insertedList.map((b) => ({
     name: "booking.created" as const,
     data: { orgId: params.orgId, bookingId: b.id, leadId: b.lead_id },
   }));

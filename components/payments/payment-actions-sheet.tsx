@@ -2,21 +2,23 @@
 
 /**
  * PaymentActionsSheet — two distinct payment actions for coaches:
- *  A) Request payment from lead  → link-generate (creates pending + sends link in thread)
- *  B) Mark payment as received   → mark-paid (records captured + sends receipt in thread)
+ *  A) Request payment from lead (individual OR group)
+ *  B) Mark payment as received
  */
 
 import * as React from "react";
-import { Link2, CheckCircle2, Loader2, X } from "lucide-react";
+import { Link2, CheckCircle2, Loader2, X, Users } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
 
-export interface PaymentActionLead { id: string; name: string | null; channel: string }
+export interface PaymentActionLead  { id: string; name: string | null; channel: string }
+export interface PaymentActionGroup { id: string; name: string; tag: string; member_count: number }
 
 interface Props {
-  orgId:  string;
-  leads:  PaymentActionLead[];
-  onDone: () => void;
+  orgId:   string;
+  leads:   PaymentActionLead[];
+  groups?: PaymentActionGroup[];
+  onDone:  () => void;
 }
 
 type Mode = "request" | "mark";
@@ -45,7 +47,7 @@ function SheetWrap({ title, onClose, children, onSubmit, saving, disabled, submi
       onClick={onClose}>
       <div className="absolute inset-0 bg-black/50" />
       <form onSubmit={onSubmit}
-        className="relative z-10 w-full max-w-sm bg-[var(--bg-1)] border border-[var(--border)] rounded-t-2xl sm:rounded-2xl p-6 space-y-4"
+        className="relative z-10 w-full max-w-sm bg-[var(--bg-1)] border border-[var(--border)] rounded-t-2xl sm:rounded-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <h2 className="font-display text-base font-semibold text-[var(--text)]">{title}</h2>
@@ -70,44 +72,68 @@ function SheetWrap({ title, onClose, children, onSubmit, saving, disabled, submi
   );
 }
 
-export function PaymentActionsSheet({ orgId, leads, onDone }: Props) {
+export function PaymentActionsSheet({ orgId, leads, groups = [], onDone }: Props) {
   const [mode,   setMode]   = React.useState<Mode | null>(null);
   const [saving, setSaving] = React.useState(false);
 
-  // Request form state
-  const [rLead,   setRLead]   = React.useState("");
-  const [rAmount, setRAmount] = React.useState("");
-  const [rDesc,   setRDesc]   = React.useState("");
-  const [rMethod, setRMethod] = React.useState<"razorpay" | "upi">("razorpay");
+  // Request form state — recipientVal is "lead:ID" or "group:ID"
+  const [rRecipient, setRRecipient] = React.useState("");
+  const [rAmount,    setRAmount]    = React.useState("");
+  const [rDesc,      setRDesc]      = React.useState("");
+  const [rMethod,    setRMethod]    = React.useState<"razorpay" | "upi">("razorpay");
 
   // Mark form state
-  const [mLead,      setMLead]      = React.useState("");
-  const [mAmount,    setMAmount]    = React.useState("");
-  const [mMethod,    setMMethod]    = React.useState("upi");
-  const [mDate,      setMDate]      = React.useState(new Date().toISOString().slice(0, 10));
-  const [mDesc,      setMDesc]      = React.useState("");
+  const [mLead,   setMLead]   = React.useState("");
+  const [mAmount, setMAmount] = React.useState("");
+  const [mMethod, setMMethod] = React.useState("upi");
+  const [mDate,   setMDate]   = React.useState(new Date().toISOString().slice(0, 10));
+  const [mDesc,   setMDesc]   = React.useState("");
 
   function close() { setMode(null); }
 
+  const selectedGroup = rRecipient.startsWith("group:")
+    ? groups.find((g) => g.id === rRecipient.slice(6))
+    : null;
+
   async function submitRequest(e: React.FormEvent) {
     e.preventDefault();
-    if (!rLead || !rAmount || !rDesc) return;
+    if (!rRecipient || !rAmount || !rDesc) return;
     setSaving(true);
     try {
-      const res  = await fetch(`/api/orgs/${orgId}/payments/link-generate`, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ lead_id: rLead, amount_inr: Number(rAmount), description: rDesc, method: rMethod }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed");
-
-      // Copy link to clipboard
-      if (data.link_url) {
-        await navigator.clipboard.writeText(data.link_url).catch(() => null);
-        toast({ title: "Payment link created", description: "Link sent to lead's inbox. Copied to clipboard.", variant: "success" });
+      if (selectedGroup) {
+        // Group payment request — fan-out
+        const res = await fetch(`/api/orgs/${orgId}/payments/group-link-generate`, {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({
+            group_id:    selectedGroup.id,
+            amount_inr:  Number(rAmount),
+            description: rDesc,
+            method:      rMethod,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "Failed");
+        toast({
+          title: `Payment requests sent`,
+          description: `Sent to ${data.sent} of ${data.total} members of "${selectedGroup.name}".`,
+          variant: "success",
+        });
       } else {
-        toast({ title: "Payment link created", description: "Link sent to lead's inbox.", variant: "success" });
+        const leadId = rRecipient.replace("lead:", "");
+        const res = await fetch(`/api/orgs/${orgId}/payments/link-generate`, {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({ lead_id: leadId, amount_inr: Number(rAmount), description: rDesc, method: rMethod }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "Failed");
+        if (data.link_url) {
+          await navigator.clipboard.writeText(data.link_url).catch(() => null);
+          toast({ title: "Payment link created", description: "Link sent to lead's inbox. Copied to clipboard.", variant: "success" });
+        } else {
+          toast({ title: "Payment link created", description: "Link sent to lead's inbox.", variant: "success" });
+        }
       }
       close(); onDone();
     } catch (err) {
@@ -122,7 +148,7 @@ export function PaymentActionsSheet({ orgId, leads, onDone }: Props) {
     if (!mLead || !mAmount) return;
     setSaving(true);
     try {
-      const res  = await fetch(`/api/orgs/${orgId}/payments/mark-paid`, {
+      const res = await fetch(`/api/orgs/${orgId}/payments/mark-paid`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({
@@ -142,6 +168,10 @@ export function PaymentActionsSheet({ orgId, leads, onDone }: Props) {
     }
   }
 
+  const submitLabel = selectedGroup
+    ? `Send to ${selectedGroup.member_count} members`
+    : "Send payment request";
+
   return (
     <>
       {/* Two trigger buttons */}
@@ -158,17 +188,47 @@ export function PaymentActionsSheet({ orgId, leads, onDone }: Props) {
 
       {/* Request sheet */}
       {mode === "request" && (
-        <SheetWrap title="Request payment from lead" onClose={close}
-          onSubmit={submitRequest} saving={saving}
-          disabled={!rLead || !rAmount || !rDesc} submitLabel="Send payment request">
+        <SheetWrap
+          title="Request payment"
+          onClose={close}
+          onSubmit={submitRequest}
+          saving={saving}
+          disabled={!rRecipient || !rAmount || !rDesc}
+          submitLabel={submitLabel}
+        >
           <div className="space-y-3">
             <div className="space-y-1">
-              <label className="text-xs font-medium text-[var(--text-2)]">Lead <span className="text-[var(--brand)]">*</span></label>
-              <select value={rLead} onChange={(e) => setRLead(e.target.value)} required className={inputCls}>
-                <option value="">Select lead…</option>
-                {leads.map((l) => <option key={l.id} value={l.id}>{l.name ?? "Unnamed"} ({l.channel})</option>)}
+              <label className="text-xs font-medium text-[var(--text-2)]">Lead or Group <span className="text-[var(--brand)]">*</span></label>
+              <select value={rRecipient} onChange={(e) => setRRecipient(e.target.value)} required className={inputCls}>
+                <option value="">Select lead or group…</option>
+                {leads.length > 0 && (
+                  <optgroup label="Individual leads">
+                    {leads.map((l) => (
+                      <option key={l.id} value={`lead:${l.id}`}>{l.name ?? "Unnamed"} ({l.channel})</option>
+                    ))}
+                  </optgroup>
+                )}
+                {groups.length > 0 && (
+                  <optgroup label="Groups (sends one request per member)">
+                    {groups.map((g) => (
+                      <option key={g.id} value={`group:${g.id}`}>📋 Group: {g.name} · {g.member_count} members</option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             </div>
+
+            {/* Group preview */}
+            {selectedGroup && (
+              <div className="flex items-start gap-2 rounded-[var(--radius-sm)] border border-blue-500/20 bg-blue-500/5 px-3 py-2">
+                <Users className="h-3.5 w-3.5 text-blue-400 shrink-0 mt-0.5" />
+                <p className="text-xs text-blue-400/90 leading-relaxed">
+                  Payment request will be sent to <strong>{selectedGroup.member_count}</strong> members individually.
+                  Each will receive a personalized message with their own payment link in their inbox thread.
+                </p>
+              </div>
+            )}
+
             <div className="space-y-1">
               <label className="text-xs font-medium text-[var(--text-2)]">Amount (₹) <span className="text-[var(--brand)]">*</span></label>
               <input type="number" min="1" step="1" value={rAmount} onChange={(e) => setRAmount(e.target.value)} required placeholder="15000" className={inputCls} />

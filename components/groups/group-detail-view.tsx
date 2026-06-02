@@ -10,6 +10,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { useComplianceGate, BROADCAST_COMPLIANCE_ITEMS } from "@/components/compliance/compliance-gate";
 
 /* ─── Types ──────────────────────────────────────────────────────── */
 interface Lead {
@@ -346,6 +347,16 @@ export function GroupDetailView({ orgId, orgSlug, group, initialMembers, initial
 
   const composeBottomRef = React.useRef<HTMLDivElement>(null);
 
+  // Compliance gate — shown before first broadcast, never again once accepted
+  const { gate: complianceGate, ComplianceModal } = useComplianceGate({
+    orgId,
+    flag:        "broadcast_policy_accepted",
+    title:       "Confirm Effora messaging policy",
+    description: "Before sending your first broadcast, please confirm all of the following:",
+    items:       BROADCAST_COMPLIANCE_ITEMS,
+    onAccepted:  () => doSendBroadcast(),
+  });
+
   function handleAddMember(lead: Lead) {
     setMembers((m) => {
       if (m.some((x) => x.lead_id === lead.id)) return m;
@@ -357,10 +368,8 @@ export function GroupDetailView({ orgId, orgSlug, group, initialMembers, initial
     setMembers((m) => m.filter((x) => x.lead_id !== leadId));
   }
 
-  async function sendBroadcast(e: React.FormEvent) {
-    e.preventDefault();
+  async function doSendBroadcast() {
     if (!composeMsg.trim()) return;
-    if (!confirm(`Send to ${members.length} member(s)?\n\nBy sending this broadcast, you confirm all recipients have consented to receive messages from you. Effora is not responsible for spam violations.`)) return;
     setComposeSending(true);
     setComposeError(null);
     try {
@@ -382,6 +391,12 @@ export function GroupDetailView({ orgId, orgSlug, group, initialMembers, initial
     } finally {
       setComposeSending(false);
     }
+  }
+
+  function sendBroadcast(e: React.FormEvent) {
+    e.preventDefault();
+    if (!composeMsg.trim()) return;
+    complianceGate(); // shows modal on first use, calls doSendBroadcast() after acceptance
   }
 
   async function saveSettings(e: React.FormEvent) {
@@ -427,6 +442,9 @@ export function GroupDetailView({ orgId, orgSlug, group, initialMembers, initial
 
   return (
     <div className="flex flex-col h-full space-y-0 max-w-3xl">
+      {/* Compliance modal (portal-like, rendered outside layout) */}
+      {ComplianceModal}
+
       {/* Back + Header */}
       <div className="space-y-3 pb-4">
         <Link href={`/org/${orgSlug}/groups`}
@@ -600,6 +618,15 @@ export function GroupDetailView({ orgId, orgSlug, group, initialMembers, initial
                     ))}
                   </div>
                 )}
+
+                {/* Soft compliance reminder (shown every time) */}
+                <div className="flex items-start gap-1.5 rounded-[var(--radius-sm)] border border-amber-500/20 bg-amber-500/5 px-2.5 py-2">
+                  <AlertTriangle className="h-3 w-3 text-amber-400 shrink-0 mt-0.5" />
+                  <p className="text-[10px] text-amber-400/80 leading-relaxed">
+                    Reminder: This message will be sent individually to <strong>{members.length}</strong> member{members.length !== 1 ? "s" : ""}.
+                    All must be opted-in. Outside-window WhatsApp messages need templates.
+                  </p>
+                </div>
 
                 {/* Message */}
                 <div>

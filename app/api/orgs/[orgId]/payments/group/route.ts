@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { z } from "zod";
+import { getOrCreateConversation, insertOutboundMessage } from "@/lib/conversation";
 
 interface Params { params: { orgId: string } }
 
@@ -63,8 +64,42 @@ export async function POST(req: NextRequest, { params }: Params) {
     updated_at:     now,
   }));
 
-  const { error } = await svc.from("payments").insert(rows);
+  const { data: inserted, error } = await svc.from("payments").insert(rows).select("id, lead_id");
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // Write payment receipt message to each member's inbox thread immediately
+  const groupName = (group as { name: string }).name;
+  const amtStr    = `₹${parsed.data.amount_inr.toLocaleString("en-IN")}`;
+
+  // Fetch lead names + channels for personalization
+  const memberIds = (members as Array<{ lead_id: string }>).map((m) => m.lead_id);
+  const { data: leadRows } = await svc.from("leads").select("id, name, channel").in("id", memberIds);
+  const leadMap = new Map<string, { name: string | null; channel: string }>(
+    ((leadRows ?? []) as Array<{ id: string; name: string | null; channel: string }>)
+      .map((l) => [l.id, { name: l.name, channel: l.channel }])
+  );
+
+  await Promise.allSettled(
+    ((inserted ?? []) as Array<{ id: string; lead_id: string }>).map(async (p) => {
+      try {
+        const lead      = leadMap.get(p.lead_id);
+        const firstName = (lead?.name ?? "there").split(/\s+/)[0];
+        const msg = [
+          `Hi ${firstName}, your payment of ${amtStr} for "${parsed.data.description ?? groupName}" has been recorded.`,
+          `Thank you! 🙏`,
+        ].join("\n");
+
+        const provider =
+          lead?.channel === "whatsapp" ? "whatsapp_cloud" :
+          lead?.channel === "instagram" ? "meta_instagram" : "manual_crm";
+
+        const convId = await getOrCreateConversation(params.orgId, p.lead_id, provider);
+        await insertOutboundMessage(convId, params.orgId, msg, "group_payment");
+      } catch (e) {
+        console.warn("[payments/group] inbox message failed for", p.lead_id, e);
+      }
+    })
+  );
 
   return NextResponse.json({ ok: true, count: rows.length });
 }

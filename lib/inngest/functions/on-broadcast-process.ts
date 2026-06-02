@@ -157,10 +157,11 @@ export const onBroadcastProcess = inngest.createFunction(
         const message = delivery.rendered_message ?? renderTemplate(ctx.broadcast!.message_template, lead);
         const channel  = delivery.channel;
 
-        // DEV MODE: skip actual sending
+        // DEV MODE: skip actual API call but still create conversation message
+        // so the lead's /inbox thread shows the broadcast message.
         if (DEV_MODE) {
           await markDelivery(svc, delivery.id, "skipped", "Meta approval pending — dev mode");
-          await storeMessageInConversation(svc, org_id, lead.id, message);
+          await storeMessageInConversation(svc, org_id, lead.id, message, channel);
           return;
         }
 
@@ -298,15 +299,28 @@ async function markDelivery(svc: any, id: string, status: string, reason: string
 }
 
 /**
- * Optionally store the broadcast message as an outbound message in the lead's
- * conversation thread so it appears in /inbox alongside other 1:1 messages.
+ * Store the broadcast message as an outbound message in the lead's conversation
+ * thread so it appears in /inbox alongside other 1:1 messages.
+ *
+ * Uses the lead's own channel (from the leads table) to pick the conversation
+ * provider, NOT the broadcast's channel — this way a WhatsApp lead always gets
+ * the message in their WA conversation, even if the group is "both".
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function storeMessageInConversation(svc: any, orgId: string, leadId: string, content: string, channel?: string, _msgId?: string) {
-  void svc; // not used here but kept for future use
+async function storeMessageInConversation(svc: any, orgId: string, leadId: string, content: string, broadcastChannel?: string, _msgId?: string) {
   try {
-    const provider = channel === "whatsapp" ? "whatsapp_cloud" : channel === "instagram" ? "meta_instagram" : "manual_crm";
-    const convId   = await getOrCreateConversation(orgId, leadId, provider);
+    // Look up the lead's own channel to pick the right conversation provider
+    const { data: leadRow } = await svc.from("leads").select("channel").eq("id", leadId).single();
+    const leadChannel = (leadRow as { channel: string } | null)?.channel ?? broadcastChannel ?? "manual";
+
+    const provider =
+      leadChannel === "whatsapp" || leadChannel === "whatsapp_cloud" ? "whatsapp_cloud" :
+      leadChannel === "instagram" || leadChannel === "meta_instagram" ? "meta_instagram" :
+      broadcastChannel === "whatsapp" ? "whatsapp_cloud" :
+      broadcastChannel === "instagram" ? "meta_instagram" :
+      "manual_crm";
+
+    const convId = await getOrCreateConversation(orgId, leadId, provider);
     await insertOutboundMessage(convId, orgId, content, "broadcast");
   } catch (e) {
     console.warn("[broadcast] conversation store failed (non-fatal):", e);

@@ -6,7 +6,7 @@ import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { IndianRupee, CheckCircle2, Clock, XCircle, ChevronDown, ChevronRight } from "lucide-react";
 import { PaymentCard, type PaymentRow } from "./payment-card";
 import { SimulatePaymentSheet, type SimulateLead } from "./simulate-payment-sheet";
-import { PaymentActionsSheet } from "./payment-actions-sheet";
+import { PaymentActionsSheet, type PaymentActionGroup } from "./payment-actions-sheet";
 import { ManualPaymentSheet, type ManualPaymentGroup } from "./manual-payment-sheet";
 import { TimeRangeFilter, readStoredFilter } from "@/components/filters/time-range-filter";
 import { SubCategoryTabs } from "@/components/filters/sub-category-tabs";
@@ -30,7 +30,7 @@ interface Props {
   orgSlug:         string;
   isDev:           boolean;
   leads:           SimulateLead[];
-  groups?:         ManualPaymentGroup[];
+  groups?:         PaymentActionGroup[];
   pendingPayments: PendingPayment[];
 }
 
@@ -185,8 +185,8 @@ export function PaymentsView({ initialPayments, orgId, orgSlug: _slug, isDev, le
     <div className="space-y-5">
       {/* ── Dev / actions bar ──────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-2">
-        <PaymentActionsSheet orgId={orgId} leads={leads} onDone={handleUpdate} />
-        <ManualPaymentSheet orgId={orgId} leads={leads} groups={groups} onDone={handleUpdate} />
+        <PaymentActionsSheet orgId={orgId} leads={leads} groups={groups} onDone={handleUpdate} />
+        <ManualPaymentSheet orgId={orgId} leads={leads} groups={groups as ManualPaymentGroup[]} onDone={handleUpdate} />
         {isDev && (
           <div className="flex items-center gap-2 rounded-[var(--radius-sm)] border border-dashed border-amber-500/20 bg-amber-500/5 px-3 py-1.5">
             <span className="text-[11px] text-amber-500/70 font-mono uppercase tracking-wide">dev</span>
