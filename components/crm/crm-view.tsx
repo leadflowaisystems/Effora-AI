@@ -10,7 +10,7 @@ import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { toast } from "@/components/ui/use-toast";
 import { TimeRangeFilter, readStoredFilter } from "@/components/filters/time-range-filter";
-import { parseRange, type Range } from "@/lib/range";
+import { parseRange, getRangeBounds, type Range } from "@/lib/range";
 
 /* ─── Types ────────────────────────────────────────────────────── */
 export interface LeadRow {
@@ -176,21 +176,39 @@ export function CrmView({ orgId, orgSlug, initialLeads }: Props) {
 
   const handleRangeChange = React.useCallback((r: Range, cf?: string | null, ct?: string | null) => {
     setRangeState(r); setCustomFrom(cf ?? null); setCustomTo(ct ?? null);
+    // Fetch BOTH stats AND list with the same range — single source of truth
     fetchStats(r, dateField, cf, ct);
+    fetchLeads(true, r, cf, ct, dateField);
     const p = new URLSearchParams(searchParams.toString());
     p.set("range", r);
     router.replace(`${pathname}?${p}`, { scroll: false });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchStats, dateField, searchParams, pathname, router]);
 
-  React.useEffect(() => { fetchStats(range, dateField, customFrom, customTo); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  React.useEffect(() => {
+    fetchStats(range, dateField, customFrom, customTo);
+    // Initial leads fetch already happened via server-side props (initialLeads).
+    // Only refetch if a non-default range is active.
+    if (range !== "month") fetchLeads(true, range, customFrom, customTo, dateField);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function fetchLeads(reset = true) {
+  // fetchLeads also passes range params so the list matches the metric tiles —
+  // same filter object, single source of truth.
+  async function fetchLeads(reset = true, overrideRange?: Range, overrideFrom?: string | null, overrideTo?: string | null, overrideField?: string) {
     setLoading(true);
     try {
-      const p = new URLSearchParams({ limit: "50", sort: sortBy });
+      const r   = overrideRange ?? range;
+      const df  = overrideField ?? dateField;
+      const { from: rf, to: rt } = getRangeBounds(r, overrideFrom ?? customFrom, overrideTo ?? customTo);
+
+      const p = new URLSearchParams({ limit: "50", sort: sortBy, dateField: df });
       if (search)                   p.set("search",  search);
       if (stageFilter)              p.set("stage",   stageFilter);
       if (!reset && nextCursor)     p.set("cursor",  nextCursor);
+      // Pass range bounds so the server filters the list the same way the stats do
+      if (r !== "all" && rf)        p.set("from", rf);
+      if (r !== "all")              p.set("to", rt);
+
       const res  = await fetch(`/api/orgs/${orgId}/leads?${p}`);
       const data = await res.json();
       if (reset) setLeads(data.leads ?? []);
@@ -332,7 +350,11 @@ export function CrmView({ orgId, orgSlug, initialLeads }: Props) {
               <button
                 key={f}
                 type="button"
-                onClick={() => { setDateField(f); fetchStats(range, f, customFrom, customTo); }}
+                onClick={() => {
+                  setDateField(f);
+                  fetchStats(range, f, customFrom, customTo);
+                  fetchLeads(true, range, customFrom, customTo, f);
+                }}
                 className={cn(
                   "rounded-[var(--radius-sm)] px-2 py-0.5 text-xs font-medium transition-colors",
                   dateField === f

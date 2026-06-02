@@ -116,6 +116,44 @@ export function getFutureBounds(range: Range, customTo?: string | null): { from:
   }
 }
 
+/**
+ * Check whether a date falls within the given range bounds.
+ * Returns true for "all" range (no filtering) or when dateStr is within [from, to].
+ */
+export function isInRange(
+  dateStr: string | null | undefined,
+  range: Range,
+  from: string | null,
+  to: string,
+): boolean {
+  if (range === "all") return true;     // no date filter
+  if (!dateStr)        return false;    // unknown date — exclude
+  const d = new Date(dateStr).getTime();
+  const toT = new Date(to).getTime();
+  if (from) {
+    return d >= new Date(from).getTime() && d <= toT;
+  }
+  return d <= toT;
+}
+
+/**
+ * Check whether a date falls in the FUTURE within the given range bounds.
+ * Used for the "Upcoming" bookings sub-category.
+ */
+export function isInFutureRange(
+  dateStr: string | null | undefined,
+  range: Range,
+  futureTo: string | null,
+): boolean {
+  if (!dateStr) return false;
+  const d = new Date(dateStr).getTime();
+  const now = Date.now();
+  if (d < now) return false;           // already in the past
+  if (range === "all") return true;    // any future date is ok
+  if (!futureTo)       return true;    // no upper bound
+  return d <= new Date(futureTo).getTime();
+}
+
 /** Format a date for display: "3 Dec 2026" */
 export function fmtDate(iso: string | null | undefined): string {
   if (!iso) return "—";

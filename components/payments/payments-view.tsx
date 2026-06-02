@@ -9,7 +9,7 @@ import { SimulatePaymentSheet, type SimulateLead } from "./simulate-payment-shee
 import { PaymentActionsSheet } from "./payment-actions-sheet";
 import { TimeRangeFilter, readStoredFilter } from "@/components/filters/time-range-filter";
 import { SubCategoryTabs } from "@/components/filters/sub-category-tabs";
-import { parseRange, type Range } from "@/lib/range";
+import { parseRange, getRangeBounds, isInRange, type Range } from "@/lib/range";
 import { cn } from "@/lib/utils";
 
 const STORAGE_KEY = "effora-payments-filter";
@@ -166,10 +166,16 @@ export function PaymentsView({ initialPayments, orgId, orgSlug: _slug, isDev, le
     setLocalPending((prev) => prev.filter((p) => p.id !== id));
   }, []);
 
-  // Filter list by category for display
-  const visiblePayments = category === "all"
-    ? payments
-    : payments.filter((p) => p.status === category);
+  // Apply the SAME filter to the row list: range + category.
+  // This makes the row list and the metric tiles consistent.
+  // Note: deleted payments are excluded from the list (deleted_at filter
+  // on the server) but still counted in metrics (stats endpoint rule).
+  const { from: rangFrom, to: rangTo } = getRangeBounds(range, customFrom, customTo);
+  const visiblePayments = payments.filter((p) => {
+    const matchesRange    = isInRange(p.created_at, range, rangFrom, rangTo);
+    const matchesCategory = category === "all" || p.status === category;
+    return matchesRange && matchesCategory;
+  });
 
   const groups = groupPayments(visiblePayments, category);
 

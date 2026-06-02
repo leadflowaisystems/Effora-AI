@@ -24,12 +24,16 @@ export async function GET(req: NextRequest, { params }: Params) {
   const user = await assertMember(params.orgId);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const sp      = req.nextUrl.searchParams;
-  const cursor  = sp.get("cursor");
-  const limit   = Math.min(Number(sp.get("limit") ?? 50), 100);
-  const search  = sp.get("search") ?? "";
-  const stage   = sp.get("stage") ?? "";
-  const tag     = sp.get("tag")   ?? "";
+  const sp         = req.nextUrl.searchParams;
+  const cursor     = sp.get("cursor");
+  const limit      = Math.min(Number(sp.get("limit") ?? 50), 100);
+  const search     = sp.get("search") ?? "";
+  const stage      = sp.get("stage")  ?? "";
+  const tag        = sp.get("tag")    ?? "";
+  // Range filtering — used by CRM page to sync list with metric tiles
+  const rangeFrom  = sp.get("from");   // ISO string or null
+  const rangeTo    = sp.get("to");     // ISO string or null
+  const dateField  = sp.get("dateField") === "last_seen_at" ? "last_seen_at" : "created_at";
 
   const svc = createServiceClient();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -41,10 +45,12 @@ export async function GET(req: NextRequest, { params }: Params) {
     .order("last_seen_at", { ascending: false, nullsFirst: false })
     .limit(limit + 1);
 
-  if (cursor)  query = query.lt("last_seen_at", cursor);
-  if (stage)   query = query.eq("stage", stage);
-  if (search)  query = query.ilike("name", `%${search}%`);
-  if (tag)     query = query.contains("tags", [tag]);
+  if (cursor)    query = query.lt("last_seen_at", cursor);
+  if (stage)     query = query.eq("stage", stage);
+  if (search)    query = query.ilike("name", `%${search}%`);
+  if (tag)       query = query.contains("tags", [tag]);
+  if (rangeFrom) query = query.gte(dateField, rangeFrom);
+  if (rangeTo)   query = query.lte(dateField, rangeTo);
 
   const { data, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

@@ -20,7 +20,9 @@ import {
   Calendar, CreditCard, MessageSquare, StickyNote,
   CheckCircle2, Clock, AlertTriangle, XCircle,
   ChevronDown, ChevronRight, ExternalLink, Edit2, Save, X,
+  UserCircle,
 } from "lucide-react";
+import { LeadSearchSelector } from "./lead-search-selector";
 import { cn } from "@/lib/utils";
 import { fmtDate } from "@/lib/range";
 import { toast } from "@/components/ui/use-toast";
@@ -233,14 +235,19 @@ export function LeadDetail({ lead, conversations, bookings, payments, orgId, org
 
   return (
     <div className="space-y-6 max-w-3xl pb-16">
-      {/* ── Back nav ──────────────────────────────────────────── */}
-      <div className="flex items-center gap-3">
-        <Link
-          href={`/org/${orgSlug}/crm`}
-          className="inline-flex items-center gap-1.5 text-xs text-[var(--text-3)] hover:text-[var(--text-2)] transition-colors"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" /> Back to CRM
-        </Link>
+      {/* ── Persistent lead selector — switch leads without going back ── */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <UserCircle className="h-4 w-4 text-[var(--brand)] shrink-0" />
+          <span className="text-xs font-semibold text-[var(--text-2)]">Lead Profile</span>
+          <span className="text-xs text-[var(--text-3)]">— switch lead below</span>
+        </div>
+        <LeadSearchSelector
+          orgId={orgId}
+          orgSlug={orgSlug}
+          selectedId={lead.id}
+          placeholder="Switch to a different lead…"
+        />
       </div>
 
       {/* ── HEADER ─────────────────────────────────────────────── */}

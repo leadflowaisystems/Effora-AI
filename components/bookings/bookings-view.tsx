@@ -11,7 +11,7 @@ import { SimulateBookingSheet, type SimulateLead } from "./simulate-booking-shee
 import { ManualBookingSheet } from "./manual-booking-sheet";
 import { TimeRangeFilter, readStoredFilter } from "@/components/filters/time-range-filter";
 import { SubCategoryTabs } from "@/components/filters/sub-category-tabs";
-import { parseRange, type Range } from "@/lib/range";
+import { parseRange, getRangeBounds, getFutureBounds, isInRange, isInFutureRange, type Range } from "@/lib/range";
 import { cn } from "@/lib/utils";
 
 const STORAGE_KEY = "effora-bookings-filter";
@@ -210,6 +210,28 @@ export function BookingsView({ initialBookings, orgSlug, orgId, isDev, leads }: 
   const toggle = (key: string) => setOpen((prev) => ({ ...prev, [key]: prev[key] === false ? true : false }));
   const isOpen = (key: string) => open[key] !== false; // default open
 
+  // Apply the SAME filter to the row list: range + category.
+  // Upcoming: forward-looking window; Completed/No Show/All: backward-looking.
+  const { from: rangeFrom, to: rangeTo } = getRangeBounds(range, customFrom, customTo);
+  const { from: futureFrom, to: futureTo } = getFutureBounds(range, customTo);
+
+  const visibleBookings = bookings.filter((b) => {
+    if (category === "upcoming") {
+      return b.status === "confirmed" && isInFutureRange(b.starts_at, range, futureTo);
+    }
+    if (category === "completed") {
+      return b.status === "completed" && isInRange(b.starts_at ?? b.created_at, range, rangeFrom, rangeTo);
+    }
+    if (category === "no_show") {
+      return b.status === "no_show" && isInRange(b.starts_at ?? b.created_at, range, rangeFrom, rangeTo);
+    }
+    // "all" — include everything within the range window
+    return isInRange(b.created_at, range, rangeFrom, rangeTo);
+  });
+
+  // Suppress TS "declared but never read" for futureFrom (used above in closure)
+  void futureFrom;
+
   const devBar = (
     <div className="flex flex-wrap items-center gap-2">
       <ManualBookingSheet orgId={orgId} leads={leads} onDone={handleUpdate} />
@@ -241,7 +263,7 @@ export function BookingsView({ initialBookings, orgSlug, orgId, isDev, leads }: 
       </div>
 
       {/* ── Empty state ──────────────────────────────────── */}
-      {bookings.length === 0 && (
+      {visibleBookings.length === 0 && (
         <div className="flex flex-col items-center justify-center gap-4 py-16 text-center">
           <div className="flex h-14 w-14 items-center justify-center rounded-[var(--radius-lg)] bg-[var(--bg-3)]">
             <CalendarDays className="h-7 w-7 text-[var(--text-3)]" />
@@ -256,9 +278,9 @@ export function BookingsView({ initialBookings, orgSlug, orgId, isDev, leads }: 
       )}
 
       {/* ── Upcoming: month-grouped view ─────────────────── */}
-      {category === "upcoming" && bookings.length > 0 && (
+      {category === "upcoming" && visibleBookings.length > 0 && (
         <div className="space-y-6">
-          {groupByMonth(bookings.filter((b) => b.status === "confirmed")).map((monthGroup) => (
+          {groupByMonth(visibleBookings).map((monthGroup) => (
             <div key={monthGroup.key} className="space-y-3">
               <MonthHeader
                 label={monthGroup.label}
@@ -283,9 +305,9 @@ export function BookingsView({ initialBookings, orgSlug, orgId, isDev, leads }: 
       )}
 
       {/* ── All / Completed / No Show: status-grouped view ── */}
-      {category !== "upcoming" && bookings.length > 0 && (
+      {category !== "upcoming" && visibleBookings.length > 0 && (
         <div className="space-y-6">
-          {groupByStatus(bookings, category).map((group) => (
+          {groupByStatus(visibleBookings, category).map((group) => (
             <div key={group.key} className="space-y-3">
               <SectionHeader
                 label={group.label} icon={group.icon} color={group.color}
