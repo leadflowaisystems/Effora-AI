@@ -24,8 +24,8 @@ const Schema = z.object({
 export async function POST(req: NextRequest) {
   const ip = getIp(req);
 
-  // Rate limit: 5 attempts per 15 min per IP
-  const rl = await rateLimitAsync(`signin:${ip}`, { limit: 5, windowMs: 15 * 60_000 });
+  // Rate limit: 10 attempts per 15 min per IP (raised from 5 — less aggressive for normal users)
+  const rl = await rateLimitAsync(`signin:${ip}`, { limit: 10, windowMs: 15 * 60_000 });
   if (!rl.allowed) {
     return NextResponse.json(
       { error: "Too many login attempts. Please wait 15 minutes and try again." },

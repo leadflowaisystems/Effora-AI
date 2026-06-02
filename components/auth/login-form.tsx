@@ -93,8 +93,10 @@ export function LoginForm() {
     if (!email) { setError("Enter your email address first."); return; }
     setLoading(true);
     setError(null);
+    // redirectTo becomes ?next= in the Supabase email template token-hash URL.
+    // /auth/confirm with type=recovery always redirects to /reset/update.
     const { error: err } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${location.origin}/auth/callback?type=recovery`,
+      redirectTo: `${location.origin}/reset/update`,
     });
     setLoading(false);
     if (err) { setError(err.message); }

@@ -1,23 +1,28 @@
 /**
  * POST /api/auth/magic-link
  *
- * Server-side magic link sender:
- * 1. Rate limit: 5 requests per 15 min per IP
- * 2. Disposable email blocklist
- * 3. Generates link via Supabase Admin API
- * 4. Emails the link via Brevo SMTP (lib/email.ts)
- * 5. Audit log entry
+ * Sends a magic-link sign-in email via Supabase Auth (NOT via our lib/email.ts).
+ * Supabase uses the Custom SMTP configured in the Supabase dashboard (Brevo),
+ * so this works independently of our BREVO_SMTP_* env vars.
  *
- * NOTE: admin.generateLink generates the URL but does NOT send the email.
- * We send it ourselves via Brevo for full control + SMTP independence.
+ * Flow:
+ *  1. Rate limit + disposable-email check
+ *  2. supabase.auth.signInWithOtp() — Supabase generates the link AND sends the email
+ *  3. User clicks link → /auth/confirm?token_hash=…&type=magiclink&next=/
+ *  4. /auth/confirm verifyOtp → session created → dashboard
+ *
+ * Previous implementation used admin.generateLink() + lib/email.ts (nodemailer)
+ * which required our own BREVO_SMTP_* credentials. Those can differ from the
+ * credentials Supabase has configured, causing "535 Authentication failed".
+ * Delegating to Supabase avoids this entirely.
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { createServiceClient } from "@/lib/supabase/server";
 import { rateLimitAsync, getIp } from "@/lib/ratelimit";
 import { isDisposableEmail } from "@/lib/disposable-domains";
 import { logAudit } from "@/lib/audit";
-import { sendEmail } from "@/lib/email";
 import { z } from "zod";
 
 const Schema = z.object({
@@ -28,11 +33,11 @@ const Schema = z.object({
 export async function POST(req: NextRequest) {
   const ip = getIp(req);
 
-  // Rate limit: 5 magic-link requests per IP per 15 min
-  const rl = await rateLimitAsync(`magic-link:${ip}`, { limit: 5, windowMs: 15 * 60_000 });
+  // Rate limit: 10 requests per hour per IP (generous — Supabase enforces its own limits too)
+  const rl = await rateLimitAsync(`magic-link:${ip}`, { limit: 10, windowMs: 60 * 60_000 });
   if (!rl.allowed) {
     return NextResponse.json(
-      { error: "Too many requests. Please wait 15 minutes before trying again." },
+      { error: "Too many requests. Please wait an hour before trying again." },
       { status: 429 }
     );
   }
@@ -43,8 +48,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid request" }, { status: 400 });
   }
 
-  const { email, redirectTo } = parsed.data;
-  console.log("[magic-link] request for:", email, "| ip:", ip);
+  const { email } = parsed.data;
+  console.log("[magic-link] request for:", email.split("@")[1], "| ip:", ip);
 
   if (isDisposableEmail(email)) {
     return NextResponse.json(
@@ -53,75 +58,60 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const svc    = createServiceClient();
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai-qh35.vercel.app";
-  const cbUrl  = redirectTo ?? `${appUrl}/auth/callback`;
 
-  // Generate the magic link URL (does NOT send email — we send it below via Brevo)
+  // Collect session cookies (in case Supabase sets any during this call)
+  const pendingCookies: Array<{ name: string; value: string; options: CookieOptions }> = [];
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll:  () => req.cookies.getAll(),
+        setAll:  (cookiesToSet: Array<{ name: string; value: string; options: CookieOptions }>) =>
+          pendingCookies.push(...cookiesToSet),
+      },
+    }
+  );
+
+  // Supabase sends the magic-link email via its own configured SMTP (Brevo in dashboard).
+  // emailRedirectTo becomes the ?next= param in the /auth/confirm token-hash URL.
   const t0 = Date.now();
-  const { data: linkData, error } = await svc.auth.admin.generateLink({
-    type:    "magiclink",
+  const { error } = await supabase.auth.signInWithOtp({
     email,
-    options: { redirectTo: cbUrl },
+    options: {
+      emailRedirectTo:  `${appUrl}/`,   // where to go after /auth/confirm verifies
+      shouldCreateUser: true,           // allow sign-up via magic link for new emails
+    },
   });
-  console.log(`[magic-link] generateLink took ${Date.now() - t0}ms`, { ok: !error, error: error?.message });
+  console.log(`[magic-link] signInWithOtp took ${Date.now() - t0}ms`, { ok: !error, errorCode: error?.code });
 
-  void logAudit(svc, null, null, "auth.magic_link_request", {
+  void logAudit(createServiceClient(), null, null, "auth.magic_link_request", {
     email_domain: email.split("@")[1],
     ip,
     user_agent:   req.headers.get("user-agent")?.slice(0, 200),
     success:      !error,
+    error_code:   error?.code,
   });
 
-  if (error || !linkData?.properties?.action_link) {
-    console.error("[magic-link] Supabase generateLink error:", error?.message);
-    return NextResponse.json(
-      { error: "Could not generate magic link. Please try again or use email/password." },
-      { status: 500 }
-    );
+  if (error) {
+    console.error("[magic-link] signInWithOtp error:", error.message, "| code:", error.code);
+
+    const msg = error.message?.toLowerCase() ?? "";
+    if (msg.includes("rate") || error.status === 429) {
+      return NextResponse.json(
+        { error: "Too many sign-in emails sent to this address. Please wait a few minutes and try again." },
+        { status: 429 }
+      );
+    }
+    if (msg.includes("invalid") || msg.includes("email")) {
+      return NextResponse.json({ error: "Invalid email address." }, { status: 400 });
+    }
+    // Return Supabase's own message — it's accurate and not an SMTP message
+    return NextResponse.json({ error: error.message }, { status: 400 });
   }
 
-  const actionLink = linkData.properties.action_link;
-  console.log(`[magic-link] action_link ready, sending email (total so far: ${Date.now() - t0}ms)`);
-
-  // Await the send so we can surface errors to the user instead of silently
-  // failing. A 5-second SMTP timeout is generous enough for Brevo.
-  try {
-    await sendEmail({
-      to:       email,
-      subject:  "Sign in to Effora AI",
-      template: "magic_link",
-      html: `
-        <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
-          <h2 style="font-size:20px;font-weight:700;margin-bottom:8px">Sign in to Effora AI</h2>
-          <p style="color:#555;margin-bottom:24px">Click the button below to sign in. This link expires in 1 hour.</p>
-          <a href="${actionLink}"
-             style="display:inline-block;background:#C1F15C;color:#0A0A0C;padding:12px 28px;border-radius:8px;font-weight:700;text-decoration:none;font-size:15px">
-            Sign in to Effora AI →
-          </a>
-          <p style="color:#999;font-size:12px;margin-top:32px">
-            Or copy this link:<br/>
-            <a href="${actionLink}" style="color:#888;word-break:break-all">${actionLink}</a>
-          </p>
-          <p style="color:#ccc;font-size:11px;margin-top:16px">
-            If you didn&apos;t request this, you can safely ignore this email.
-          </p>
-        </div>
-      `,
-    });
-    console.log(`[magic-link] email sent to: ${email} (total: ${Date.now() - t0}ms)`);
-  } catch (emailErr) {
-    console.error("[magic-link] Brevo send FAILED:", emailErr);
-    // Surface the error — the user needs to know email didn't go through
-    return NextResponse.json(
-      {
-        error: "Could not deliver the magic link email. " +
-               "Please check your email address or use Email/Password sign-in instead. " +
-               `(SMTP error: ${emailErr instanceof Error ? emailErr.message : String(emailErr)})`,
-      },
-      { status: 500 }
-    );
-  }
-
-  return NextResponse.json({ ok: true });
+  const response = NextResponse.json({ ok: true });
+  pendingCookies.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
+  return response;
 }
