@@ -4,7 +4,7 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import {
   Calendar, Clock, Video, User, RefreshCw,
-  AlertTriangle, CheckCircle2, XCircle, RotateCcw, Loader2,
+  AlertTriangle, CheckCircle2, XCircle, RotateCcw, Loader2, Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -61,10 +61,12 @@ interface Props {
   orgSlug:  string;
   orgId:    string;
   onUpdate: () => void;
+  onDelete: (id: string) => void;
 }
 
-export function BookingCard({ booking, orgSlug, orgId, onUpdate }: Props) {
-  const [marking, setMarking] = useState(false);
+export function BookingCard({ booking, orgSlug, orgId, onUpdate, onDelete }: Props) {
+  const [marking,  setMarking]  = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const { date, time } = formatDateTime(booking.starts_at);
   const cfg = STATUS_CONFIG[booking.status] ?? STATUS_CONFIG.pending;
@@ -78,6 +80,18 @@ export function BookingCard({ booking, orgSlug, orgId, onUpdate }: Props) {
     .slice(0, 2)
     .map((w) => w[0]?.toUpperCase() ?? "")
     .join("");
+
+  async function handleDelete() {
+    if (deleting) return;
+    if (!window.confirm("Delete this booking? It will be hidden from your list.")) return;
+    setDeleting(true);
+    try {
+      await fetch(`/api/orgs/${orgId}/bookings/${booking.id}`, { method: "DELETE" });
+      onDelete(booking.id);
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   async function markNoShow() {
     if (marking || booking.status !== "confirmed") return;
@@ -185,13 +199,13 @@ export function BookingCard({ booking, orgSlug, orgId, onUpdate }: Props) {
       )}
 
       {/* ── Actions ── */}
-      {booking.status === "confirmed" && (
-        <div className="flex items-center gap-2 pt-1 border-t border-[var(--border)]">
+      <div className="flex items-center gap-2 pt-1 border-t border-[var(--border)]">
+        {booking.status === "confirmed" && (
           <Button
             variant="ghost"
             size="sm"
             onClick={markNoShow}
-            disabled={marking}
+            disabled={marking || deleting}
             className="h-7 text-xs gap-1.5 text-[var(--text-3)] hover:text-red-400 hover:bg-red-500/10"
           >
             {marking ? (
@@ -201,8 +215,22 @@ export function BookingCard({ booking, orgSlug, orgId, onUpdate }: Props) {
             )}
             Mark no-show
           </Button>
-        </div>
-      )}
+        )}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleDelete}
+          disabled={deleting || marking}
+          className="ml-auto h-7 text-xs gap-1.5 text-[var(--text-3)] hover:text-red-400 hover:bg-red-500/10"
+        >
+          {deleting ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <Trash2 className="h-3 w-3" />
+          )}
+          {deleting ? "Deleting…" : "Delete"}
+        </Button>
+      </div>
     </motion.div>
   );
 }

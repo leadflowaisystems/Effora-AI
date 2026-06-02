@@ -38,6 +38,7 @@ export async function GET(req: NextRequest, { params }: Params) {
       lead:leads (id, name, external_id, channel, score, stage, avatar_url)
     `)
     .eq("org_id", params.orgId)
+    .is("deleted_at", null)               // exclude soft-deleted conversations
     .order("last_message_at", { ascending: false, nullsFirst: false })
     .limit(limit + 1); // +1 to detect if there's a next page
 

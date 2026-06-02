@@ -11,11 +11,13 @@ import type { InboxConversation } from "@/types/inbox";
 
 interface Props {
   orgSlug:       string;
+  orgId:         string;
   conversations: InboxConversation[];
   onNewDm:       () => void;
+  onDelete:      (id: string) => void;
 }
 
-export function ConversationListPanel({ orgSlug, conversations, onNewDm }: Props) {
+export function ConversationListPanel({ orgSlug, orgId, conversations, onNewDm, onDelete }: Props) {
   const pathname = usePathname();
   const [query,  setQuery]  = React.useState("");
 
@@ -86,7 +88,7 @@ export function ConversationListPanel({ orgSlug, conversations, onNewDm }: Props
                     show:   { opacity: 1, x: 0, transition: { duration: 0.22, ease: [0.22, 1, 0.36, 1] } },
                   }}
                 >
-                  <ConversationItem conv={conv} href={href} active={active} />
+                  <ConversationItem conv={conv} href={href} active={active} orgId={orgId} onDelete={onDelete} />
                 </motion.div>
               );
             })}

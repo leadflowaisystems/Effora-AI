@@ -125,6 +125,12 @@ export function PaymentsView({
     router.refresh();
   }, [orgId, router]);
 
+  // Optimistically remove a deleted payment from local state
+  const handleDelete = useCallback((id: string) => {
+    setPayments((prev) => prev.filter((p) => p.id !== id));
+    setLocalPending((prev) => prev.filter((p) => p.id !== id));
+  }, []);
+
   const groups = groupPayments(payments);
 
   // ── Revenue totals ──────────────────────────────────────────
@@ -218,6 +224,7 @@ export function PaymentsView({
                           key={p.id}
                           payment={p}
                           onUpdate={handleUpdate}
+                          onDelete={handleDelete}
                           isDev={isDev}
                           orgId={orgId}
                         />

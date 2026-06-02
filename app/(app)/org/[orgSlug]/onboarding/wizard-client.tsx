@@ -261,7 +261,10 @@ export function WizardClient({ orgId, orgSlug, orgName, userEmail }: Props) {
       try { msg = (await r.json()).error ?? msg; } catch { /* non-JSON body */ }
       throw new Error(msg);
     }
-    router.push(`/org/${orgSlug}/process`);
+    // Hard navigate so the server re-runs all Server Components with fresh DB data.
+    // router.push() without router.refresh() leaves the old layout cached, causing
+    // the "frozen/broken view" users see until they manually refresh the page.
+    window.location.href = `/org/${orgSlug}/process`;
   }
 
   const isLastStep = step === STEPS.length - 1;

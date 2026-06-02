@@ -1,6 +1,6 @@
 /**
- * GET /api/orgs/[orgId]/conversations/[convId]
- * Returns: { conversation, messages, pendingDraft }
+ * GET    /api/orgs/[orgId]/conversations/[convId]  — fetch conversation + messages
+ * DELETE /api/orgs/[orgId]/conversations/[convId]  — soft-delete (sets deleted_at)
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -50,4 +50,24 @@ export async function GET(_req: NextRequest, { params }: Params) {
     messages:     msgRes.data ?? [],
     pendingDraft: draftRes.data ?? null,
   });
+}
+
+export async function DELETE(_req: NextRequest, { params }: Params) {
+  const user = await assertMember(params.orgId);
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const svc = createServiceClient();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (svc as any)
+    .from("conversations")
+    .update({ deleted_at: new Date().toISOString() })
+    .eq("id", params.convId)
+    .eq("org_id", params.orgId);
+
+  if (error) {
+    console.error("[conversations/delete]", error.message);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ ok: true });
 }

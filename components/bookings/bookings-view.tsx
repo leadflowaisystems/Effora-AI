@@ -137,6 +137,11 @@ export function BookingsView({ initialBookings, orgSlug, orgId, isDev, leads }: 
     router.refresh();
   }, [orgId, router]);
 
+  // Optimistically remove a deleted booking from local state
+  const handleDelete = useCallback((id: string) => {
+    setBookings((prev) => prev.filter((b) => b.id !== id));
+  }, []);
+
   const groups = groupBookings(bookings);
 
   // Dev bar — shown in both empty and populated states
@@ -203,6 +208,7 @@ export function BookingsView({ initialBookings, orgSlug, orgId, isDev, leads }: 
                         orgSlug={orgSlug}
                         orgId={orgId}
                         onUpdate={handleUpdate}
+                        onDelete={handleDelete}
                       />
                     ))}
                   </div>

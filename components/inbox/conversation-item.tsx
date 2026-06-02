@@ -2,16 +2,18 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Instagram, Phone, MessageSquare } from "lucide-react";
+import { Instagram, Phone, MessageSquare, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { timeAgo } from "@/lib/time";
 import type { InboxConversation } from "@/types/inbox";
 
 interface Props {
-  conv:    InboxConversation;
-  href:    string;
-  active:  boolean;
+  conv:     InboxConversation;
+  href:     string;
+  active:   boolean;
+  orgId:    string;
+  onDelete: (id: string) => void;
 }
 
 const STAGE_COLORS: Record<string, { avatar: string; badge: string }> = {
@@ -41,11 +43,27 @@ function ChannelIcon({ provider }: { provider: string }) {
   return <MessageSquare className="h-2.5 w-2.5 text-[var(--text-3)]" />;
 }
 
-export function ConversationItem({ conv, href, active }: Props) {
-  const lead   = conv.lead;
-  const colors = stageStyle(lead?.stage ?? "cold");
+export function ConversationItem({ conv, href, active, orgId, onDelete }: Props) {
+  const lead    = conv.lead;
+  const colors  = stageStyle(lead?.stage ?? "cold");
+  const [deleting, setDeleting] = React.useState(false);
+
+  async function handleDelete(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (deleting) return;
+    if (!window.confirm("Delete this conversation? It will be hidden from your inbox.")) return;
+    setDeleting(true);
+    try {
+      await fetch(`/api/orgs/${orgId}/conversations/${conv.id}`, { method: "DELETE" });
+      onDelete(conv.id);
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   return (
+    <div className="relative group">
     <Link
       href={href}
       className={cn(
@@ -103,5 +121,20 @@ export function ConversationItem({ conv, href, active }: Props) {
         </div>
       </div>
     </Link>
+    {/* Delete button — appears on hover */}
+    <button
+      type="button"
+      onClick={handleDelete}
+      disabled={deleting}
+      aria-label="Delete conversation"
+      className={cn(
+        "absolute right-2 top-1/2 -translate-y-1/2 flex h-6 w-6 items-center justify-center rounded",
+        "text-[var(--text-3)] hover:text-red-400 hover:bg-red-500/10 transition-colors",
+        "opacity-0 group-hover:opacity-100 focus:opacity-100 disabled:opacity-50"
+      )}
+    >
+      <Trash2 className="h-3.5 w-3.5" />
+    </button>
+    </div>
   );
 }

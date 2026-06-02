@@ -136,8 +136,10 @@ export function InboxShell({
 
         <ConversationListPanel
           orgSlug={orgSlug}
+          orgId={orgId}
           conversations={conversations}
           onNewDm={() => setDmOpen(true)}
+          onDelete={(id) => setConversations((prev) => prev.filter((c) => c.id !== id))}
         />
       </div>
 

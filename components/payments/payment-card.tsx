@@ -4,7 +4,7 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import {
   ExternalLink, User, CheckCircle2,
-  Clock, XCircle, AlertTriangle, Copy, Check,
+  Clock, XCircle, AlertTriangle, Copy, Check, Trash2, Loader2,
 } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
@@ -57,14 +57,29 @@ interface Props {
   payment:  PaymentRow;
   /** Called after a dev action so the list can refresh. */
   onUpdate?: () => void;
+  /** Called with the deleted payment id to remove it from local state. */
+  onDelete?: (id: string) => void;
   /** Shows dev action buttons when true. */
   isDev?:    boolean;
   orgId?:    string;
 }
 
-export function PaymentCard({ payment, onUpdate, isDev, orgId }: Props) {
-  const [acting,  setActing]  = useState<"capture" | "unpaid" | "markpaid" | null>(null);
-  const [copied,  setCopied]  = useState(false);
+export function PaymentCard({ payment, onUpdate, onDelete, isDev, orgId }: Props) {
+  const [acting,   setActing]   = useState<"capture" | "unpaid" | "markpaid" | null>(null);
+  const [copied,   setCopied]   = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  async function handleDelete() {
+    if (!orgId || deleting) return;
+    if (!window.confirm("Delete this payment? It will be hidden from your list.")) return;
+    setDeleting(true);
+    try {
+      await fetch(`/api/orgs/${orgId}/payments/${payment.id}`, { method: "DELETE" });
+      onDelete?.(payment.id);
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   async function copyLink() {
     if (!payment.payment_link_url) return;
@@ -195,6 +210,19 @@ export function PaymentCard({ payment, onUpdate, isDev, orgId }: Props) {
               </button>
             )}
           </div>
+        )}
+
+        {/* Delete */}
+        {orgId && (
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={deleting || !!acting}
+            className="ml-auto inline-flex items-center gap-1 text-xs text-[var(--text-3)] hover:text-red-400 transition-colors disabled:opacity-50"
+          >
+            {deleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+            {deleting ? "Deleting…" : "Delete"}
+          </button>
         )}
 
         {/* Dev-only inline actions */}

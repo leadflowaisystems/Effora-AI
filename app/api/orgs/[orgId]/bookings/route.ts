@@ -41,6 +41,7 @@ export async function GET(req: NextRequest, { params }: Params) {
       lead:leads(id, name, avatar_url, stage, channel)
     `)
     .eq("org_id", params.orgId)
+    .is("deleted_at", null)               // exclude soft-deleted bookings
     .order("starts_at", { ascending: false, nullsFirst: false })
     .limit(limit + 1);
 

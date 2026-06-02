@@ -37,6 +37,7 @@ export async function GET(req: NextRequest, { params }: Params) {
       lead:leads(id, name, avatar_url, stage, channel)
     `)
     .eq("org_id", params.orgId)
+    .is("deleted_at", null)               // exclude soft-deleted payments
     .order("created_at", { ascending: false })
     .limit(limit + 1);
 
