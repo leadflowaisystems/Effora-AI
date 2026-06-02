@@ -16,6 +16,7 @@ import {
   ChevronLeft, Instagram, CheckCircle2, AlertCircle, RefreshCw, Activity,
 } from "lucide-react";
 import { InstagramConnectClient } from "./instagram-client";
+import { ConnectComplianceButton } from "@/components/compliance/connect-compliance-button";
 
 interface Props {
   params:      { orgSlug: string };
@@ -130,24 +131,24 @@ export default async function InstagramSettingsPage({ params, searchParams }: Pr
                 for testing in development mode.
               </p>
             </div>
-            <Link
-              href={connectUrl}
-              className="inline-flex items-center gap-2 rounded-[var(--radius)] bg-[var(--brand)] px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity"
-            >
-              <Instagram className="h-4 w-4" />
-              Connect Instagram
-            </Link>
+            <ConnectComplianceButton
+              orgId={org.id}
+              channel="instagram"
+              connectUrl={connectUrl}
+              label="Connect Instagram"
+            />
           </div>
         )}
 
         {isConnected && (
           <div className="pt-1">
-            <Link
-              href={connectUrl}
-              className="text-xs text-[var(--text-3)] hover:text-[var(--text-2)] underline-offset-2 hover:underline"
-            >
-              Reconnect or switch account
-            </Link>
+            <ConnectComplianceButton
+              orgId={org.id}
+              channel="instagram"
+              connectUrl={connectUrl}
+              label="Reconnect or switch account"
+              className="bg-transparent text-[var(--text-3)] hover:text-[var(--text-2)] text-xs px-0 py-0 underline-offset-2 hover:underline"
+            />
           </div>
         )}
       </div>

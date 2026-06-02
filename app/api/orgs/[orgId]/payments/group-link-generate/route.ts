@@ -10,6 +10,7 @@ import { z } from "zod";
 import { getOrCreateConversation, insertOutboundMessage } from "@/lib/conversation";
 import { createPaymentLink } from "@/lib/razorpay";
 import { getLeadFirstName } from "@/lib/leads";
+import { inngest } from "@/lib/inngest/client";
 
 interface Params { params: { orgId: string } }
 
@@ -78,7 +79,7 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   const now = new Date().toISOString();
   let successCount = 0;
-  const results: Array<{ lead_id: string; ok: boolean; error?: string }> = [];
+  const results: Array<{ lead_id: string; ok: boolean; msg?: string; error?: string }> = [];
 
   // Process each member sequentially (Razorpay rate limits)
   for (const m of members) {
@@ -140,11 +141,55 @@ export async function POST(req: NextRequest, { params }: Params) {
       await insertOutboundMessage(convId, params.orgId, msg, "group_payment_request");
 
       successCount++;
-      results.push({ lead_id: lead.id, ok: true });
+      results.push({ lead_id: lead.id, ok: true, msg });
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       console.error("[payments/group-link-generate] failed for lead", lead.id, errMsg);
       results.push({ lead_id: lead.id, ok: false, error: errMsg });
+    }
+  }
+
+  // ── Fire Inngest fan-out for actual IG/WA API delivery ─────────────────────
+  // Create a broadcast record + delivery rows so on-broadcast-process can call
+  // the channel APIs for each member (rate-limited, dev-mode safe).
+  if (successCount > 0) {
+    try {
+      const broadcastChannel = (members[0]?.lead?.channel === "instagram") ? "instagram" : "whatsapp";
+
+      const { data: bcast } = await svc.from("broadcasts").insert({
+        org_id:           params.orgId,
+        group_id:         parsed.data.group_id,
+        channel:          broadcastChannel,
+        message_template: `Payment request: ₹${parsed.data.amount_inr.toLocaleString("en-IN")} for "${parsed.data.description}"`,
+        variables:        { type: "payment_request" },
+        status:           "queued",
+        send_at:          now,
+        total_recipients: successCount,
+        created_at:       now,
+      }).select("id").single();
+
+      if (bcast) {
+        const deliveryRows = results
+          .filter((r) => r.ok && r.msg)
+          .map((r) => ({
+            broadcast_id:     (bcast as { id: string }).id,
+            lead_id:          r.lead_id,
+            channel:          broadcastChannel,
+            rendered_message: r.msg, // personalized message with payment link
+            status:           "pending",
+            created_at:       now,
+          }));
+
+        if (deliveryRows.length > 0) {
+          await svc.from("broadcast_deliveries").insert(deliveryRows);
+          await inngest.send({
+            name: "broadcast.queued",
+            data: { broadcast_id: (bcast as { id: string }).id, org_id: params.orgId },
+          });
+        }
+      }
+    } catch (e) {
+      console.warn("[payments/group-link-generate] Inngest fan-out setup failed (non-fatal):", e);
     }
   }
 
