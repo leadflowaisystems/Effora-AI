@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import {
   CalendarDays, CheckCircle2, AlertTriangle,
   Clock, ChevronDown, ChevronRight,
@@ -10,6 +10,8 @@ import {
 import { BookingCard, type BookingRow } from "./booking-card";
 import { SimulateBookingSheet, type SimulateLead } from "./simulate-booking-sheet";
 import { ManualBookingSheet } from "./manual-booking-sheet";
+import { RangePicker, readStoredRange } from "@/components/ui/range-picker";
+import { parseRange, type Range } from "@/lib/range";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -123,10 +125,64 @@ function SectionHeader({
   );
 }
 
+interface BookingStats { total: number; upcoming: number; completed: number; no_shows: number }
+
+// Shimmer tile
+function StatTile({ label, value, color, loading }: {
+  label: string; value: string | number; color: string; loading: boolean;
+}) {
+  return (
+    <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-2)] p-4 space-y-1">
+      <p className="text-xs text-[var(--text-3)]">{label}</p>
+      {loading ? (
+        <div className="h-7 w-12 rounded-[var(--radius-sm)] bg-[var(--bg-3)] animate-pulse" />
+      ) : (
+        <p className={cn("font-mono text-xl font-semibold tabular-nums", color)}>{value}</p>
+      )}
+    </div>
+  );
+}
+
 export function BookingsView({ initialBookings, orgSlug, orgId, isDev, leads }: Props) {
-  const router = useRouter();
-  const [bookings, setBookings] = useState<BookingRow[]>(initialBookings);
-  const [open, setOpen] = useState<Record<string, boolean>>({ upcoming: true, "no-shows": true });
+  const router      = useRouter();
+  const pathname    = usePathname();
+  const searchParams = useSearchParams();
+
+  const [range, setRangeState] = useState<Range>(() => {
+    const fromUrl = parseRange(typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("range") : null);
+    if (fromUrl !== "month" || typeof window === "undefined") return fromUrl;
+    return readStoredRange() ?? "month";
+  });
+
+  const [bookings, setBookings]             = useState<BookingRow[]>(initialBookings);
+  const [open, setOpen]                     = useState<Record<string, boolean>>({ upcoming: true, "no-shows": true });
+  const [stats, setStats]                   = useState<BookingStats | null>(null);
+  const [statsLoading, setStatsLoading]     = useState(true);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const fetchStats = useCallback(async (r: Range) => {
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    setStatsLoading(true);
+    try {
+      const res = await fetch(`/api/orgs/${orgId}/bookings/stats?range=${r}`, { signal: ctrl.signal });
+      if (!res.ok) return;
+      const json = await res.json();
+      setStats({ total: json.total, upcoming: json.upcoming, completed: json.completed, no_shows: json.no_shows });
+    } catch { /* aborted */ }
+    finally { setStatsLoading(false); }
+  }, [orgId]);
+
+  const setRange = useCallback((r: Range) => {
+    setRangeState(r);
+    fetchStats(r);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("range", r);
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }, [fetchStats, searchParams, pathname, router]);
+
+  useEffect(() => { fetchStats(range); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleUpdate = useCallback(async () => {
     const res = await fetch(`/api/orgs/${orgId}/bookings`);
@@ -134,8 +190,9 @@ export function BookingsView({ initialBookings, orgSlug, orgId, isDev, leads }: 
       const json = await res.json();
       setBookings(json.bookings ?? []);
     }
+    fetchStats(range);
     router.refresh();
-  }, [orgId, router]);
+  }, [orgId, router, fetchStats, range]);
 
   // Optimistically remove a deleted booking from local state
   const handleDelete = useCallback((id: string) => {
@@ -181,6 +238,20 @@ export function BookingsView({ initialBookings, orgSlug, orgId, isDev, leads }: 
 
   return (
     <div className="space-y-6 max-w-2xl">
+      {/* ── Stats + range picker ──────────────────────────── */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs font-medium text-[var(--text-3)] uppercase tracking-wide">Overview</p>
+          <RangePicker value={range} onChange={setRange} />
+        </div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <StatTile label="Total"     value={stats?.total     ?? 0} color="text-[var(--text)]"    loading={statsLoading} />
+          <StatTile label="Upcoming"  value={stats?.upcoming  ?? 0} color="text-emerald-400"       loading={statsLoading} />
+          <StatTile label="Completed" value={stats?.completed ?? 0} color="text-[var(--brand)]"   loading={statsLoading} />
+          <StatTile label="No-shows"  value={stats?.no_shows  ?? 0} color="text-red-400"           loading={statsLoading} />
+        </div>
+      </div>
+
       {devBar}
       {groups.map((group) => {
         const isOpen = open[group.key] !== false;

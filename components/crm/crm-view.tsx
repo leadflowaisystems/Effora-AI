@@ -6,9 +6,11 @@ import {
   MessageSquare, Calendar, CreditCard, StickyNote, FileText,
   Phone, Instagram, ChevronRight, RefreshCw,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { toast } from "@/components/ui/use-toast";
+import { RangePicker, readStoredRange } from "@/components/ui/range-picker";
+import { parseRange, type Range } from "@/lib/range";
 
 /* ─── Types ────────────────────────────────────────────────────── */
 export interface LeadRow {
@@ -100,9 +102,28 @@ function getIgHandle(lead: LeadRow): string | null {
 
 const inputCls = "w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-3)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-3)] focus:outline-none focus:ring-1 focus:ring-[var(--brand)]";
 
+interface CrmStats { total: number; hot: number; booked: number; won: number }
+
+function CrmStatTile({ label, value, color, loading }: {
+  label: string; value: number; color: string; loading: boolean;
+}) {
+  return (
+    <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-2)] p-4 space-y-1">
+      <p className="text-xs text-[var(--text-3)]">{label}</p>
+      {loading ? (
+        <div className="h-7 w-10 rounded-[var(--radius-sm)] bg-[var(--bg-3)] animate-pulse" />
+      ) : (
+        <p className={cn("font-mono text-xl font-semibold tabular-nums", color)}>{value}</p>
+      )}
+    </div>
+  );
+}
+
 /* ─── Main component ─────────────────────────────────────────────── */
 export function CrmView({ orgId, orgSlug, initialLeads }: Props) {
-  const router = useRouter();
+  const router      = useRouter();
+  const pathname    = usePathname();
+  const searchParams = useSearchParams();
   const [leads,       setLeads]       = React.useState<LeadRow[]>(initialLeads);
   const [search,      setSearch]      = React.useState("");
   const [stageFilter, setStageFilter] = React.useState("");
@@ -124,6 +145,40 @@ export function CrmView({ orgId, orgSlug, initialLeads }: Props) {
   const [newSource,  setNewSource]  = React.useState("Manual");
   const [addError,   setAddError]   = React.useState<string | null>(null);
   const [saving,     setSaving]     = React.useState(false);
+
+  // ── CRM stats + range ──────────────────────────────────────────────────
+  const [range, setRangeState] = React.useState<Range>(() => {
+    const fromUrl = parseRange(typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("range") : null);
+    if (fromUrl !== "month" || typeof window === "undefined") return fromUrl;
+    return readStoredRange() ?? "month";
+  });
+  const [crmStats, setCrmStats]       = React.useState<CrmStats | null>(null);
+  const [statsLoading, setStatsLoading] = React.useState(true);
+  const statsAbortRef = React.useRef<AbortController | null>(null);
+
+  const fetchStats = React.useCallback(async (r: Range) => {
+    statsAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    statsAbortRef.current = ctrl;
+    setStatsLoading(true);
+    try {
+      const res = await fetch(`/api/orgs/${orgId}/crm/stats?range=${r}`, { signal: ctrl.signal });
+      if (!res.ok) return;
+      const json = await res.json();
+      setCrmStats({ total: json.total, hot: json.hot, booked: json.booked, won: json.won });
+    } catch { /* aborted */ }
+    finally { setStatsLoading(false); }
+  }, [orgId]);
+
+  const setRange = React.useCallback((r: Range) => {
+    setRangeState(r);
+    fetchStats(r);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("range", r);
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }, [fetchStats, searchParams, pathname, router]);
+
+  React.useEffect(() => { fetchStats(range); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function fetchLeads(reset = true) {
     setLoading(true);
@@ -261,6 +316,20 @@ export function CrmView({ orgId, orgSlug, initialLeads }: Props) {
           className="flex items-center gap-1.5 rounded-[var(--radius)] bg-[var(--brand)] px-3 py-2 text-sm font-semibold text-[#0A0A0C] hover:opacity-90 transition-opacity">
           <Plus className="h-3.5 w-3.5" /> Add Lead
         </button>
+      </div>
+
+      {/* ── Pipeline stats + range picker ──────────────────── */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs font-medium text-[var(--text-3)] uppercase tracking-wide">Pipeline</p>
+          <RangePicker value={range} onChange={setRange} />
+        </div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <CrmStatTile label="Leads"     value={crmStats?.total  ?? 0} color="text-[var(--text)]"  loading={statsLoading} />
+          <CrmStatTile label="Hot"       value={crmStats?.hot    ?? 0} color="text-red-400"         loading={statsLoading} />
+          <CrmStatTile label="Booked"    value={crmStats?.booked ?? 0} color="text-blue-400"        loading={statsLoading} />
+          <CrmStatTile label="Won / Paid" value={crmStats?.won   ?? 0} color="text-[var(--brand)]" loading={statsLoading} />
+        </div>
       </div>
 
       {/* Table */}
