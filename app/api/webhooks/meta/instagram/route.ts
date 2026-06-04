@@ -74,10 +74,15 @@ interface IgWebhookBody {
 }
 
 export async function POST(req: NextRequest) {
+  // DIAGNOSTIC — remove after root cause confirmed
+  console.error("[ig-webhook] BUILD_MARKER=2026-06-05-v3");
+
   // ── 1. Resolve app secret for signature verification ──────────────────────
   let appSecret = process.env.META_APP_SECRET;
+  let secretSource = "env-var";
 
   if (!appSecret) {
+    secretSource = "db";
     try {
       const svc = createServiceClient();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -106,6 +111,17 @@ export async function POST(req: NextRequest) {
   const rawBody = await req.text();
   const sig     = req.headers.get("x-hub-signature-256") ?? "";
   const expected = "sha256=" + createHmac("sha256", appSecret).update(rawBody).digest("hex");
+
+  // Diagnostic: log enough to debug without exposing the full secret
+  console.log(
+    `[ig-webhook] sig-diag secret_source=${secretSource}` +
+    ` secret_len=${appSecret.length}` +
+    ` secret_prefix=${appSecret.slice(0, 6)}` +
+    ` body_len=${rawBody.length}` +
+    ` sig_header_present=${!!req.headers.get("x-hub-signature-256")}` +
+    ` received_sig=${sig.slice(0, 20)}...` +
+    ` expected_sig=${expected.slice(0, 20)}...`
+  );
 
   if (sig !== expected) {
     console.warn("[ig-webhook] ✗ signature mismatch — possible replay or wrong app secret");
