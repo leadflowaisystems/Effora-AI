@@ -123,6 +123,52 @@ export async function POST(req: NextRequest) {
     ` expected_sig=${expected.slice(0, 20)}...`
   );
 
+  // ── Extended diagnostics (remove after root cause confirmed) ─────────────
+
+  // 1. First 300 chars of raw body
+  console.error("[ig-webhook] payload-diag", rawBody.slice(0, 300));
+
+  // 2. Body encoding details
+  console.error("[ig-webhook] body-diag", {
+    bodyLength: rawBody.length,
+    bodyBytes: Buffer.byteLength(rawBody, "utf8"),
+    first50: rawBody.slice(0, 50),
+  });
+
+  // 3. All signature-related headers
+  console.error("[ig-webhook] headers-diag", {
+    xHubSignature256: req.headers.get("x-hub-signature-256"),
+    xHubSignature:    req.headers.get("x-hub-signature"),
+    xMetaSignature:   req.headers.get("x-meta-signature"),
+    contentType:      req.headers.get("content-type"),
+    contentLength:    req.headers.get("content-length"),
+    userAgent:        req.headers.get("user-agent"),
+  });
+
+  // 4. HMAC inputs and outputs
+  console.error("[ig-webhook] hmac-diag", {
+    secretLength:       appSecret.length,
+    secretPrefix:       appSecret.slice(0, 6),
+    expectedSigPrefix:  expected.slice(0, 30),
+    receivedSigPrefix:  sig.slice(0, 30),
+    equal:              expected === sig,
+  });
+
+  // 5. Parse payload safely and identify webhook type
+  try {
+    const parsed = JSON.parse(rawBody);
+    console.error("[ig-webhook] parsed-diag", {
+      object:         parsed?.object,
+      entryCount:     parsed?.entry?.length,
+      firstEntryId:   parsed?.entry?.[0]?.id,
+      firstEntryKeys: parsed?.entry?.[0] ? Object.keys(parsed.entry[0]) : [],
+    });
+  } catch {
+    console.error("[ig-webhook] parsed-diag", "JSON_PARSE_FAILED");
+  }
+
+  // ── End extended diagnostics ─────────────────────────────────────────────
+
   if (sig !== expected) {
     console.warn("[ig-webhook] ✗ signature mismatch — possible replay or wrong app secret");
     // Return 200 to prevent Meta from retrying (the request is invalid, not a transient error)
