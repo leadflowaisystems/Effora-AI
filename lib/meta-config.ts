@@ -14,6 +14,7 @@ export interface MetaAppConfig {
   app_id:               string;
   app_secret:           string;
   webhook_verify_token: string;
+  config_id:            string; // Facebook Login for Business configuration ID
   mode:                 "dev" | "live";
 }
 
@@ -36,6 +37,7 @@ export async function getMetaConfig(orgId: string): Promise<MetaAppConfig | null
         app_id:               cfg.app_id,
         app_secret:           isEncrypted(cfg.app_secret_enc) ? decryptSecret(cfg.app_secret_enc) : cfg.app_secret_enc,
         webhook_verify_token: cfg.webhook_verify_token ?? process.env.META_WEBHOOK_VERIFY_TOKEN ?? "",
+        config_id:            cfg.config_id ?? process.env.META_CONFIG_ID ?? "",
         mode:                 (cfg.mode as "dev" | "live") ?? "dev",
       };
     }
@@ -56,6 +58,7 @@ export async function getMetaConfig(orgId: string): Promise<MetaAppConfig | null
                               ? decryptSecret(platformRow.meta_app_secret_encrypted as string)
                               : (platformRow.meta_app_secret_encrypted as string),
       webhook_verify_token: (platformRow.meta_webhook_verify_token as string) ?? process.env.META_WEBHOOK_VERIFY_TOKEN ?? "",
+      config_id:            (platformRow.meta_config_id as string | undefined) ?? process.env.META_CONFIG_ID ?? "",
       mode:                 (platformRow.meta_app_mode as "dev" | "live") ?? "dev",
     };
   }
@@ -70,6 +73,7 @@ export async function getMetaConfig(orgId: string): Promise<MetaAppConfig | null
       app_id:               appId,
       app_secret:           appSecret,
       webhook_verify_token: verifyTok ?? "",
+      config_id:            process.env.META_CONFIG_ID ?? "",
       mode:                 (process.env.META_APP_MODE as "dev" | "live") ?? "dev",
     };
   }

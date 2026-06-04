@@ -1,23 +1,25 @@
 /**
  * GET /api/auth/meta/callback?code=...&state=...
  *
- * OAuth callback from Facebook.
- * - Exchanges code for long-lived token
+ * OAuth callback from Facebook Login for Business.
+ * - Exchanges code for system-user access token (never expires)
  * - Fetches pages + linked IG accounts
- * - Picks the first IG-linked page (coaches typically have one)
- * - Stores integration row
+ * - Attempts to fetch WhatsApp Business Account (requires WA permissions in config)
+ * - Stores integration rows in DB
  * - Subscribes page to webhooks
- * - Redirects to /settings/channel/instagram?connected=1
+ * - Redirects to settings page
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { getMetaConfig } from "@/lib/meta-config";
 import {
-  exchangeCodeForLongLivedToken,
+  exchangeCodeForToken,
   fetchPagesWithIg,
+  fetchWABA,
   subscribePageToWebhooks,
   saveMetaIntegration,
+  saveWhatsAppIntegration,
 } from "@/lib/integrations/meta-instagram";
 
 export async function GET(req: NextRequest) {
@@ -63,8 +65,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(`${appUrl}/settings/channel/instagram?error=org_not_found`);
   }
 
-  // Resolve Meta credentials via the same priority chain as /connect
-  // (BYO org creds → platform_settings table → env vars)
   const metaCfg = await getMetaConfig((org as { id: string }).id).catch(() => null);
   if (!metaCfg) {
     return NextResponse.redirect(
@@ -75,7 +75,7 @@ export async function GET(req: NextRequest) {
   const redirectUri = `${appUrl}/api/auth/meta/callback`;
 
   try {
-    const { access_token, expires_at } = await exchangeCodeForLongLivedToken(
+    const { access_token, expires_at } = await exchangeCodeForToken(
       code, redirectUri, metaCfg.app_id, metaCfg.app_secret,
     );
 
@@ -87,7 +87,6 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Use the first IG-linked page (the connect flow can be extended later to let coaches pick)
     const page = pages[0];
 
     await saveMetaIntegration(
@@ -96,15 +95,28 @@ export async function GET(req: NextRequest) {
       page.page_name,
       page.ig_account_id,
       page.ig_username,
-      page.page_token, // store the PAGE token, not user token
+      page.page_token,
       expires_at,
     );
 
-    // Subscribe to webhook events
+    // Subscribe to webhook events (non-fatal)
     try {
       await subscribePageToWebhooks(page.page_id, page.page_token);
     } catch (e) {
       console.error("[meta-callback] webhook subscribe failed (non-fatal):", e);
+    }
+
+    // Attempt WhatsApp WABA retrieval (non-fatal — requires WA permissions in Business Login config)
+    try {
+      const waba = await fetchWABA(access_token);
+      if (waba) {
+        await saveWhatsAppIntegration((org as { id: string }).id, waba, access_token);
+        console.log(`[meta-callback] WhatsApp WABA saved: ${waba.waba_id} / ${waba.phone_number}`);
+      } else {
+        console.log("[meta-callback] No WhatsApp WABA found (permissions may not be in Business Login config)");
+      }
+    } catch (e) {
+      console.error("[meta-callback] WABA fetch failed (non-fatal):", e);
     }
 
     return NextResponse.redirect(

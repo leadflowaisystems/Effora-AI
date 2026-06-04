@@ -1,5 +1,5 @@
 /**
- * Meta Instagram Graph API helpers.
+ * Meta Instagram + WhatsApp Graph API helpers.
  *
  * All functions that touch the DB accept orgId and load the integration
  * row themselves so callers don't have to pass raw tokens around.
@@ -18,7 +18,7 @@ export interface MetaConfig {
   page_name:                     string;
   instagram_business_account_id: string;
   ig_username:                   string;
-  token_expires_at:              string; // ISO date string
+  token_expires_at:              string | null; // null = system-user token (never expires)
 }
 
 export interface IgProfile {
@@ -27,19 +27,31 @@ export interface IgProfile {
   name:     string;
 }
 
+export interface WabaInfo {
+  waba_id:          string;
+  waba_name:        string;
+  phone_number_id:  string;
+  phone_number:     string;
+}
+
 // ── Token exchange ────────────────────────────────────────────────────────────
 
 /**
- * Exchange a short-lived code for a long-lived page access token.
- * Returns the long-lived token and its expiry date.
+ * Exchange OAuth authorization code for an access token.
+ *
+ * Facebook Login for Business returns a system-user access token directly
+ * (no expires_in, never expires). Legacy OAuth returns a short-lived user
+ * token that we then extend to a long-lived 60-day token.
+ *
+ * Both paths go through the same /oauth/access_token endpoint.
  */
-export async function exchangeCodeForLongLivedToken(
-  code: string,
+export async function exchangeCodeForToken(
+  code:        string,
   redirectUri: string,
-  appId: string,
-  appSecret: string,
-): Promise<{ access_token: string; expires_at: string }> {
-  // Step 1: code → short-lived user token
+  appId:       string,
+  appSecret:   string,
+): Promise<{ access_token: string; expires_at: string | null }> {
+  // Step 1: exchange code for token
   const shortRes = await fetch(
     `${GRAPH}/oauth/access_token?` +
       new URLSearchParams({
@@ -51,11 +63,21 @@ export async function exchangeCodeForLongLivedToken(
   );
   if (!shortRes.ok) {
     const err = await shortRes.text();
-    throw new Error(`Meta short-lived token exchange failed: ${err}`);
+    throw new Error(`Meta token exchange failed: ${err}`);
   }
-  const shortData = await shortRes.json() as { access_token: string };
+  const shortData = await shortRes.json() as {
+    access_token: string;
+    expires_in?:  number;
+    token_type?:  string;
+  };
 
-  // Step 2: short-lived → long-lived (60-day) user token
+  // System-user access tokens (Business Login) have no expires_in.
+  // Return immediately — they never expire.
+  if (!shortData.expires_in || shortData.expires_in === 0) {
+    return { access_token: shortData.access_token, expires_at: null };
+  }
+
+  // Step 2 (legacy OAuth only): extend short-lived user token to long-lived (60-day).
   const longRes = await fetch(
     `${GRAPH}/oauth/access_token?` +
       new URLSearchParams({
@@ -66,14 +88,17 @@ export async function exchangeCodeForLongLivedToken(
       }),
   );
   if (!longRes.ok) {
-    const err = await longRes.text();
-    throw new Error(`Meta long-lived token exchange failed: ${err}`);
+    // Extension failed — use short-lived token with its original expiry
+    const expiresAt = new Date(Date.now() + shortData.expires_in * 1000).toISOString();
+    return { access_token: shortData.access_token, expires_at: expiresAt };
   }
   const longData = await longRes.json() as { access_token: string; expires_in: number };
-
   const expiresAt = new Date(Date.now() + longData.expires_in * 1000).toISOString();
   return { access_token: longData.access_token, expires_at: expiresAt };
 }
+
+// Keep the old export name as an alias for backward compatibility
+export const exchangeCodeForLongLivedToken = exchangeCodeForToken;
 
 /**
  * Fetch all Facebook Pages the user manages plus their linked Instagram Business Account.
@@ -107,6 +132,54 @@ export async function fetchPagesWithIg(userToken: string): Promise<Array<{
       ig_account_id: p.instagram_business_account!.id,
       ig_username:   p.instagram_business_account!.username,
     }));
+}
+
+/**
+ * Attempt to fetch the WhatsApp Business Account(s) accessible via the token.
+ * Requires whatsapp_business_management permission in the Business Login config.
+ * Returns null if the permission is absent or no WABA is connected.
+ */
+export async function fetchWABA(token: string): Promise<WabaInfo | null> {
+  try {
+    // For system-user tokens, /me resolves to the system user.
+    // We look for WABA via the business portfolio.
+    const bizRes = await fetch(
+      `${GRAPH}/me/businesses?fields=whatsapp_business_accounts{id,name,phone_numbers{id,display_phone_number}}&access_token=${token}`,
+    );
+    if (!bizRes.ok) return null;
+
+    const bizData = await bizRes.json() as {
+      data?: Array<{
+        whatsapp_business_accounts?: {
+          data?: Array<{
+            id:            string;
+            name:          string;
+            phone_numbers?: {
+              data?: Array<{ id: string; display_phone_number: string }>;
+            };
+          }>;
+        };
+      }>;
+    };
+
+    for (const biz of bizData.data ?? []) {
+      const wabas = biz.whatsapp_business_accounts?.data ?? [];
+      for (const waba of wabas) {
+        const phone = waba.phone_numbers?.data?.[0];
+        if (waba.id && phone?.id) {
+          return {
+            waba_id:         waba.id,
+            waba_name:       waba.name,
+            phone_number_id: phone.id,
+            phone_number:    phone.display_phone_number,
+          };
+        }
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -190,8 +263,8 @@ export async function getIgUserProfile(
 // ── Token refresh ─────────────────────────────────────────────────────────────
 
 /**
- * Refresh a long-lived token before it expires (call within 7 days of expiry).
- * Returns the new token and its new expiry.
+ * Refresh a long-lived user token before it expires (call within 7 days of expiry).
+ * Not applicable to system-user tokens (they never expire).
  */
 export async function refreshLongLivedToken(
   currentToken: string,
@@ -241,7 +314,7 @@ export async function saveMetaIntegration(
   igId:      string,
   igUser:    string,
   rawToken:  string,
-  expiresAt: string,
+  expiresAt: string | null,
 ): Promise<void> {
   const svc = createServiceClient();
   const config = {
@@ -268,6 +341,45 @@ export async function saveMetaIntegration(
     await svc.from("integrations").insert({
       org_id:   orgId,
       provider: "meta_instagram",
+      config,
+      active:   true,
+    });
+  }
+}
+
+/**
+ * Store (or overwrite) the Meta WhatsApp integration for an org.
+ * Stores WABA ID, phone number ID, and the encrypted access token.
+ */
+export async function saveWhatsAppIntegration(
+  orgId:    string,
+  waba:     WabaInfo,
+  rawToken: string,
+): Promise<void> {
+  const svc = createServiceClient();
+  const config = {
+    access_token_enc: encryptSecret(rawToken),
+    waba_id:          waba.waba_id,
+    waba_name:        waba.waba_name,
+    phone_number_id:  waba.phone_number_id,
+    phone_number:     waba.phone_number,
+  };
+
+  const { data: existing } = await svc
+    .from("integrations")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("provider", "meta_whatsapp")
+    .maybeSingle();
+
+  if (existing) {
+    await svc.from("integrations")
+      .update({ config, active: true, updated_at: new Date().toISOString() })
+      .eq("id", (existing as { id: string }).id);
+  } else {
+    await svc.from("integrations").insert({
+      org_id:   orgId,
+      provider: "meta_whatsapp",
       config,
       active:   true,
     });
