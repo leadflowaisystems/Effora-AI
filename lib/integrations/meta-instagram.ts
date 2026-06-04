@@ -183,18 +183,25 @@ export async function fetchWABA(token: string): Promise<WabaInfo | null> {
 }
 
 /**
- * Subscribe the Instagram Business Account to receive message webhooks.
+ * Subscribe the Facebook Page to receive Instagram DM webhooks.
  *
- * Uses the Instagram Messaging API endpoint /{ig-user-id}/subscribed_apps
- * (NOT the Page endpoint). Passes params as URL query string — the Graph API
- * for this endpoint does NOT accept JSON body (access_token must be a query param).
+ * Uses the Messenger Platform endpoint /{page-id}/subscribed_apps — this is the
+ * correct endpoint for Instagram DMs when the app is configured with Business Login
+ * and instagram_manage_messages permission.
+ *
+ * /{ig-user-id}/subscribed_apps is a different endpoint (Instagram Graph API) that
+ * requires the "Instagram" platform capability in the Meta App Dashboard. Business
+ * Login apps without that capability get error (#3) "Application does not have the
+ * capability to make this API call."
+ *
+ * Params must be URL query string — the Graph API ignores JSON body for this endpoint.
  *
  * After this call, Meta delivers DM webhook events with:
  *   object: "instagram"
- *   entry[].id = igAccountId  (not the Facebook Page ID)
+ *   entry[].id = pageId  (the Facebook Page ID, NOT the IG account ID)
  */
-export async function subscribeIgToWebhooks(igAccountId: string, pageToken: string): Promise<void> {
-  const url = new URL(`${GRAPH}/${igAccountId}/subscribed_apps`);
+export async function subscribeIgToWebhooks(pageId: string, pageToken: string): Promise<void> {
+  const url = new URL(`${GRAPH}/${pageId}/subscribed_apps`);
   url.searchParams.set("subscribed_fields", "messages");
   url.searchParams.set("access_token", pageToken);
 
@@ -203,27 +210,17 @@ export async function subscribeIgToWebhooks(igAccountId: string, pageToken: stri
 
   if (!res.ok || body.error) {
     throw new Error(
-      `Failed to subscribe IG account to webhooks: ${body.error?.message ?? res.status}`,
+      `Failed to subscribe page to Instagram webhooks: ${body.error?.message ?? res.status}` +
+      ` (page_id=${pageId})`,
     );
   }
   if (!body.success) {
-    throw new Error(`IG webhook subscription returned non-success: ${JSON.stringify(body)}`);
+    throw new Error(`Page webhook subscription returned non-success: ${JSON.stringify(body)}`);
   }
 }
 
-/**
- * @deprecated Use subscribeIgToWebhooks(igAccountId, pageToken) instead.
- * Kept for backward compatibility; now delegates to the IG-account endpoint.
- */
-export async function subscribePageToWebhooks(pageId: string, pageToken: string): Promise<void> {
-  // The page-ID endpoint creates a Messenger subscription, not an Instagram one.
-  // Left here for callers that haven't migrated; prefer subscribeIgToWebhooks.
-  void pageId;
-  void pageToken;
-  throw new Error(
-    "subscribePageToWebhooks is deprecated — use subscribeIgToWebhooks(igAccountId, pageToken)",
-  );
-}
+// Alias kept so any other callers still compile
+export const subscribePageToWebhooks = subscribeIgToWebhooks;
 
 // ── Send message ─────────────────────────────────────────────────────────────
 

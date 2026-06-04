@@ -99,14 +99,17 @@ export async function GET(req: NextRequest) {
       expires_at,
     );
 
-    // Subscribe IG Business Account to webhook events (non-fatal if it fails).
-    // Must use ig_account_id — not page_id — for Instagram Messaging API.
-    // Meta will deliver webhooks with entry[].id = ig_account_id.
+    // Subscribe the Facebook Page to Instagram DM webhooks.
+    // Must use page.page_id — NOT ig_account_id.
+    // /{ig-user-id}/subscribed_apps requires a separate Instagram platform capability
+    // that Business Login apps don't have. /{page-id}/subscribed_apps is the correct
+    // Messenger Platform for Instagram endpoint.
+    // After this, Meta delivers webhooks with entry[].id = page_id.
     try {
-      await subscribeIgToWebhooks(page.ig_account_id, page.page_token);
-      console.log(`[meta-callback] IG webhook subscription created for ig=${page.ig_account_id}`);
+      await subscribeIgToWebhooks(page.page_id, page.page_token);
+      console.log(`[meta-callback] page webhook subscription created for page=${page.page_id}`);
     } catch (e) {
-      console.error("[meta-callback] IG webhook subscribe failed (non-fatal):", e);
+      console.error("[meta-callback] page webhook subscribe failed (non-fatal):", e);
     }
 
     // Attempt WhatsApp WABA retrieval (non-fatal — requires WA permissions in Business Login config)

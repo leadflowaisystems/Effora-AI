@@ -2,12 +2,15 @@
  * POST /api/orgs/[orgId]/integrations/meta-instagram/resubscribe
  *
  * Re-triggers the Instagram webhook subscription using the credentials
- * already stored in the integrations table. Useful after a code deploy
- * that fixes the subscription endpoint (from page-ID to IG-account-ID)
- * without requiring a full re-OAuth.
+ * already stored in the integrations table. No re-OAuth required.
  *
- * Uses the stored page token + ig_account_id to call:
- *   POST /v18.0/{ig_account_id}/subscribed_apps?subscribed_fields=messages&access_token=TOKEN
+ * Subscribes the Facebook Page (config.page_id) via:
+ *   POST /v18.0/{page_id}/subscribed_apps?subscribed_fields=messages&access_token=TOKEN
+ *
+ * Note: /{ig-user-id}/subscribed_apps is a different endpoint (Instagram Graph API)
+ * that requires the "Instagram" platform capability in the Meta App Dashboard.
+ * Business Login apps without that capability get error (#3). Always use the
+ * page endpoint for Messenger Platform for Instagram DM delivery.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -47,13 +50,13 @@ export async function POST(_req: NextRequest, { params }: Params) {
     );
   }
 
-  const cfg = intRow.config as Record<string, string>;
-  const igAccountId = cfg.instagram_business_account_id;
-  const tokenEnc    = cfg.access_token_enc;
+  const cfg      = intRow.config as Record<string, string>;
+  const pageId   = cfg.page_id;                          // Facebook Page ID ("Effora")
+  const tokenEnc = cfg.access_token_enc;
 
-  if (!igAccountId) {
+  if (!pageId) {
     return NextResponse.json(
-      { error: "Missing instagram_business_account_id in stored config." },
+      { error: "Missing page_id in stored config. Please reconnect Instagram." },
       { status: 400 },
     );
   }
@@ -70,18 +73,19 @@ export async function POST(_req: NextRequest, { params }: Params) {
     pageToken = decryptSecret(tokenEnc);
   } catch (e) {
     return NextResponse.json(
-      { error: `Token decrypt failed: ${e instanceof Error ? e.message : String(e)}` },
+      { error: `Token decrypt failed — ENCRYPTION_KEY may have changed: ${e instanceof Error ? e.message : String(e)}` },
       { status: 500 },
     );
   }
 
   try {
-    await subscribeIgToWebhooks(igAccountId, pageToken);
-    console.log(`[meta-resubscribe] ✓ IG webhook subscription created for ig=${igAccountId} org=${params.orgId}`);
+    await subscribeIgToWebhooks(pageId, pageToken);
+    console.log(`[meta-resubscribe] ✓ page webhook subscription created page=${pageId} org=${params.orgId}`);
     return NextResponse.json({
-      ok: true,
-      ig_account_id: igAccountId,
-      message: "Instagram webhook subscription created successfully. DMs will now be delivered.",
+      ok:       true,
+      page_id:  pageId,
+      ig_username: cfg.ig_username ?? "(unknown)",
+      message:  "Instagram webhook subscription created. DMs will now be delivered to your inbox.",
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
