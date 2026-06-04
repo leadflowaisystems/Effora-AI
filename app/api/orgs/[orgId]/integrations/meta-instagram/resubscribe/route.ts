@@ -1,16 +1,16 @@
 /**
  * POST /api/orgs/[orgId]/integrations/meta-instagram/resubscribe
  *
- * Re-triggers the Instagram webhook subscription using the credentials
- * already stored in the integrations table. No re-OAuth required.
+ * Re-triggers the Instagram webhook subscription using credentials stored
+ * from the last OAuth flow. No re-OAuth required if user_access_token_enc
+ * is present (stored since the architecture realignment commit).
  *
- * Subscribes the Facebook Page (config.page_id) via:
- *   POST /v18.0/{page_id}/subscribed_apps?subscribed_fields=messages&access_token=TOKEN
+ * Calls POST /v18.0/{ig_account_id}/subscribed_apps using the user/system-user
+ * access token. This is the Instagram Messaging API subscription endpoint.
+ * The page access token does NOT work here — only user/system-user tokens do.
  *
- * Note: /{ig-user-id}/subscribed_apps is a different endpoint (Instagram Graph API)
- * that requires the "Instagram" platform capability in the Meta App Dashboard.
- * Business Login apps without that capability get error (#3). Always use the
- * page endpoint for Messenger Platform for Instagram DM delivery.
+ * If user_access_token_enc is absent (connected before this fix was deployed),
+ * the endpoint returns an error directing the user to reconnect via OAuth.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -50,46 +50,67 @@ export async function POST(_req: NextRequest, { params }: Params) {
     );
   }
 
-  const cfg      = intRow.config as Record<string, string>;
-  const pageId   = cfg.page_id;                          // Facebook Page ID ("Effora")
-  const tokenEnc = cfg.access_token_enc;
+  const cfg          = intRow.config as Record<string, string>;
+  const igAccountId  = cfg.instagram_business_account_id;
+  const userTokenEnc = cfg.user_access_token_enc;   // user/system-user token (needed for IG API)
+  const pageTokenEnc = cfg.access_token_enc;         // page token (fallback, may not work)
 
-  if (!pageId) {
+  if (!igAccountId) {
     return NextResponse.json(
-      { error: "Missing page_id in stored config. Please reconnect Instagram." },
+      { error: "Missing instagram_business_account_id in stored config. Please reconnect Instagram." },
       { status: 400 },
     );
   }
 
+  // Prefer the user/system-user token. Fall back to page token with a warning.
+  // If neither is present, require reconnect.
+  const tokenEnc = userTokenEnc ?? pageTokenEnc;
   if (!tokenEnc) {
     return NextResponse.json(
-      { error: "Missing access_token_enc in stored config. Please reconnect Instagram." },
+      { error: "Missing access token in stored config. Please reconnect Instagram." },
       { status: 400 },
     );
   }
 
-  let pageToken: string;
+  if (!userTokenEnc) {
+    console.warn(
+      `[meta-resubscribe] user_access_token_enc not stored for org=${params.orgId}. ` +
+      `Falling back to page token — this may fail with error (#3). Reconnect Instagram to fix.`,
+    );
+  }
+
+  let token: string;
   try {
-    pageToken = decryptSecret(tokenEnc);
+    token = decryptSecret(tokenEnc);
   } catch (e) {
     return NextResponse.json(
-      { error: `Token decrypt failed — ENCRYPTION_KEY may have changed: ${e instanceof Error ? e.message : String(e)}` },
+      { error: `Token decrypt failed: ${e instanceof Error ? e.message : String(e)}` },
       { status: 500 },
     );
   }
 
   try {
-    await subscribeIgToWebhooks(pageId, pageToken);
-    console.log(`[meta-resubscribe] ✓ page webhook subscription created page=${pageId} org=${params.orgId}`);
+    await subscribeIgToWebhooks(igAccountId, token);
+    const tokenType = userTokenEnc ? "user/system-user" : "page (fallback — reconnect for best results)";
+    console.log(`[meta-resubscribe] ✓ subscription created ig=${igAccountId} token_type=${tokenType} org=${params.orgId}`);
     return NextResponse.json({
-      ok:       true,
-      page_id:  pageId,
-      ig_username: cfg.ig_username ?? "(unknown)",
-      message:  "Instagram webhook subscription created. DMs will now be delivered to your inbox.",
+      ok:            true,
+      ig_account_id: igAccountId,
+      ig_username:   cfg.ig_username ?? "(unknown)",
+      token_type:    tokenType,
+      message:       "Instagram webhook subscription created. DMs will be delivered to your inbox.",
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[meta-resubscribe] subscription failed:", msg);
-    return NextResponse.json({ error: msg }, { status: 502 });
+
+    // If error contains (#3), the token type is wrong — page token used instead of user token
+    const isCapabilityError = msg.includes("(#3)") || msg.toLowerCase().includes("capability");
+    return NextResponse.json({
+      error: msg,
+      hint: isCapabilityError
+        ? "Error (#3) means the token type is wrong. Reconnect Instagram via OAuth to store a fresh user/system-user token, then retry."
+        : undefined,
+    }, { status: 502 });
   }
 }

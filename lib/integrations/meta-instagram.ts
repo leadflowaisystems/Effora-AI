@@ -13,7 +13,8 @@ const GRAPH = "https://graph.facebook.com/v18.0";
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface MetaConfig {
-  access_token_enc:              string;
+  access_token_enc:              string; // Facebook Page access token (for sending messages)
+  user_access_token_enc?:        string; // User/system-user token (for IG API subscription calls)
   page_id:                       string;
   page_name:                     string;
   instagram_business_account_id: string;
@@ -183,43 +184,46 @@ export async function fetchWABA(token: string): Promise<WabaInfo | null> {
 }
 
 /**
- * Subscribe the Facebook Page to receive Instagram DM webhooks.
+ * Subscribe the Instagram Business Account to receive DM webhooks.
  *
- * Uses the Messenger Platform endpoint /{page-id}/subscribed_apps — this is the
- * correct endpoint for Instagram DMs when the app is configured with Business Login
- * and instagram_manage_messages permission.
- *
- * /{ig-user-id}/subscribed_apps is a different endpoint (Instagram Graph API) that
- * requires the "Instagram" platform capability in the Meta App Dashboard. Business
- * Login apps without that capability get error (#3) "Application does not have the
- * capability to make this API call."
- *
- * Params must be URL query string — the Graph API ignores JSON body for this endpoint.
- *
- * After this call, Meta delivers DM webhook events with:
+ * Architecture: Instagram Messaging API with Facebook Login for Business.
+ * The Meta App has the Instagram API use case configured and the webhook
+ * is subscribed on the Instagram object (not Page). Webhooks arrive with:
  *   object: "instagram"
- *   entry[].id = pageId  (the Facebook Page ID, NOT the IG account ID)
+ *   entry[].id = igAccountId  (the Instagram Business Account ID)
+ *
+ * IMPORTANT — token type:
+ * This endpoint requires a User Access Token or System-User Access Token,
+ * NOT a Facebook Page Access Token. The user/system-user token is obtained
+ * directly from the OAuth code exchange (before /me/accounts is called).
+ * It must be stored as user_access_token_enc and passed here.
+ *
+ * Error (#3) "Application does not have the capability" occurs when:
+ * - A Page access token is passed instead of a User/System-User token, OR
+ * - The Business Login config token lacks instagram_manage_messages
+ *
+ * Params must be URL query string — the Graph API ignores JSON body.
  */
-export async function subscribeIgToWebhooks(pageId: string, pageToken: string): Promise<void> {
-  const url = new URL(`${GRAPH}/${pageId}/subscribed_apps`);
+export async function subscribeIgToWebhooks(igAccountId: string, userToken: string): Promise<void> {
+  const url = new URL(`${GRAPH}/${igAccountId}/subscribed_apps`);
   url.searchParams.set("subscribed_fields", "messages");
-  url.searchParams.set("access_token", pageToken);
+  url.searchParams.set("access_token", userToken);
 
   const res = await fetch(url.toString(), { method: "POST" });
   const body = await res.json() as { success?: boolean; error?: { message: string; code: number } };
 
   if (!res.ok || body.error) {
     throw new Error(
-      `Failed to subscribe page to Instagram webhooks: ${body.error?.message ?? res.status}` +
-      ` (page_id=${pageId})`,
+      `Failed to subscribe IG account to webhooks: ${body.error?.message ?? res.status}` +
+      ` (ig_account_id=${igAccountId})`,
     );
   }
   if (!body.success) {
-    throw new Error(`Page webhook subscription returned non-success: ${JSON.stringify(body)}`);
+    throw new Error(`IG webhook subscription returned non-success: ${JSON.stringify(body)}`);
   }
 }
 
-// Alias kept so any other callers still compile
+// Alias for backward compatibility
 export const subscribePageToWebhooks = subscribeIgToWebhooks;
 
 // ── Send message ─────────────────────────────────────────────────────────────
@@ -324,26 +328,35 @@ async function loadMetaConfig(orgId: string): Promise<MetaConfig> {
 
 /**
  * Store (or overwrite) the Meta Instagram integration for an org.
- * Encrypts the access token before saving.
+ * Encrypts both tokens before saving.
+ *
+ * rawPageToken     — Facebook Page access token (for sending messages via /{page-id}/messages)
+ * rawUserToken     — User or System-User access token from OAuth code exchange
+ *                    (for /{ig-user-id}/subscribed_apps subscription calls)
  */
 export async function saveMetaIntegration(
-  orgId:     string,
-  pageId:    string,
-  pageName:  string,
-  igId:      string,
-  igUser:    string,
-  rawToken:  string,
-  expiresAt: string | null,
+  orgId:         string,
+  pageId:        string,
+  pageName:      string,
+  igId:          string,
+  igUser:        string,
+  rawPageToken:  string,
+  expiresAt:     string | null,
+  rawUserToken?: string,   // optional: user/system-user token from OAuth code exchange
 ): Promise<void> {
   const svc = createServiceClient();
-  const config = {
-    access_token_enc:              encryptSecret(rawToken),
+  const config: Record<string, string | null> = {
+    access_token_enc:              encryptSecret(rawPageToken),
     page_id:                       pageId,
     page_name:                     pageName,
     instagram_business_account_id: igId,
     ig_username:                   igUser,
     token_expires_at:              expiresAt,
   };
+
+  if (rawUserToken) {
+    config.user_access_token_enc = encryptSecret(rawUserToken);
+  }
 
   const { data: existing } = await svc
     .from("integrations")

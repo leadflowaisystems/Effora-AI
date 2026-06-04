@@ -8,12 +8,12 @@
  * Meta retries failed webhooks aggressively, so we always return 200
  * even on internal processing errors.
  *
- * Payload shape (Messenger Platform for Instagram, subscribed via /{page-id}/subscribed_apps):
- *   { object: "instagram", entry: [{ id: PAGE_ID, messaging: [...] }] }
+ * Payload shape (Instagram Messaging API, subscribed via /{ig-user-id}/subscribed_apps):
+ *   { object: "instagram", entry: [{ id: IG_ACCOUNT_ID, messaging: [...] }] }
  *
- * NOTE: entry[].id is the FACEBOOK PAGE ID when subscribed via /{page-id}/subscribed_apps.
- * We look up the integration by config.page_id first, with a fallback to
- * config.instagram_business_account_id for any IG Graph API subscriptions.
+ * NOTE: entry[].id is the INSTAGRAM BUSINESS ACCOUNT ID.
+ * We look up the integration by config.instagram_business_account_id first,
+ * with a fallback to config.page_id for any legacy subscriptions.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -63,7 +63,7 @@ interface IgMessaging {
 }
 
 interface IgEntry {
-  id:        string; // Facebook Page ID (from page subscription) or IG Account ID
+  id:        string; // Instagram Business Account ID (from IG API subscription)
   time:      number;
   messaging: IgMessaging[];
 }
@@ -150,14 +150,14 @@ export async function POST(req: NextRequest) {
   // ── 4. Process each entry ─────────────────────────────────────────────────
   for (const entry of body.entry ?? []) {
     const entryId = entry.id;
-    // For Messenger Platform for Instagram (/{page-id}/subscribed_apps):
+    // Instagram Messaging API (/{ig-user-id}/subscribed_apps):
+    //   entry[].id = Instagram Business Account ID  → match by config.instagram_business_account_id
+    // Fallback for any legacy page-subscribed events:
     //   entry[].id = Facebook Page ID  → match by config.page_id
-    // For Instagram Graph API (/{ig-user-id}/subscribed_apps, if ever enabled):
-    //   entry[].id = IG Business Account ID  → match by config.instagram_business_account_id
     const integration = allIntegrations.find(
       (r) =>
-        r.config?.page_id === entryId ||
-        r.config?.instagram_business_account_id === entryId,
+        r.config?.instagram_business_account_id === entryId ||
+        r.config?.page_id === entryId,
     ) ?? null;
 
     if (!integration) {

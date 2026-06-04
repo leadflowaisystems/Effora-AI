@@ -89,27 +89,30 @@ export async function GET(req: NextRequest) {
 
     const page = pages[0];
 
+    // Save integration — store both the page token (for sending messages) and
+    // the original user/system-user token (for /{ig-user-id}/subscribed_apps calls).
     await saveMetaIntegration(
       (org as { id: string }).id,
       page.page_id,
       page.page_name,
       page.ig_account_id,
       page.ig_username,
-      page.page_token,
+      page.page_token,  // page token: used for /{page-id}/messages (send API)
       expires_at,
+      access_token,     // user/system-user token: used for /{ig-user-id}/subscribed_apps
     );
 
-    // Subscribe the Facebook Page to Instagram DM webhooks.
-    // Must use page.page_id — NOT ig_account_id.
-    // /{ig-user-id}/subscribed_apps requires a separate Instagram platform capability
-    // that Business Login apps don't have. /{page-id}/subscribed_apps is the correct
-    // Messenger Platform for Instagram endpoint.
-    // After this, Meta delivers webhooks with entry[].id = page_id.
+    // Subscribe the Instagram Business Account to receive DM webhooks.
+    // Architecture: Instagram Messaging API (IG-account-centric).
+    // The Meta App has the Instagram API use case. Webhooks arrive with
+    // entry[].id = ig_account_id (NOT page_id).
+    // The subscription call MUST use the user/system-user token, not the page token.
+    // Error (#3) previously occurred because the page token was used here instead.
     try {
-      await subscribeIgToWebhooks(page.page_id, page.page_token);
-      console.log(`[meta-callback] page webhook subscription created for page=${page.page_id}`);
+      await subscribeIgToWebhooks(page.ig_account_id, access_token);
+      console.log(`[meta-callback] IG webhook subscription created for ig=${page.ig_account_id}`);
     } catch (e) {
-      console.error("[meta-callback] page webhook subscribe failed (non-fatal):", e);
+      console.error("[meta-callback] IG webhook subscribe failed (non-fatal):", e);
     }
 
     // Attempt WhatsApp WABA retrieval (non-fatal — requires WA permissions in Business Login config)
