@@ -56,15 +56,16 @@ export async function POST(req: NextRequest, { params }: Params) {
   const endsAt  = new Date(new Date(parsed.data.starts_at).getTime() + 60 * 60 * 1000).toISOString(); // +1h default
 
   const rows = (members as Array<{ lead_id: string; lead: { id: string; name: string | null } }>).map((m) => ({
-    org_id:       params.orgId,
-    lead_id:      m.lead_id,
-    status:       "confirmed",
-    starts_at:    parsed.data.starts_at,
-    ends_at:      endsAt,
-    meeting_url:  parsed.data.meeting_url || null,
-    attendee_name: m.lead.name ?? "Unknown",
-    notes:        parsed.data.notes ?? `Group class: ${(group as { name: string }).name}`,
-    created_at:   now,
+    org_id:         params.orgId,
+    lead_id:        m.lead_id,
+    status:         "confirmed",
+    starts_at:      parsed.data.starts_at,
+    ends_at:        endsAt,
+    meeting_url:    parsed.data.meeting_url || null,
+    attendee_name:  m.lead.name ?? "Unknown",
+    notes:          parsed.data.notes ?? `Group class: ${(group as { name: string }).name}`,
+    custom_message: parsed.data.custom_message?.trim() || null,
+    created_at:     now,
   }));
 
   const { data: inserted, error } = await svc.from("bookings").insert(rows).select("id, lead_id");

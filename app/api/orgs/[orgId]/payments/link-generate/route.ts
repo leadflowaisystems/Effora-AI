@@ -124,6 +124,7 @@ async function handler(req: NextRequest, { params }: Params) {
     link_method:      linkMethod,
     notes:            `${linkMethod}: ${description}`,
     source:           linkMethod,
+    custom_message:   custom_message?.trim() || null,
     conversation_id:  conversationId,
     created_at:       now,
     updated_at:       now,

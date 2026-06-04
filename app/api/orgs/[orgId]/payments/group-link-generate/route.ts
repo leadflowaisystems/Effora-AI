@@ -130,6 +130,7 @@ export async function POST(req: NextRequest, { params }: Params) {
         payment_link_url: linkUrl || null,
         description,
         notes:            `Group request: ${(group as { name: string }).name}`,
+        custom_message:   custom_message?.trim() || null,
         created_at:       now,
         updated_at:       now,
       }).select("id").single();

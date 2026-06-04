@@ -70,24 +70,26 @@ async function handler(req: NextRequest, { params }: Params) {
   const orgName   = (orgRes.data as { name: string } | null)?.name ?? "Your Coach";
   const leadEmail = (lead.metadata?.email) as string | undefined ?? null;
 
-  // ── Resolve meeting URL: Cal.com > form-provided > null ──────
+  // ── Resolve meeting URL: form-provided > Cal.com > null ──────
+  // Custom URL from form takes priority over org's Cal.com default.
   const calLink    = await getCalLink(params.orgId);
-  const resolvedMeetingUrl = calLink ?? meeting_url ?? null;
+  const resolvedMeetingUrl = meeting_url?.trim() || calLink || null;
 
   // ── Insert booking row ────────────────────────────────────────
   const ends_at = new Date(new Date(starts_at).getTime() + 60 * 60 * 1000).toISOString();
   const { data: booking, error: bookingErr } = await svc.from("bookings").insert({
-    org_id:        params.orgId,
+    org_id:         params.orgId,
     lead_id,
-    status:        "confirmed",
+    status:         "confirmed",
     starts_at,
     ends_at,
-    meeting_url:   resolvedMeetingUrl,
-    attendee_name: lead.name,
-    notes:         notes || null,
-    source:        "manual",
-    created_at:    now,
-    updated_at:    now,
+    meeting_url:    resolvedMeetingUrl,
+    attendee_name:  lead.name,
+    notes:          notes || null,
+    custom_message: custom_message?.trim() || null,
+    source:         "manual",
+    created_at:     now,
+    updated_at:     now,
   }).select("id, starts_at").single();
 
   if (bookingErr) return NextResponse.json({ error: bookingErr.message }, { status: 500 });
