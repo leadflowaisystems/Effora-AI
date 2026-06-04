@@ -13,6 +13,7 @@ import { sendEmail } from "@/lib/email";
 import { paymentLink as paymentLinkEmail } from "@/lib/email-templates";
 import { getLeadFirstName } from "@/lib/leads";
 import { withErrorHandler } from "@/lib/api-handler";
+import { track, EVENTS } from "@/lib/analytics";
 import { z } from "zod";
 
 interface Params { params: { orgId: string } }
@@ -27,10 +28,12 @@ async function assertMember(orgId: string) {
 }
 
 const Schema = z.object({
-  lead_id:     z.string().uuid(),
-  amount_inr:  z.number().positive(),
-  description: z.string().min(1).max(500),
-  method:      z.enum(["razorpay", "upi", "auto"]).default("auto"),
+  lead_id:        z.string().uuid(),
+  amount_inr:     z.number().positive(),
+  description:    z.string().min(1).max(500),
+  method:         z.enum(["razorpay", "upi", "auto"]).default("auto"),
+  custom_url:     z.string().url().optional().or(z.literal("")),
+  custom_message: z.string().max(2000).optional(),
 });
 
 async function handler(req: NextRequest, { params }: Params) {
@@ -41,7 +44,7 @@ async function handler(req: NextRequest, { params }: Params) {
   const parsed = Schema.safeParse(raw);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message }, { status: 400 });
 
-  const { lead_id, amount_inr, description, method } = parsed.data;
+  const { lead_id, amount_inr, description, method, custom_url, custom_message } = parsed.data;
   const now = new Date().toISOString();
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -70,35 +73,41 @@ async function handler(req: NextRequest, { params }: Params) {
   let linkUrl    = "";
   let linkMethod = "upi";
 
-  const useRazorpay = method === "razorpay" || (method === "auto" && hasRazorpay);
-  const useUpi      = method === "upi"      || (method === "auto" && !hasRazorpay && hasUpi);
+  // Custom URL overrides auto-generation entirely
+  if (custom_url?.trim()) {
+    linkUrl    = custom_url.trim();
+    linkMethod = "custom";
+  } else {
+    const useRazorpay = method === "razorpay" || (method === "auto" && hasRazorpay);
+    const useUpi      = method === "upi"      || (method === "auto" && !hasRazorpay && hasUpi);
 
-  if (useRazorpay && hasRazorpay) {
-    try {
-      const result = await createPaymentLink({
-        orgId:        params.orgId,
-        amountInr:    amount_inr,
-        description,
-        customerName: lead.name ?? undefined,
-      });
-      linkUrl    = result?.shortUrl ?? "";
-      linkMethod = "razorpay";
-    } catch {
-      // fall through to UPI
+    if (useRazorpay && hasRazorpay) {
+      try {
+        const result = await createPaymentLink({
+          orgId:        params.orgId,
+          amountInr:    amount_inr,
+          description,
+          customerName: lead.name ?? undefined,
+        });
+        linkUrl    = result?.shortUrl ?? "";
+        linkMethod = "razorpay";
+      } catch {
+        // fall through to UPI
+      }
     }
-  }
 
-  if (!linkUrl && useUpi && hasUpi) {
-    const pa  = encodeURIComponent(org!.upi_id!);
-    const pn  = encodeURIComponent(org?.name ?? "Coach");
-    const am  = encodeURIComponent(String(amount_inr));
-    const tn  = encodeURIComponent(description);
-    linkUrl    = `upi://pay?pa=${pa}&pn=${pn}&am=${am}&tn=${tn}&cu=INR`;
-    linkMethod = "upi";
-  }
+    if (!linkUrl && useUpi && hasUpi) {
+      const pa  = encodeURIComponent(org!.upi_id!);
+      const pn  = encodeURIComponent(org?.name ?? "Coach");
+      const am  = encodeURIComponent(String(amount_inr));
+      const tn  = encodeURIComponent(description);
+      linkUrl    = `upi://pay?pa=${pa}&pn=${pn}&am=${am}&tn=${tn}&cu=INR`;
+      linkMethod = "upi";
+    }
 
-  if (!linkUrl) {
-    return NextResponse.json({ error: "No payment method configured. Connect Razorpay or add a UPI ID in Settings › Payments." }, { status: 400 });
+    if (!linkUrl) {
+      return NextResponse.json({ error: "No payment method configured. Connect Razorpay or add a UPI ID in Settings › Payments." }, { status: 400 });
+    }
   }
 
   // ── Get or create conversation so Inngest handler can thread the message ──
@@ -124,22 +133,31 @@ async function handler(req: NextRequest, { params }: Params) {
   const p = payment as { id: string };
 
   // ── Insert payment link message into thread synchronously ────────
-  // This guarantees the message appears immediately in the conversation,
-  // independent of Inngest availability. Inngest fires as an async retry.
   try {
-    const aiResult = await generatePaymentLinkMessage({
-      leadFirstName: firstName,
-      amountInr:     amount_inr,
-      description,
-      paymentUrl:    linkUrl,
-      voiceProfile:  vp,
-      orgId:         params.orgId,
-    });
-    await insertOutboundMessage(conversationId, params.orgId, aiResult.content, "payment_link");
+    let msgContent: string;
+    if (custom_message?.trim()) {
+      // Verbatim custom message with variable substitution
+      const amtStr = `₹${amount_inr.toLocaleString("en-IN")}`;
+      msgContent = custom_message
+        .replace(/\{\{name\}\}/gi,        lead.name ?? "there")
+        .replace(/\{\{first_name\}\}/gi,  firstName)
+        .replace(/\{\{amount\}\}/gi,      amtStr)
+        .replace(/\{\{description\}\}/gi, description)
+        .replace(/\{\{link\}\}/gi,        linkUrl);
+    } else {
+      const aiResult = await generatePaymentLinkMessage({
+        leadFirstName: firstName,
+        amountInr:     amount_inr,
+        description,
+        paymentUrl:    linkUrl,
+        voiceProfile:  vp,
+        orgId:         params.orgId,
+      });
+      msgContent = aiResult.content;
+    }
+    await insertOutboundMessage(conversationId, params.orgId, msgContent, "payment_link");
   } catch (e) {
-    // If synchronous generation fails, Inngest will retry below
     console.error("[link-generate] sync message insert failed, falling back to Inngest:", e);
-    // Fire Inngest as fallback
     await inngest.send({
       name: "payment.link-message",
       data: { orgId: params.orgId, paymentId: p.id, description },
@@ -164,6 +182,7 @@ async function handler(req: NextRequest, { params }: Params) {
     }).catch(() => null);
   }
 
+  void track({ event: EVENTS.PAYMENT_REQUESTED, orgId: params.orgId, properties: { payment_id: p.id, method: linkMethod, amount_inr } });
   return NextResponse.json({ payment_id: p.id, link_url: linkUrl, method: linkMethod, conversation_id: conversationId });
 }
 

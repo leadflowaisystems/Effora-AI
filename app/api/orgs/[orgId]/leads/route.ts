@@ -171,6 +171,11 @@ export async function POST(req: NextRequest, { params }: Params) {
     console.error("[leads/POST] conversation auto-create failed:", e);
   }
 
+  // Track lead creation (fire and forget)
+  import("@/lib/analytics").then(({ track, EVENTS }) => {
+    track({ event: EVENTS.LEAD_CREATED, orgId: params.orgId, userId: user.id, properties: { channel: lead?.channel ?? "unknown" } });
+  }).catch(() => null);
+
   return NextResponse.json({ lead: newLead, conversation_id: conversationId });
   } catch (err) {
     console.error("[leads POST] unhandled error:", err);

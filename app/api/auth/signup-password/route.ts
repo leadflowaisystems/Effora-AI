@@ -19,6 +19,7 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { rateLimitAsync, getIp } from "@/lib/ratelimit";
 import { isDisposableEmail } from "@/lib/disposable-domains";
 import { logAudit } from "@/lib/audit";
+import { track, EVENTS } from "@/lib/analytics";
 import { z } from "zod";
 
 const Schema = z.object({
@@ -133,6 +134,7 @@ export async function POST(req: NextRequest) {
 
   pendingCookies.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
 
+  void track({ event: EVENTS.USER_SIGNUP, userId: data.user.id, properties: { method: "email_password", needs_confirmation: !data.session } });
   console.log(
     `[signup-password] created user for ${email.split("@")[1]} | session:${!!data.session} needsConfirmation:${!data.session}`
   );

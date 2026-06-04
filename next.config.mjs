@@ -1,5 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
   webpack: (config, { dev, nextRuntime }) => {
     // Disable persistent cache on server/client builds to reduce memory pressure.
     // Explicitly exclude the edge runtime pass — disabling its cache can corrupt

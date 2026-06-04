@@ -24,6 +24,7 @@ import {
   Target,
   UserCircle,
   UsersRound,
+  HelpCircle,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
@@ -77,6 +78,8 @@ const bottomNav = [
   { href: "settings/billing", label: "Billing",   icon: CreditCard   },
   { href: "settings",         label: "Settings",  icon: Settings     },
 ] as const;
+
+const SUPPORT_URL = "/support";
 
 /* ────────────────────────────────────────────
    APP SHELL
@@ -205,6 +208,26 @@ export function AppShell({
               />
             );
           })}
+
+          {/* Support + bug report links */}
+          {!collapsed && (
+            <div className="flex flex-col gap-0.5">
+              <Link
+                href={SUPPORT_URL}
+                className="flex items-center gap-2 px-2 py-1 text-[10px] text-[var(--text-3)] hover:text-[var(--text-2)] transition-colors"
+                title="Support"
+              >
+                <HelpCircle className="h-3 w-3 shrink-0" /> Help &amp; support
+              </Link>
+              <a
+                href={`mailto:leadflowai.systems@gmail.com?subject=Effora%20Bug%20Report`}
+                className="flex items-center gap-2 px-2 py-1 text-[10px] text-[var(--text-3)] hover:text-[var(--text-2)] transition-colors"
+                title="Report a bug"
+              >
+                🐛 Report a bug
+              </a>
+            </div>
+          )}
 
           {/* User chip */}
           <button

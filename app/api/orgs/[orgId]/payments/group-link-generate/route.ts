@@ -24,10 +24,12 @@ async function assertMember(orgId: string) {
 }
 
 const Schema = z.object({
-  group_id:    z.string().uuid(),
-  amount_inr:  z.number().positive(),
-  description: z.string().min(1).max(500),
-  method:      z.enum(["razorpay", "upi", "auto"]).default("auto"),
+  group_id:       z.string().uuid(),
+  amount_inr:     z.number().positive(),
+  description:    z.string().min(1).max(500),
+  method:         z.enum(["razorpay", "upi", "auto"]).default("auto"),
+  custom_url:     z.string().url().optional().or(z.literal("")),
+  custom_message: z.string().max(2000).optional(),
 });
 
 export async function POST(req: NextRequest, { params }: Params) {
@@ -68,12 +70,12 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   const hasRazorpay = !!rzp?.active;
   const hasUpi      = !!org?.upi_id;
-  const { method, amount_inr, description } = parsed.data;
+  const { method, amount_inr, description, custom_url, custom_message } = parsed.data;
 
   const useRazorpay = method === "razorpay" || (method === "auto" && hasRazorpay);
   const useUpi      = method === "upi" || (method === "auto" && !hasRazorpay && hasUpi);
 
-  if (!useRazorpay && !useUpi) {
+  if (!custom_url?.trim() && !useRazorpay && !useUpi) {
     return NextResponse.json({ error: "No payment method configured. Connect Razorpay or add a UPI ID in Settings › Payments." }, { status: 400 });
   }
 
@@ -90,26 +92,32 @@ export async function POST(req: NextRequest, { params }: Params) {
       let linkUrl    = "";
       let linkMethod = "upi";
 
-      if (useRazorpay && hasRazorpay) {
-        try {
-          const result = await createPaymentLink({
-            orgId:        params.orgId,
-            amountInr:    amount_inr,
-            description,
-            customerName: lead.name ?? undefined,
-          });
-          linkUrl    = result?.shortUrl ?? "";
-          linkMethod = "razorpay";
-        } catch { /* fall through to UPI */ }
-      }
+      // Custom URL overrides auto-generation for all members (shared URL)
+      if (custom_url?.trim()) {
+        linkUrl    = custom_url.trim();
+        linkMethod = "custom";
+      } else {
+        if (useRazorpay && hasRazorpay) {
+          try {
+            const result = await createPaymentLink({
+              orgId:        params.orgId,
+              amountInr:    amount_inr,
+              description,
+              customerName: lead.name ?? undefined,
+            });
+            linkUrl    = result?.shortUrl ?? "";
+            linkMethod = "razorpay";
+          } catch { /* fall through to UPI */ }
+        }
 
-      if (!linkUrl && useUpi && hasUpi) {
-        const pa = encodeURIComponent(org!.upi_id!);
-        const pn = encodeURIComponent(org?.name ?? "Coach");
-        const am = encodeURIComponent(String(amount_inr));
-        const tn = encodeURIComponent(description);
-        linkUrl    = `upi://pay?pa=${pa}&pn=${pn}&am=${am}&tn=${tn}&cu=INR`;
-        linkMethod = "upi";
+        if (!linkUrl && useUpi && hasUpi) {
+          const pa = encodeURIComponent(org!.upi_id!);
+          const pn = encodeURIComponent(org?.name ?? "Coach");
+          const am = encodeURIComponent(String(amount_inr));
+          const tn = encodeURIComponent(description);
+          linkUrl    = `upi://pay?pa=${pa}&pn=${pn}&am=${am}&tn=${tn}&cu=INR`;
+          linkMethod = "upi";
+        }
       }
 
       // Create payment row
@@ -127,9 +135,18 @@ export async function POST(req: NextRequest, { params }: Params) {
       }).select("id").single();
 
       // Write to inbox conversation immediately
-      const msg = linkUrl
-        ? `Hi ${firstName}! A payment request of ₹${amount_inr.toLocaleString("en-IN")} has been sent for "${description}".\n\nPay here: ${linkUrl} 💳`
-        : `Hi ${firstName}! A payment of ₹${amount_inr.toLocaleString("en-IN")} is due for "${description}". Please reach out to complete your payment.`;
+      const fullName = lead.name ?? "there";
+      const amtStr   = `₹${amount_inr.toLocaleString("en-IN")}`;
+      const msg = custom_message?.trim()
+        ? custom_message
+            .replace(/\{\{name\}\}/gi,        fullName)
+            .replace(/\{\{first_name\}\}/gi,  firstName)
+            .replace(/\{\{amount\}\}/gi,      amtStr)
+            .replace(/\{\{description\}\}/gi, description)
+            .replace(/\{\{link\}\}/gi,        linkUrl)
+        : linkUrl
+        ? `Hi ${firstName}! A payment request of ${amtStr} has been sent for "${description}".\n\nPay here: ${linkUrl} 💳`
+        : `Hi ${firstName}! A payment of ${amtStr} is due for "${description}". Please reach out to complete your payment.`;
 
       const provider =
         lead.channel === "whatsapp" ? "whatsapp_cloud" :

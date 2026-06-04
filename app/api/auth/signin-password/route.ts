@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
 import { rateLimitAsync, getIp } from "@/lib/ratelimit";
 import { logAudit } from "@/lib/audit";
+import { track, EVENTS } from "@/lib/analytics";
 import { z } from "zod";
 
 const Schema = z.object({
@@ -101,6 +102,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: clientMsg, error_code: code }, { status });
   }
 
+  void track({ event: EVENTS.USER_LOGIN, userId: data.user?.id, properties: { method: "email_password" } });
   // Build the success response and stamp all session cookies onto it
   const response = NextResponse.json({ ok: true, user_id: data.user?.id });
   pendingCookies.forEach(({ name, value, options }) =>

@@ -2,6 +2,8 @@ import type { Metadata, Viewport } from "next";
 import { Bricolage_Grotesque, Hanken_Grotesk } from "next/font/google";
 import { GeistMono } from "geist/font/mono";
 import { Toaster } from "@/components/ui/toaster";
+import { CookieBanner } from "@/components/marketing/cookie-banner";
+import { PageTracker } from "@/components/analytics/page-tracker";
 import "./globals.css";
 
 const bricolage = Bricolage_Grotesque({
@@ -16,11 +18,28 @@ const hankenGrotesk = Hanken_Grotesk({
   display: "swap",
 });
 
+const BASE_URL = "https://effora-ai-qh35.vercel.app";
+
 export const metadata: Metadata = {
   title: "Effora AI — AI Inbox for Service Businesses",
   description: "Turn every Instagram DM into booked revenue. AI replies in your voice. Real-time inbox, bookings, payments, CRM — all automated.",
   manifest: "/manifest.json",
   appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Effora AI" },
+  metadataBase: new URL(BASE_URL),
+  openGraph: {
+    type:        "website",
+    siteName:    "Effora AI",
+    title:       "Effora AI — AI Inbox for Service Businesses",
+    description: "Turn every Instagram DM into booked revenue. AI replies in your voice.",
+    url:         BASE_URL,
+    images:      [{ url: "/og-image.png", width: 1200, height: 630, alt: "Effora AI" }],
+  },
+  twitter: {
+    card:        "summary_large_image",
+    title:       "Effora AI — AI Inbox for Service Businesses",
+    description: "Turn every Instagram DM into booked revenue.",
+    images:      ["/og-image.png"],
+  },
 };
 
 export const viewport: Viewport = {
@@ -41,6 +60,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         {children}
         <Toaster />
+        <CookieBanner />
+        <PageTracker />
         <script
           dangerouslySetInnerHTML={{
             __html: `if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{})}`,

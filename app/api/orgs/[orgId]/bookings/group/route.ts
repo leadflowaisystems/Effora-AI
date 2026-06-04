@@ -20,10 +20,11 @@ async function assertMember(orgId: string) {
 }
 
 const Schema = z.object({
-  group_id:    z.string().uuid(),
-  starts_at:   z.string().datetime(),
-  meeting_url: z.string().url().optional().or(z.literal("")),
-  notes:       z.string().max(1000).optional(),
+  group_id:       z.string().uuid(),
+  starts_at:      z.string().datetime(),
+  meeting_url:    z.string().url().optional().or(z.literal("")),
+  notes:          z.string().max(1000).optional(),
+  custom_message: z.string().max(2000).optional(),
 });
 
 export async function POST(req: NextRequest, { params }: Params) {
@@ -92,13 +93,24 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   await Promise.allSettled(insertedList.map(async (b) => {
     try {
-      const firstName = (memberMap.get(b.lead_id) ?? "there").split(/\s+/)[0];
-      const msg = [
-        `Hi ${firstName}! Your class booking is confirmed.`,
-        `📅 ${groupName} — ${dateStr} at ${timeStr}`,
-        parsed.data.meeting_url ? `🔗 Join here: ${parsed.data.meeting_url}` : "",
-        `See you there! 🙌`,
-      ].filter(Boolean).join("\n");
+      const fullName  = memberMap.get(b.lead_id) ?? "there";
+      const firstName = fullName.split(/\s+/)[0];
+      let msg: string;
+      if (parsed.data.custom_message?.trim()) {
+        msg = parsed.data.custom_message
+          .replace(/\{\{name\}\}/gi,       fullName)
+          .replace(/\{\{first_name\}\}/gi, firstName)
+          .replace(/\{\{date\}\}/gi,       dateStr)
+          .replace(/\{\{time\}\}/gi,       timeStr)
+          .replace(/\{\{link\}\}/gi,       parsed.data.meeting_url ?? "");
+      } else {
+        msg = [
+          `Hi ${firstName}! Your class booking is confirmed.`,
+          `📅 ${groupName} — ${dateStr} at ${timeStr}`,
+          parsed.data.meeting_url ? `🔗 Join here: ${parsed.data.meeting_url}` : "",
+          `See you there! 🙌`,
+        ].filter(Boolean).join("\n");
+      }
 
       const { data: leadRow } = await svcForConv.from("leads").select("channel").eq("id", b.lead_id).single();
       const leadChannel = (leadRow as { channel: string } | null)?.channel ?? "manual";

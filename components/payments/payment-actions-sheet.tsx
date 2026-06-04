@@ -77,10 +77,12 @@ export function PaymentActionsSheet({ orgId, leads, groups = [], onDone }: Props
   const [saving, setSaving] = React.useState(false);
 
   // Request form state — recipientVal is "lead:ID" or "group:ID"
-  const [rRecipient, setRRecipient] = React.useState("");
-  const [rAmount,    setRAmount]    = React.useState("");
-  const [rDesc,      setRDesc]      = React.useState("");
-  const [rMethod,    setRMethod]    = React.useState<"razorpay" | "upi">("razorpay");
+  const [rRecipient,      setRRecipient]      = React.useState("");
+  const [rAmount,         setRAmount]         = React.useState("");
+  const [rDesc,           setRDesc]           = React.useState("");
+  const [rMethod,         setRMethod]         = React.useState<"razorpay" | "upi">("razorpay");
+  const [rCustomUrl,      setRCustomUrl]      = React.useState("");
+  const [rCustomMessage,  setRCustomMessage]  = React.useState("");
 
   // Mark form state
   const [mLead,   setMLead]   = React.useState("");
@@ -106,10 +108,12 @@ export function PaymentActionsSheet({ orgId, leads, groups = [], onDone }: Props
           method:  "POST",
           headers: { "Content-Type": "application/json" },
           body:    JSON.stringify({
-            group_id:    selectedGroup.id,
-            amount_inr:  Number(rAmount),
-            description: rDesc,
-            method:      rMethod,
+            group_id:       selectedGroup.id,
+            amount_inr:     Number(rAmount),
+            description:    rDesc,
+            method:         rMethod,
+            custom_url:     rCustomUrl     || undefined,
+            custom_message: rCustomMessage || undefined,
           }),
         });
         const data = await res.json();
@@ -124,7 +128,14 @@ export function PaymentActionsSheet({ orgId, leads, groups = [], onDone }: Props
         const res = await fetch(`/api/orgs/${orgId}/payments/link-generate`, {
           method:  "POST",
           headers: { "Content-Type": "application/json" },
-          body:    JSON.stringify({ lead_id: leadId, amount_inr: Number(rAmount), description: rDesc, method: rMethod }),
+          body:    JSON.stringify({
+            lead_id:        leadId,
+            amount_inr:     Number(rAmount),
+            description:    rDesc,
+            method:         rMethod,
+            custom_url:     rCustomUrl    || undefined,
+            custom_message: rCustomMessage || undefined,
+          }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? "Failed");
@@ -160,7 +171,9 @@ export function PaymentActionsSheet({ orgId, leads, groups = [], onDone }: Props
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed");
       toast({ title: "Payment recorded", description: "Lead marked as Won. Receipt sent to inbox.", variant: "success" });
-      close(); onDone();
+      close();
+      setRRecipient(""); setRAmount(""); setRDesc(""); setRCustomUrl(""); setRCustomMessage("");
+      onDone();
     } catch (err) {
       toast({ title: "Error", description: err instanceof Error ? err.message : "Failed", variant: "destructive" });
     } finally {
@@ -237,8 +250,28 @@ export function PaymentActionsSheet({ orgId, leads, groups = [], onDone }: Props
               <label className="text-xs font-medium text-[var(--text-2)]">Description <span className="text-[var(--brand)]">*</span></label>
               <input value={rDesc} onChange={(e) => setRDesc(e.target.value)} required placeholder="3-month coaching program" className={inputCls} />
             </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-[var(--text-2)]">Payment URL <span className="text-[var(--text-3)] text-[11px]">(optional)</span></label>
+              <input
+                type="url" value={rCustomUrl} onChange={(e) => setRCustomUrl(e.target.value)}
+                placeholder="Leave blank to auto-generate UPI/Razorpay link, or paste any payment URL — sent to lead instead"
+                className={inputCls}
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-[var(--text-2)]">Custom message <span className="text-[var(--text-3)] text-[11px]">(optional)</span></label>
+              <textarea
+                value={rCustomMessage} onChange={(e) => setRCustomMessage(e.target.value)} rows={3}
+                placeholder={"Leave blank to use AI-generated message, or type your own.\nVariables: {{name}} {{first_name}} {{amount}} {{description}} {{link}}"}
+                className={inputCls}
+                style={{ resize: "none" }}
+              />
+            </div>
+
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-[var(--text-2)]">Payment method <span className="text-[var(--brand)]">*</span></label>
+              <label className="text-xs font-medium text-[var(--text-2)]">Payment method <span className="text-[var(--text-3)] text-[11px]">{rCustomUrl ? "(ignored — using custom URL)" : "*"}</span></label>
+              <div className={rCustomUrl ? "opacity-50 pointer-events-none" : ""}>
               <div className="flex gap-3">
                 {REQUEST_METHODS.map((m) => (
                   <label key={m.value} className={cn(
@@ -251,6 +284,7 @@ export function PaymentActionsSheet({ orgId, leads, groups = [], onDone }: Props
                   </label>
                 ))}
               </div>
+              </div> {/* closes opacity wrapper */}
             </div>
           </div>
         </SheetWrap>

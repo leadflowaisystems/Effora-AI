@@ -17,11 +17,12 @@ interface Props {
 
 export function ManualBookingSheet({ orgId, leads, groups = [], onDone }: Props) {
   const [open,         setOpen]        = React.useState(false);
-  const [recipientVal, setRecipientVal] = React.useState("");
-  const [startsAt,     setStartsAt]    = React.useState("");
-  const [meetingUrl,   setMeetingUrl]  = React.useState("");
-  const [notes,        setNotes]       = React.useState("");
-  const [saving,       setSaving]      = React.useState(false);
+  const [recipientVal,   setRecipientVal]   = React.useState("");
+  const [startsAt,       setStartsAt]       = React.useState("");
+  const [meetingUrl,     setMeetingUrl]     = React.useState("");
+  const [notes,          setNotes]          = React.useState("");
+  const [customMessage,  setCustomMessage]  = React.useState("");
+  const [saving,         setSaving]         = React.useState(false);
 
   const selectedGroup = recipientVal.startsWith("group:") ? groups.find((g) => g.id === recipientVal.slice(6)) : null;
 
@@ -35,10 +36,11 @@ export function ManualBookingSheet({ orgId, leads, groups = [], onDone }: Props)
           method:  "POST",
           headers: { "Content-Type": "application/json" },
           body:    JSON.stringify({
-            group_id:    selectedGroup.id,
-            starts_at:   new Date(startsAt).toISOString(),
-            meeting_url: meetingUrl || undefined,
-            notes:       notes      || undefined,
+            group_id:       selectedGroup.id,
+            starts_at:      new Date(startsAt).toISOString(),
+            meeting_url:    meetingUrl     || undefined,
+            notes:          notes          || undefined,
+            custom_message: customMessage  || undefined,
           }),
         });
         const data = await res.json();
@@ -50,10 +52,11 @@ export function ManualBookingSheet({ orgId, leads, groups = [], onDone }: Props)
           method:  "POST",
           headers: { "Content-Type": "application/json" },
           body:    JSON.stringify({
-            lead_id:     leadId,
-            starts_at:   new Date(startsAt).toISOString(),
-            meeting_url: meetingUrl || undefined,
-            notes:       notes      || undefined,
+            lead_id:        leadId,
+            starts_at:      new Date(startsAt).toISOString(),
+            meeting_url:    meetingUrl     || undefined,
+            notes:          notes          || undefined,
+            custom_message: customMessage  || undefined,
           }),
         });
         const data = await res.json();
@@ -61,7 +64,7 @@ export function ManualBookingSheet({ orgId, leads, groups = [], onDone }: Props)
         toast({ title: "Booking logged", description: "Confirmation message queued.", variant: "success" });
       }
       setOpen(false);
-      setRecipientVal(""); setStartsAt(""); setMeetingUrl(""); setNotes("");
+      setRecipientVal(""); setStartsAt(""); setMeetingUrl(""); setNotes(""); setCustomMessage("");
       onDone();
     } catch (err) {
       toast({ title: "Error", description: err instanceof Error ? err.message : "Something went wrong", variant: "destructive" });
@@ -129,12 +132,25 @@ export function ManualBookingSheet({ orgId, leads, groups = [], onDone }: Props)
 
               <div className="space-y-1">
                 <label className="text-xs font-medium text-[var(--text-2)]">Meeting URL <span className="text-[var(--text-3)] text-[11px]">(optional)</span></label>
-                <input type="url" value={meetingUrl} onChange={(e) => setMeetingUrl(e.target.value)} placeholder="https://cal.com/…" className={inputCls} />
+                <input
+                  type="url" value={meetingUrl} onChange={(e) => setMeetingUrl(e.target.value)}
+                  placeholder="Leave blank to use Cal.com link, or paste Zoom/Meet/custom URL — this will be sent to lead instead"
+                  className={inputCls}
+                />
               </div>
 
               <div className="space-y-1">
                 <label className="text-xs font-medium text-[var(--text-2)]">Notes <span className="text-[var(--text-3)] text-[11px]">(optional)</span></label>
-                <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Any context…" className={cn(inputCls, "resize-none")} />
+                <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Internal notes (not sent to lead)" className={cn(inputCls, "resize-none")} />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-[var(--text-2)]">Custom message <span className="text-[var(--text-3)] text-[11px]">(optional)</span></label>
+                <textarea
+                  value={customMessage} onChange={(e) => setCustomMessage(e.target.value)} rows={3}
+                  placeholder={"Leave blank to use AI-generated message, or type your own — it will be sent instead.\nVariables: {{name}} {{first_name}} {{date}} {{time}} {{link}}"}
+                  className={cn(inputCls, "resize-none")}
+                />
               </div>
             </div>
 

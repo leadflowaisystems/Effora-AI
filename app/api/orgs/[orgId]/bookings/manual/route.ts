@@ -15,6 +15,7 @@ import { bookingConfirmation } from "@/lib/email-templates";
 import { getLeadFirstName, formatMeetingTime } from "@/lib/leads";
 import { getCalLink } from "@/lib/booking";
 import { withErrorHandler } from "@/lib/api-handler";
+import { track, EVENTS } from "@/lib/analytics";
 import { z } from "zod";
 
 export const maxDuration = 30;
@@ -32,9 +33,10 @@ async function assertMember(orgId: string) {
 
 const Schema = z.object({
   lead_id:     z.string().uuid(),
-  starts_at:   z.string().datetime(),
-  meeting_url: z.string().url().optional().or(z.literal("")),
-  notes:       z.string().max(2000).optional(),
+  starts_at:      z.string().datetime(),
+  meeting_url:    z.string().optional().or(z.literal("")),
+  notes:          z.string().max(2000).optional(),
+  custom_message: z.string().max(2000).optional(),
 });
 
 async function handler(req: NextRequest, { params }: Params) {
@@ -50,7 +52,7 @@ async function handler(req: NextRequest, { params }: Params) {
   const parsed = Schema.safeParse(raw);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message }, { status: 400 });
 
-  const { lead_id, starts_at, meeting_url, notes } = parsed.data;
+  const { lead_id, starts_at, meeting_url, notes, custom_message } = parsed.data;
   const now = new Date().toISOString();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const svc = createServiceClient() as any;
@@ -94,23 +96,38 @@ async function handler(req: NextRequest, { params }: Params) {
   // ── Get or create conversation ────────────────────────────────
   const conversationId = await getOrCreateConversation(params.orgId, lead_id, "manual");
 
-  // ── Generate + insert AI confirmation message ─────────────────
-  const firstName     = getLeadFirstName({ name: lead.name, external_id: lead.external_id });
+  // ── Generate + insert confirmation message ───────────────────
+  const firstName      = getLeadFirstName({ name: lead.name, external_id: lead.external_id });
   const meetingTimeFmt = formatMeetingTime(starts_at);
-  const deepCtx       = await fetchDeepContext(params.orgId);
+  const deepCtx        = await fetchDeepContext(params.orgId);
+  void deepCtx;
 
-  const aiResult = await generateBookingConfirmMessage({
-    leadFirstName:        firstName,
-    meetingTimeFormatted: meetingTimeFmt,
-    meetingUrl:           resolvedMeetingUrl,
-    voiceProfile:         vp,
-    orgId:                params.orgId,
-  }).catch(() => ({
-    content: `Done ${firstName}. Your call on ${meetingTimeFmt} is confirmed.${resolvedMeetingUrl ? ` Join here: ${resolvedMeetingUrl}` : ""} Talk soon.`,
-  }));
-  void deepCtx; // deep context injected automatically inside generateBookingConfirmMessage via fetchDeepContext
+  let confirmContent: string;
+  if (custom_message?.trim()) {
+    // Use verbatim custom message with variable substitution
+    const d = new Date(starts_at);
+    const dateStr = d.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
+    const timeStr = d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+    confirmContent = custom_message
+      .replace(/\{\{name\}\}/gi,       lead.name ?? "there")
+      .replace(/\{\{first_name\}\}/gi, firstName)
+      .replace(/\{\{date\}\}/gi,       dateStr)
+      .replace(/\{\{time\}\}/gi,       timeStr)
+      .replace(/\{\{link\}\}/gi,       resolvedMeetingUrl ?? "");
+  } else {
+    const aiResult = await generateBookingConfirmMessage({
+      leadFirstName:        firstName,
+      meetingTimeFormatted: meetingTimeFmt,
+      meetingUrl:           resolvedMeetingUrl,
+      voiceProfile:         vp,
+      orgId:                params.orgId,
+    }).catch(() => ({
+      content: `Done ${firstName}. Your call on ${meetingTimeFmt} is confirmed.${resolvedMeetingUrl ? ` Join here: ${resolvedMeetingUrl}` : ""} Talk soon.`,
+    }));
+    confirmContent = aiResult.content;
+  }
 
-  await insertOutboundMessage(conversationId, params.orgId, aiResult.content, "booking_confirm");
+  await insertOutboundMessage(conversationId, params.orgId, confirmContent, "booking_confirm");
 
   // ── Send email if lead has email ──────────────────────────────
   if (leadEmail) {
@@ -141,6 +158,7 @@ async function handler(req: NextRequest, { params }: Params) {
     },
   });
 
+  void track({ event: EVENTS.BOOKING_CREATED, orgId: params.orgId, userId: user.id, properties: { booking_id: b.id, source: "manual" } });
   return NextResponse.json({ booking_id: b.id, conversation_id: conversationId });
 }
 
