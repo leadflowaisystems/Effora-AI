@@ -12,6 +12,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
+import { getMetaConfig } from "@/lib/meta-config";
 import {
   exchangeCodeForLongLivedToken,
   fetchPagesWithIg,
@@ -21,18 +22,16 @@ import {
 
 export async function GET(req: NextRequest) {
   const appUrl    = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai-qh35.vercel.app";
-  const appId     = process.env.META_APP_ID;
-  const appSecret = process.env.META_APP_SECRET;
 
-  const code      = req.nextUrl.searchParams.get("code");
-  const stateRaw  = req.nextUrl.searchParams.get("state");
+  const code       = req.nextUrl.searchParams.get("code");
+  const stateRaw   = req.nextUrl.searchParams.get("state");
   const errorParam = req.nextUrl.searchParams.get("error");
 
   if (errorParam) {
     return NextResponse.redirect(`${appUrl}/settings/channel/instagram?error=oauth_denied`);
   }
 
-  if (!code || !stateRaw || !appId || !appSecret) {
+  if (!code || !stateRaw) {
     return NextResponse.redirect(`${appUrl}/settings/channel/instagram?error=missing_params`);
   }
 
@@ -64,18 +63,27 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(`${appUrl}/settings/channel/instagram?error=org_not_found`);
   }
 
+  // Resolve Meta credentials via the same priority chain as /connect
+  // (BYO org creds → platform_settings table → env vars)
+  const metaCfg = await getMetaConfig((org as { id: string }).id).catch(() => null);
+  if (!metaCfg) {
+    return NextResponse.redirect(
+      `${appUrl}/org/${orgSlug}/settings/channel/instagram?error=missing_params`,
+    );
+  }
+
   const redirectUri = `${appUrl}/api/auth/meta/callback`;
 
   try {
     const { access_token, expires_at } = await exchangeCodeForLongLivedToken(
-      code, redirectUri, appId, appSecret,
+      code, redirectUri, metaCfg.app_id, metaCfg.app_secret,
     );
 
     const pages = await fetchPagesWithIg(access_token);
 
     if (pages.length === 0) {
       return NextResponse.redirect(
-        `/org/${orgSlug}/settings/channel/instagram?error=no_ig_account`,
+        `${appUrl}/org/${orgSlug}/settings/channel/instagram?error=no_ig_account`,
       );
     }
 
