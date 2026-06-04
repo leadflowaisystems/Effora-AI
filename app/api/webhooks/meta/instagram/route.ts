@@ -7,6 +7,13 @@
  * Security: POST requests are verified via X-Hub-Signature-256 HMAC.
  * Meta retries failed webhooks aggressively, so we always return 200
  * even on internal processing errors.
+ *
+ * Payload shape (Instagram Messaging API, subscribed via /{ig-user-id}/subscribed_apps):
+ *   { object: "instagram", entry: [{ id: IG_ACCOUNT_ID, messaging: [...] }] }
+ *
+ * NOTE: entry[].id is the INSTAGRAM BUSINESS ACCOUNT ID, not the Facebook Page ID.
+ * We look up the integration by config.instagram_business_account_id, with a
+ * fallback to config.page_id for any legacy page-level subscriptions.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -27,11 +34,10 @@ export async function GET(req: NextRequest) {
   const token     = url.searchParams.get("hub.verify_token");
   const challenge = url.searchParams.get("hub.challenge");
 
-  // Accept verify token from env OR platform_settings (loaded lazily)
   const expectedToken = process.env.META_WEBHOOK_VERIFY_TOKEN;
 
   if (mode === "subscribe" && token === expectedToken && expectedToken) {
-    console.log("[ig-webhook] verification accepted");
+    console.log("[ig-webhook] ✓ verification accepted");
     return new Response(challenge ?? "", {
       status: 200,
       headers: { "Content-Type": "text/plain" },
@@ -43,9 +49,9 @@ export async function GET(req: NextRequest) {
 // ── POST — Incoming Instagram DM events ──────────────────────────────────────
 
 interface IgMessage {
-  mid:       string;
-  text?:     string;
-  is_echo?:  boolean;
+  mid:          string;
+  text?:        string;
+  is_echo?:     boolean;
   attachments?: unknown[];
 }
 
@@ -57,7 +63,7 @@ interface IgMessaging {
 }
 
 interface IgEntry {
-  id:        string; // Facebook Page ID
+  id:        string; // Instagram Business Account ID (from IG subscription)
   time:      number;
   messaging: IgMessaging[];
 }
@@ -69,12 +75,9 @@ interface IgWebhookBody {
 
 export async function POST(req: NextRequest) {
   // ── 1. Resolve app secret for signature verification ──────────────────────
-  // Use env var first; fall back to platform_settings row.
-  // We must verify before parsing, so we can't do per-org lookup here.
   let appSecret = process.env.META_APP_SECRET;
 
   if (!appSecret) {
-    // Try platform_settings table
     try {
       const svc = createServiceClient();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -95,8 +98,8 @@ export async function POST(req: NextRequest) {
   }
 
   if (!appSecret) {
-    console.error("[ig-webhook] META_APP_SECRET not configured — cannot verify signature");
-    return NextResponse.json({ ok: true }); // return 200 so Meta doesn't retry
+    console.error("[ig-webhook] META_APP_SECRET not configured — cannot verify signature. Set META_APP_SECRET in Vercel env vars.");
+    return NextResponse.json({ ok: true }); // return 200 so Meta doesn't retry endlessly
   }
 
   // ── 2. Signature verification ─────────────────────────────────────────────
@@ -105,8 +108,9 @@ export async function POST(req: NextRequest) {
   const expected = "sha256=" + createHmac("sha256", appSecret).update(rawBody).digest("hex");
 
   if (sig !== expected) {
-    console.warn("[ig-webhook] signature mismatch — ignoring");
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    console.warn("[ig-webhook] ✗ signature mismatch — possible replay or wrong app secret");
+    // Return 200 to prevent Meta from retrying (the request is invalid, not a transient error)
+    return NextResponse.json({ ok: true });
   }
 
   console.log("[ig-webhook] ✓ signature verified");
@@ -120,46 +124,56 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  if (body.object !== "instagram") {
-    // Not an IG event — could be a Page event on the same app
+  // Accept both "instagram" (IG account subscription) and "page" (legacy page subscription)
+  if (body.object !== "instagram" && body.object !== "page") {
+    console.log(`[ig-webhook] ignoring object type: ${body.object}`);
     return NextResponse.json({ ok: true });
   }
 
   const svc = createServiceClient();
   const now = new Date().toISOString();
 
+  // Load ALL active meta_instagram integrations once (avoids per-entry DB round-trips)
+  let allIntegrations: { org_id: string; config: Record<string, string> }[] = [];
+  try {
+    const { data: intRows } = await svc
+      .from("integrations")
+      .select("org_id, config")
+      .eq("provider", "meta_instagram")
+      .eq("active", true);
+    allIntegrations = (intRows ?? []) as { org_id: string; config: Record<string, string> }[];
+  } catch (e) {
+    console.error("[ig-webhook] DB error loading integrations:", e);
+    return NextResponse.json({ ok: true });
+  }
+
   // ── 4. Process each entry ─────────────────────────────────────────────────
   for (const entry of body.entry ?? []) {
-    const pageId = entry.id;
+    const entryId = entry.id; // IG Business Account ID (or Page ID for legacy)
 
-    // Look up org by page_id stored in meta_instagram integration config
-    let integration: { org_id: string; config: Record<string, string> } | null = null;
-    try {
-      const { data: intRows } = await svc
-        .from("integrations")
-        .select("org_id, config")
-        .eq("provider", "meta_instagram")
-        .eq("active", true);
-
-      integration = ((intRows ?? []) as { org_id: string; config: Record<string, string> }[])
-        .find((r) => r.config?.page_id === pageId) ?? null;
-    } catch (e) {
-      console.error("[ig-webhook] DB error looking up integration:", e);
-      continue;
-    }
+    // Look up by instagram_business_account_id first (correct for IG API subscriptions),
+    // then fall back to page_id (legacy page-level subscriptions).
+    const integration = allIntegrations.find(
+      (r) =>
+        r.config?.instagram_business_account_id === entryId ||
+        r.config?.page_id === entryId,
+    ) ?? null;
 
     if (!integration) {
-      console.warn(`[ig-webhook] no active meta_instagram integration for page_id=${pageId}`);
+      console.warn(
+        `[ig-webhook] no active meta_instagram integration for entry_id=${entryId}` +
+        ` (checked ${allIntegrations.length} integrations by ig_account_id and page_id)`,
+      );
       continue;
     }
 
-    console.log(`[ig-webhook] ✓ integration found org=${integration.org_id} page=${pageId}`);
+    const orgId   = integration.org_id;
+    const cfg     = integration.config;
+    const igBizId = cfg.instagram_business_account_id;
 
-    const orgId    = integration.org_id;
-    const cfg      = integration.config;
-    const igBizId  = cfg.instagram_business_account_id;
+    console.log(`[ig-webhook] ✓ integration found org=${orgId} ig_account=${igBizId}`);
 
-    // Decrypt page token for profile lookups
+    // Decrypt page token for profile lookups + message sending
     let pageToken: string | null = null;
     try {
       pageToken = cfg.access_token_enc ? decryptSecret(cfg.access_token_enc) : null;
@@ -171,20 +185,36 @@ export async function POST(req: NextRequest) {
       const msg = messaging.message;
       if (!msg) continue;
 
-      // Skip echo messages (messages sent by the page itself)
+      // Skip echo messages (sent by the page/IG account itself)
       if (msg.is_echo) continue;
 
-      // Skip messages without text (images, stickers, etc. — not yet supported)
       const messageText = msg.text ?? null;
+      const senderIgsid = messaging.sender.id;
+
+      // Ignore self-messages (sender is the IG business account)
+      if (senderIgsid === igBizId) continue;
+
+      // ── Log to webhook_events for debug panel ─────────────────────────────
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (svc as any).from("webhook_events").insert({
+          org_id:     orgId,
+          provider:   "meta_instagram",
+          event_type: msg.mid ? "message" : "messaging_postback",
+          sender_id:  senderIgsid,
+          payload:    { entry_id: entryId, mid: msg.mid, has_text: !!messageText },
+          verified:   true,
+          created_at: now,
+        });
+      } catch (e) {
+        console.warn("[ig-webhook] webhook_events insert failed (non-fatal):", e);
+      }
+
+      // Skip messages without text (images, stickers, etc.)
       if (!messageText) {
         console.log(`[ig-webhook] skipping non-text message mid=${msg.mid}`);
         continue;
       }
-
-      const senderIgsid = messaging.sender.id;
-
-      // Ignore if the sender is the IG business account itself
-      if (senderIgsid === igBizId) continue;
 
       const externalId = "ig_" + senderIgsid;
 

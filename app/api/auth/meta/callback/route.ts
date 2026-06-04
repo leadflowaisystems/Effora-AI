@@ -17,7 +17,7 @@ import {
   exchangeCodeForToken,
   fetchPagesWithIg,
   fetchWABA,
-  subscribePageToWebhooks,
+  subscribeIgToWebhooks,
   saveMetaIntegration,
   saveWhatsAppIntegration,
 } from "@/lib/integrations/meta-instagram";
@@ -99,11 +99,14 @@ export async function GET(req: NextRequest) {
       expires_at,
     );
 
-    // Subscribe to webhook events (non-fatal)
+    // Subscribe IG Business Account to webhook events (non-fatal if it fails).
+    // Must use ig_account_id — not page_id — for Instagram Messaging API.
+    // Meta will deliver webhooks with entry[].id = ig_account_id.
     try {
-      await subscribePageToWebhooks(page.page_id, page.page_token);
+      await subscribeIgToWebhooks(page.ig_account_id, page.page_token);
+      console.log(`[meta-callback] IG webhook subscription created for ig=${page.ig_account_id}`);
     } catch (e) {
-      console.error("[meta-callback] webhook subscribe failed (non-fatal):", e);
+      console.error("[meta-callback] IG webhook subscribe failed (non-fatal):", e);
     }
 
     // Attempt WhatsApp WABA retrieval (non-fatal — requires WA permissions in Business Login config)

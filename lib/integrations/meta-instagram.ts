@@ -183,24 +183,46 @@ export async function fetchWABA(token: string): Promise<WabaInfo | null> {
 }
 
 /**
- * Subscribe the page to webhook events for Instagram messages.
+ * Subscribe the Instagram Business Account to receive message webhooks.
+ *
+ * Uses the Instagram Messaging API endpoint /{ig-user-id}/subscribed_apps
+ * (NOT the Page endpoint). Passes params as URL query string — the Graph API
+ * for this endpoint does NOT accept JSON body (access_token must be a query param).
+ *
+ * After this call, Meta delivers DM webhook events with:
+ *   object: "instagram"
+ *   entry[].id = igAccountId  (not the Facebook Page ID)
+ */
+export async function subscribeIgToWebhooks(igAccountId: string, pageToken: string): Promise<void> {
+  const url = new URL(`${GRAPH}/${igAccountId}/subscribed_apps`);
+  url.searchParams.set("subscribed_fields", "messages");
+  url.searchParams.set("access_token", pageToken);
+
+  const res = await fetch(url.toString(), { method: "POST" });
+  const body = await res.json() as { success?: boolean; error?: { message: string; code: number } };
+
+  if (!res.ok || body.error) {
+    throw new Error(
+      `Failed to subscribe IG account to webhooks: ${body.error?.message ?? res.status}`,
+    );
+  }
+  if (!body.success) {
+    throw new Error(`IG webhook subscription returned non-success: ${JSON.stringify(body)}`);
+  }
+}
+
+/**
+ * @deprecated Use subscribeIgToWebhooks(igAccountId, pageToken) instead.
+ * Kept for backward compatibility; now delegates to the IG-account endpoint.
  */
 export async function subscribePageToWebhooks(pageId: string, pageToken: string): Promise<void> {
-  const res = await fetch(
-    `${GRAPH}/${pageId}/subscribed_apps`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        subscribed_fields: ["messages", "messaging_postbacks", "message_reads"],
-        access_token:      pageToken,
-      }),
-    },
+  // The page-ID endpoint creates a Messenger subscription, not an Instagram one.
+  // Left here for callers that haven't migrated; prefer subscribeIgToWebhooks.
+  void pageId;
+  void pageToken;
+  throw new Error(
+    "subscribePageToWebhooks is deprecated — use subscribeIgToWebhooks(igAccountId, pageToken)",
   );
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Failed to subscribe page to webhooks: ${err}`);
-  }
 }
 
 // ── Send message ─────────────────────────────────────────────────────────────

@@ -48,6 +48,7 @@ export async function GET(req: NextRequest) {
       upstash_redis_token:    !!process.env.UPSTASH_REDIS_REST_TOKEN,
       meta_app_id:            !!process.env.META_APP_ID,
       meta_app_secret:        !!process.env.META_APP_SECRET,
+      meta_config_id:         !!process.env.META_CONFIG_ID,
       meta_webhook_verify:    !!process.env.META_WEBHOOK_VERIFY_TOKEN,
       razorpay_key_id:        !!process.env.RAZORPAY_KEY_ID,
       razorpay_key_secret:    !!process.env.RAZORPAY_KEY_SECRET,
