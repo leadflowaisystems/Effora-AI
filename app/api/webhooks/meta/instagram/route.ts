@@ -169,6 +169,22 @@ export async function POST(req: NextRequest) {
 
   // ── End extended diagnostics ─────────────────────────────────────────────
 
+  // app-diag: confirm which Meta app ID + webhook object production is seeing
+  try {
+    const _payload = JSON.parse(rawBody);
+    console.error("[ig-webhook] app-diag", {
+      appId:   process.env.META_APP_ID,
+      object:  _payload?.object,
+      entryId: _payload?.entry?.[0]?.id,
+    });
+  } catch {
+    console.error("[ig-webhook] app-diag", {
+      appId:   process.env.META_APP_ID,
+      object:  "(parse failed)",
+      entryId: "(parse failed)",
+    });
+  }
+
   if (sig !== expected) {
     console.warn("[ig-webhook] ✗ signature mismatch — possible replay or wrong app secret");
     // Return 200 to prevent Meta from retrying (the request is invalid, not a transient error)
