@@ -238,24 +238,35 @@ export async function sendInstagramMessage(
   text:               string,
 ): Promise<{ provider_message_id: string }> {
   const config = await loadMetaConfig(orgId);
+  console.log(`[ig-send] token loaded page_id=${config.page_id} org=${orgId}`);
 
-  const res = await fetch(
-    `${GRAPH}/${config.page_id}/messages?access_token=${decryptSecret(config.access_token_enc)}`,
-    {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        recipient: { id: recipientIgUserId },
-        message:   { text },
-      }),
-    },
-  );
+  const url = `${GRAPH}/${config.page_id}/messages?access_token=${decryptSecret(config.access_token_enc)}`;
+
+  const res = await fetch(url, {
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      recipient: { id: recipientIgUserId },
+      message:   { text },
+    }),
+  });
+
+  const responseText = await res.text();
 
   if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Meta send message failed: ${err}`);
+    console.error(`[ig-send] graph error status=${res.status} body=${responseText}`);
+    throw new Error(`Meta send message failed: ${responseText}`);
   }
-  const data = await res.json() as { message_id: string };
+
+  let data: { message_id: string };
+  try {
+    data = JSON.parse(responseText) as { message_id: string };
+  } catch {
+    console.error(`[ig-send] graph error: could not parse response body=${responseText}`);
+    throw new Error(`Meta send: unexpected non-JSON response: ${responseText}`);
+  }
+
+  console.log(`[ig-send] graph response ok message_id=${data.message_id}`);
   return { provider_message_id: data.message_id };
 }
 

@@ -157,7 +157,13 @@ export function ThreadView({ orgId, orgSlug, convId, lead, channelProvider, init
   }
 
   function handleSent(msg: InboxMessage) {
-    setMessages((prev) => [...prev, msg]);
+    // Dedup against Realtime: the Supabase websocket can fire the INSERT event
+    // before the HTTP response returns (persistent connection vs full round-trip),
+    // so the message may already be in state from the Realtime handler.
+    setMessages((prev) => {
+      if (prev.some((m) => m.id === msg.id)) return prev;
+      return [...prev, msg];
+    });
     router.refresh();
   }
 
