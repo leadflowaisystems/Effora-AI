@@ -63,59 +63,89 @@ export async function GET() {
     return NextResponse.json({ error: "Token decryption failed", detail: String(e) }, { status: 500 });
   }
 
-  // Compute appsecret_proof = HMAC-SHA256(app_secret, access_token)
-  // Meta validates this against their stored App Secret for appId.
-  // If the proof is wrong → error 190 subcode 1 → our secret is WRONG.
-  // If the proof is right → call succeeds → our secret is CORRECT.
-  const appsecretProof = createHmac("sha256", appSecret)
-    .update(userToken)
-    .digest("hex");
+  // ── Test 1: GET /debug_token with app access token ───────────────────────────
+  // The access_token parameter is the app access token: app_id|app_secret.
+  // Meta validates this token server-side.
+  // CORRECT secret → Meta returns full token inspection data
+  // WRONG secret   → Meta returns OAuthException error 190
+  //
+  // Note: appsecret_proof via /me was attempted first but returns code 100
+  // "GraphMethodException: Invalid appsecret_proof provided in the API argument"
+  // for system-user tokens because appsecret_proof is only defined for user tokens.
+  // GET /debug_token is the correct probe for system-user tokens.
+  const appAccessToken = `${appId}|${appSecret}`;
 
-  // Call GET /me with appsecret_proof — forces Meta to validate our secret
-  const url = new URL(`${GRAPH}/me`);
-  url.searchParams.set("access_token",    userToken);
-  url.searchParams.set("appsecret_proof", appsecretProof);
-  url.searchParams.set("fields",          "id,name");
+  const urlDebugToken = new URL(`${GRAPH}/debug_token`);
+  urlDebugToken.searchParams.set("input_token",  userToken);
+  urlDebugToken.searchParams.set("access_token", appAccessToken);
 
-  const res  = await fetch(url.toString());
-  const json = await res.json() as Record<string, unknown>;
+  const resDebug  = await fetch(urlDebugToken.toString());
+  const jsonDebug = await resDebug.json() as Record<string, unknown>;
 
-  // Also call GET /me WITHOUT appsecret_proof as a baseline —
-  // this proves the token itself is valid regardless of the secret.
-  const urlNoProof = new URL(`${GRAPH}/me`);
-  urlNoProof.searchParams.set("access_token", userToken);
-  urlNoProof.searchParams.set("fields",       "id,name");
-  const resNoProof  = await fetch(urlNoProof.toString());
-  const jsonNoProof = await resNoProof.json() as Record<string, unknown>;
+  // ── Test 2: GET /me — baseline token validity (no secret involved) ───────────
+  const urlMe = new URL(`${GRAPH}/me`);
+  urlMe.searchParams.set("access_token", userToken);
+  urlMe.searchParams.set("fields",       "id,name");
+  const resMe  = await fetch(urlMe.toString());
+  const jsonMe = await resMe.json() as Record<string, unknown>;
 
-  // Interpret the result
-  const error      = json.error as { code?: number; error_subcode?: number; message?: string } | undefined;
-  const isWrongSecret =
-    error?.code === 190 && error?.error_subcode === 1;
-  const isCorrectSecret = !error && !!json.id;
+  // ── Test 3: appsecret_proof via /me — kept for reference ─────────────────────
+  // Returns code 100 for system-user tokens. Included for completeness.
+  const appsecretProof = createHmac("sha256", appSecret).update(userToken).digest("hex");
+  const urlProof = new URL(`${GRAPH}/me`);
+  urlProof.searchParams.set("access_token",    userToken);
+  urlProof.searchParams.set("appsecret_proof", appsecretProof);
+  urlProof.searchParams.set("fields",          "id,name");
+  const resProof  = await fetch(urlProof.toString());
+  const jsonProof = await resProof.json() as Record<string, unknown>;
+
+  // ── Interpret debug_token result ──────────────────────────────────────────────
+  const debugError = jsonDebug.error as { code?: number; type?: string; message?: string } | undefined;
+  const debugData  = jsonDebug.data  as { app_id?: string; is_valid?: boolean; type?: string; application?: string } | undefined;
+
+  // Wrong secret → app access token invalid → OAuthException code 190
+  const appTokenRejected   = !!debugError && debugError.code === 190;
+  // Correct secret → app token valid → debug_token returns token inspection data
+  const appTokenAccepted   = !debugError && !!debugData?.app_id;
+
+  let conclusion: string;
+  if (appTokenAccepted) {
+    conclusion = "SECRET IS CORRECT — app access token (app_id|secret) accepted by Meta debug_token";
+  } else if (appTokenRejected) {
+    conclusion = "SECRET IS WRONG — app access token rejected with OAuthException 190";
+  } else {
+    conclusion = "INCONCLUSIVE — unexpected debug_token response (see debug_token_result)";
+  }
 
   return NextResponse.json({
-    conclusion: isCorrectSecret
-      ? "SECRET IS CORRECT — appsecret_proof validated by Meta"
-      : isWrongSecret
-        ? "SECRET IS WRONG — Meta rejected appsecret_proof (error 190 subcode 1)"
-        : "INCONCLUSIVE — unexpected response (see raw_response)",
+    conclusion,
+    app_id:        appId,
+    secret_prefix: appSecret.slice(0, 6),
+    secret_length: appSecret.length,
 
-    app_id:          appId,
-    secret_prefix:   appSecret.slice(0, 6),
-    secret_length:   appSecret.length,
-
-    // appsecret_proof call result
-    with_proof: {
-      http_status:   res.status,
-      raw_response:  json,
+    // Primary test — debug_token with app access token
+    debug_token_result: {
+      http_status:       resDebug.status,
+      raw_response:      jsonDebug,
+      app_token_valid:   appTokenAccepted,
+      app_token_rejected: appTokenRejected,
+      token_app_id:      debugData?.app_id   ?? null,
+      token_is_valid:    debugData?.is_valid  ?? null,
+      token_type:        debugData?.type      ?? null,
     },
 
-    // Baseline call without proof — confirms token validity independent of secret
-    without_proof: {
-      http_status:   resNoProof.status,
-      raw_response:  jsonNoProof,
-      token_valid:   !jsonNoProof.error && !!jsonNoProof.id,
+    // Baseline — confirms system-user token itself is alive
+    me_without_proof: {
+      http_status:  resMe.status,
+      raw_response: jsonMe,
+      token_valid:  !jsonMe.error && !!jsonMe.id,
+    },
+
+    // Reference only — expected to fail with code 100 for system-user tokens
+    me_with_appsecret_proof: {
+      http_status:  resProof.status,
+      raw_response: jsonProof,
+      note:         "code 100 is expected here for system-user tokens — does not indicate wrong secret",
     },
 
     candidate_row_id: candidate.id,
