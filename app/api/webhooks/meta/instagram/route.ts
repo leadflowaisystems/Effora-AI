@@ -146,9 +146,11 @@ export async function POST(req: NextRequest) {
   });
 
   // 4. HMAC inputs and outputs
+  const secretHash = createHmac("sha256", "diagnostic-salt").update(appSecret).digest("hex");
   console.error("[ig-webhook] hmac-diag", {
     secretLength:       appSecret.length,
     secretPrefix:       appSecret.slice(0, 6),
+    secretHash,                               // SHA256(salt+secret) — safe to log, identifies the exact key without exposing it
     expectedSigPrefix:  expected.slice(0, 30),
     receivedSigPrefix:  sig.slice(0, 30),
     equal:              expected === sig,

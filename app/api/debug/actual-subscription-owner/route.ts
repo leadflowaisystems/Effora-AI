@@ -2,17 +2,14 @@
  * GET /api/debug/actual-subscription-owner
  *
  * Temporary PUBLIC diagnostic — NO AUTH.
- * Determines which Meta App owns the webhook subscription for
- * Instagram Business Account 17841424594812508.
+ * Attempts to determine which Meta App(s) are subscribed to receive webhooks
+ * for Instagram Business Account 17841424594812508 / Facebook Page 1209422672248916.
  *
- * Instagram Messaging webhook subscriptions are registered on the FACEBOOK PAGE
- * linked to the IG account, not on the IG object itself.
- * The correct ownership endpoint is GET /{page-id}/subscribed_apps.
- *
- * Calls made:
- *   1. GET /{page-id}/subscribed_apps  — lists every app subscribed to the page
- *                                        and which webhook fields each owns
- *   2. GET /debug_token                — confirms which app_id issued our token
+ * Makes four independent Graph API calls using every available token/approach:
+ *   1. GET /{page-id}/subscribed_apps  — with page access token
+ *   2. GET /{page-id}/subscribed_apps  — with system-user token
+ *   3. GET /{ig-id}/subscribed_apps    — with system-user token (documents the error)
+ *   4. GET /{app-id}/subscriptions     — with app access token (app_id|secret)
  *
  * REMOVE immediately after debugging is complete.
  */
@@ -21,17 +18,29 @@ import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
 import { decryptSecret } from "@/lib/crypto";
 import { getMetaConfig } from "@/lib/meta-config";
+import { createHmac } from "crypto";
 
 const GRAPH   = "https://graph.facebook.com/v18.0";
 const IG_ACCT = "17841424594812508";
+const PAGE_ID = "1209422672248916";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+async function graphGet(url: URL, label: string) {
+  try {
+    const res  = await fetch(url.toString());
+    const json = await res.json();
+    return { label, status: res.status, result: json };
+  } catch (e) {
+    return { label, status: null, result: { fetch_error: String(e) } };
+  }
+}
+
 export async function GET() {
   const svc = createServiceClient();
 
-  // Load all meta_instagram rows — pick the active one with a system-user token
+  // Load active meta_instagram rows
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: rows, error: dbErr } = await (svc as any)
     .from("integrations")
@@ -49,96 +58,90 @@ export async function GET() {
   );
 
   if (!candidate) {
-    return NextResponse.json({
-      error: "No active meta_instagram row with user_access_token_enc found",
-      total_rows: (rows ?? []).length,
-    }, { status: 404 });
+    return NextResponse.json({ error: "No active meta_instagram row with user_access_token_enc" }, { status: 404 });
   }
 
-  const cfg = candidate.config as Record<string, string>;
-  const pageId = cfg.page_id ?? null;
+  const cfg    = candidate.config as Record<string, string>;
   const orgId  = candidate.org_id as string;
 
-  // Decrypt PAGE access token (access_token_enc) — required by new Pages experience
-  let pageToken: string;
-  let pageTokenDecryptError: string | null = null;
-  try {
-    pageToken = decryptSecret(cfg.access_token_enc);
-  } catch (e) {
-    pageTokenDecryptError = String(e);
-    return NextResponse.json({ error: "Page token decryption failed", detail: pageTokenDecryptError }, { status: 500 });
-  }
+  // Decrypt both tokens
+  let pageToken: string | null = null;
+  let userToken: string | null = null;
 
-  // Confirm token type prefix for logging (first 6 chars only — safe to expose)
-  const pageTokenPrefix = pageToken.slice(0, 6);
+  try { pageToken = decryptSecret(cfg.access_token_enc); }      catch { pageToken = null; }
+  try { userToken = decryptSecret(cfg.user_access_token_enc); } catch { userToken = null; }
 
-  // Load app credentials for debug_token call only
-  const metaConfig = await getMetaConfig(orgId);
-  const appAccessToken = metaConfig
-    ? `${metaConfig.app_id}|${metaConfig.app_secret}`
+  const metaConfig     = await getMetaConfig(orgId);
+  const appAccessToken = metaConfig ? `${metaConfig.app_id}|${metaConfig.app_secret}` : null;
+
+  // Hash both tokens for cross-reference (same salt as webhook handler)
+  const pageTokenHash = pageToken
+    ? createHmac("sha256", "diagnostic-salt").update(pageToken).digest("hex").slice(0, 16)
+    : null;
+  const userTokenHash = userToken
+    ? createHmac("sha256", "diagnostic-salt").update(userToken).digest("hex").slice(0, 16)
     : null;
 
-  // ── 1. GET /{page-id}/subscribed_apps using PAGE ACCESS TOKEN ─────────────────
-  let pageSubscribedAppsUrl: string | null = null;
-  let pageSubscribedAppsResult: unknown = null;
+  // ── Call 1: GET /{page-id}/subscribed_apps with PAGE token ───────────────────
+  const call1 = pageToken
+    ? await graphGet(
+        Object.assign(new URL(`${GRAPH}/${PAGE_ID}/subscribed_apps`), {
+          search: `?access_token=${pageToken}`,
+        }) as URL,
+        "page_subscribed_apps__page_token",
+      )
+    : { label: "page_subscribed_apps__page_token", status: null, result: { skipped: "no page token" } };
 
-  if (pageId) {
-    const url = new URL(`${GRAPH}/${pageId}/subscribed_apps`);
-    url.searchParams.set("access_token", pageToken);
-    pageSubscribedAppsUrl = `${GRAPH}/${pageId}/subscribed_apps?access_token=[PAGE_TOKEN_REDACTED]`;
-    const res = await fetch(url.toString());
-    pageSubscribedAppsResult = await res.json();
-  } else {
-    pageSubscribedAppsResult = { skipped: true, reason: "page_id not found in integration config" };
-  }
+  // ── Call 2: GET /{page-id}/subscribed_apps with SYSTEM-USER token ────────────
+  const call2 = userToken
+    ? await graphGet(
+        Object.assign(new URL(`${GRAPH}/${PAGE_ID}/subscribed_apps`), {
+          search: `?access_token=${userToken}`,
+        }) as URL,
+        "page_subscribed_apps__user_token",
+      )
+    : { label: "page_subscribed_apps__user_token", status: null, result: { skipped: "no user token" } };
 
-  // ── 2. GET /debug_token — verify token type and issuing app ──────────────────
-  let debugTokenUrl: string | null = null;
-  let debugTokenResult: unknown = null;
+  // ── Call 3: GET /{ig-id}/subscribed_apps with SYSTEM-USER token ──────────────
+  const call3 = userToken
+    ? await graphGet(
+        Object.assign(new URL(`${GRAPH}/${IG_ACCT}/subscribed_apps`), {
+          search: `?access_token=${userToken}`,
+        }) as URL,
+        "ig_subscribed_apps__user_token",
+      )
+    : { label: "ig_subscribed_apps__user_token", status: null, result: { skipped: "no user token" } };
 
-  if (appAccessToken) {
-    const url = new URL(`${GRAPH}/debug_token`);
-    url.searchParams.set("input_token", pageToken);
-    url.searchParams.set("access_token", appAccessToken);
-    debugTokenUrl = `${GRAPH}/debug_token?input_token=[PAGE_TOKEN_REDACTED]&access_token=[APP_TOKEN_REDACTED]`;
-    const res = await fetch(url.toString());
-    debugTokenResult = await res.json();
-  } else {
-    debugTokenResult = { skipped: true, reason: "no app credentials available for debug_token" };
-  }
+  // ── Call 4: GET /{app-id}/subscriptions with APP token ───────────────────────
+  const call4 = (appAccessToken && metaConfig)
+    ? await graphGet(
+        Object.assign(new URL(`${GRAPH}/${metaConfig.app_id}/subscriptions`), {
+          search: `?access_token=${appAccessToken}`,
+        }) as URL,
+        "app_subscriptions__app_token",
+      )
+    : { label: "app_subscriptions__app_token", status: null, result: { skipped: "no app credentials" } };
 
-  // ── Extract app IDs and subscribed fields ─────────────────────────────────────
-  type SubscribedApp = { id?: string; name?: string; link?: string; subscribed_fields?: string[] };
-  const subscribedData: SubscribedApp[] =
-    (pageSubscribedAppsResult as { data?: SubscribedApp[] })?.data ?? [];
-  const subscribedAppIds    = subscribedData.map((a) => a.id ?? "unknown");
-  const configuredAppId     = metaConfig?.app_id ?? null;
-  const foreignApps         = subscribedAppIds.filter((id) => id !== configuredAppId);
+  // ── Call 5: GET /{ig-id}?fields=id,name,username — basic IG account check ────
+  const call5 = userToken
+    ? await graphGet(
+        Object.assign(new URL(`${GRAPH}/${IG_ACCT}`), {
+          search: `?fields=id,name,username&access_token=${userToken}`,
+        }) as URL,
+        "ig_account_info",
+      )
+    : { label: "ig_account_info", status: null, result: { skipped: "no user token" } };
 
   return NextResponse.json({
-    summary: {
-      ig_account:                    IG_ACCT,
-      page_id:                       pageId,
-      configured_app_id:             configuredAppId,
-      token_source:                  "access_token_enc (Page Access Token)",
-      page_token_prefix:             pageTokenPrefix,
-      apps_owning_page_subscription: subscribedAppIds,
-      subscribed_fields_by_app:      subscribedData.map((a) => ({
-        app_id:           a.id,
-        app_name:         a.name,
-        subscribed_fields: a.subscribed_fields,
-      })),
-      foreign_app_ids:               foreignApps,
-      foreign_app_detected:          foreignApps.length > 0,
+    meta: {
+      ig_account:        IG_ACCT,
+      page_id:           PAGE_ID,
+      configured_app_id: metaConfig?.app_id ?? null,
+      configured_config_id: metaConfig?.config_id ?? null,
+      candidate_row_id:  candidate.id,
+      page_token_hash:   pageTokenHash,   // first 16 chars of salted hash — cross-reference only
+      user_token_hash:   userTokenHash,
     },
-    page_subscribed_apps: {
-      url:    pageSubscribedAppsUrl,
-      result: pageSubscribedAppsResult,
-    },
-    debug_token: {
-      url:    debugTokenUrl,
-      result: debugTokenResult,
-    },
-    candidate_row_id: candidate.id,
+    calls: [call1, call2, call3, call4, call5],
   });
 }
