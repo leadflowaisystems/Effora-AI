@@ -91,17 +91,17 @@ export async function GET() {
   }
 
   // ── 3. GET /{ig-id}/subscribed_apps — apps subscribed to the IG account ──────
+  // Must use the system-user token, NOT an app access token (app_id|secret).
   let subscribedAppsUrl: string | null = null;
   let subscribedAppsResult: unknown = null;
-  // Try with user token first, fall back to app access token
-  for (const tok of [userToken, appAccessToken].filter(Boolean) as string[]) {
+  if (userToken) {
     const url = new URL(`${GRAPH}/${IG_ACCT}/subscribed_apps`);
-    url.searchParams.set("access_token", tok);
-    subscribedAppsUrl = url.toString().replace(tok, "[REDACTED]");
+    url.searchParams.set("access_token", userToken);
+    subscribedAppsUrl = `${GRAPH}/${IG_ACCT}/subscribed_apps?access_token=[SYSTEM_USER_TOKEN_REDACTED]`;
     const res = await fetch(url.toString());
     subscribedAppsResult = await res.json();
-    // Stop on success
-    if ((subscribedAppsResult as { error?: unknown }).error === undefined) break;
+  } else {
+    subscribedAppsResult = { skipped: true, reason: "no system-user token available" };
   }
 
   // ── Summary ──────────────────────────────────────────────────────────────────
