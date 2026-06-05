@@ -125,46 +125,59 @@ export async function POST(req: NextRequest) {
 
   // ── Extended diagnostics (remove after root cause confirmed) ─────────────
 
-  // 1. First 300 chars of raw body
-  console.error("[ig-webhook] payload-diag", rawBody.slice(0, 300));
-
-  // 2. Body encoding details
+  // 1. Body encoding — byte-level details including first 32 bytes as hex.
+  //    hex32 will reveal any byte-level transformation invisible to .length check.
+  const bodyBuffer = Buffer.from(rawBody, "utf8");
+  const hex32      = bodyBuffer.slice(0, 32).toString("hex");
   console.error("[ig-webhook] body-diag", {
-    bodyLength: rawBody.length,
-    bodyBytes: Buffer.byteLength(rawBody, "utf8"),
-    first50: rawBody.slice(0, 50),
+    bodyLength:  rawBody.length,
+    bodyBytes:   bodyBuffer.byteLength,
+    contentLen:  req.headers.get("content-length"),
+    hex32,                     // first 32 raw bytes as hex — detects any invisible transformation
+    first80:     rawBody.slice(0, 80),
   });
 
-  // 3. All signature-related headers
+  // 2. All signature-related headers
   console.error("[ig-webhook] headers-diag", {
     xHubSignature256: req.headers.get("x-hub-signature-256"),
     xHubSignature:    req.headers.get("x-hub-signature"),
-    xMetaSignature:   req.headers.get("x-meta-signature"),
     contentType:      req.headers.get("content-type"),
     contentLength:    req.headers.get("content-length"),
     userAgent:        req.headers.get("user-agent"),
   });
 
-  // 4. HMAC inputs and outputs
-  const secretHash = createHmac("sha256", "diagnostic-salt").update(appSecret).digest("hex");
+  // 3. HMAC inputs and outputs — two variants to rule out string-vs-buffer encoding
+  const secretHash       = createHmac("sha256", "diagnostic-salt").update(appSecret).digest("hex");
+  const expectedFromStr  = "sha256=" + createHmac("sha256", appSecret).update(rawBody).digest("hex");
+  const expectedFromBuf  = "sha256=" + createHmac("sha256", appSecret).update(bodyBuffer).digest("hex");
   console.error("[ig-webhook] hmac-diag", {
-    secretLength:       appSecret.length,
-    secretPrefix:       appSecret.slice(0, 6),
-    secretHash,                               // SHA256(salt+secret) — safe to log, identifies the exact key without exposing it
-    expectedSigPrefix:  expected.slice(0, 30),
-    receivedSigPrefix:  sig.slice(0, 30),
-    equal:              expected === sig,
+    secretLength:        appSecret.length,
+    secretPrefix:        appSecret.slice(0, 6),
+    secretHash,
+    receivedSig:         sig,
+    expectedFromStr,     // HMAC using rawBody string  (current production path)
+    expectedFromBuf,     // HMAC using Buffer(rawBody) (byte-identical for ASCII; detects encoding divergence)
+    strVariantMatches:   expectedFromStr === sig,
+    bufVariantMatches:   expectedFromBuf === sig,
+    strAndBufIdentical:  expectedFromStr === expectedFromBuf,
   });
 
-  // 5. OLD APP SECRET CHECK — does Meta's signature match the previous app's secret?
-  //    If equalWithOldSecret=true the old app (1883195202375416) is still signing deliveries.
-  //    Remove once root cause is confirmed.
+  // 4. OLD APP SECRET CHECK
   const OLD_APP_SECRET = "56e0a2c62e4d5943f6205a2cbc2daf00";
-  const expectedOld    = "sha256=" + createHmac("sha256", OLD_APP_SECRET).update(rawBody).digest("hex");
+  const expectedOld    = "sha256=" + createHmac("sha256", OLD_APP_SECRET).update(bodyBuffer).digest("hex");
   console.error("[ig-webhook] old-secret-check", {
     equalWithOldSecret: expectedOld === sig,
     oldSecretPrefix:    OLD_APP_SECRET.slice(0, 6),
   });
+
+  // 5. FULL BODY LOG — only emitted on mismatch so the exact bytes can be
+  //    replayed via POST /api/debug/meta-config { body, sig } to confirm HMAC.
+  //    This is the definitive test: if that endpoint returns match=false with
+  //    the same body+sig, the secret in Vercel is wrong.
+  if (sig !== expected) {
+    console.error("[ig-webhook] full-body-for-replay", rawBody);
+    console.error("[ig-webhook] full-sig-for-replay",  sig);
+  }
 
   // 5. Parse payload safely and identify webhook type
   try {

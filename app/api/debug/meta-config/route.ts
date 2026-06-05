@@ -38,15 +38,26 @@ export async function POST(req: NextRequest) {
   if (!secret) return NextResponse.json({ error: "no secret" }, { status: 400 });
   if (!body)   return NextResponse.json({ error: "no body"   }, { status: 400 });
 
-  const computed = "sha256=" + createHmac("sha256", secret).update(body).digest("hex");
+  const buf           = Buffer.from(body, "utf8");
+  const computedStr   = "sha256=" + createHmac("sha256", secret).update(body).digest("hex");
+  const computedBuf   = "sha256=" + createHmac("sha256", secret).update(buf).digest("hex");
+  const secretHash    = createHmac("sha256", "diagnostic-salt").update(secret).digest("hex");
+  const hex32         = buf.slice(0, 32).toString("hex");
 
   return NextResponse.json({
-    computed,
-    received:  sig,
-    match:     computed === sig,
-    secretLen: secret.length,
-    secretPrefix: secret.slice(0, 6),
-    bodyLen:   body.length,
-    bodyBytes: Buffer.byteLength(body, "utf8"),
+    // If match=false the secret in Vercel is wrong for this body+sig.
+    // If match=true the secret is correct and the problem is in how the
+    // live webhook handler reads the body (different bytes than logged here).
+    matchFromStr:     computedStr === sig,
+    matchFromBuf:     computedBuf === sig,
+    computedStr,
+    computedBuf,
+    received:         sig,
+    secretLen:        secret.length,
+    secretPrefix:     secret.slice(0, 6),
+    secretHash,       // must match secretHash from [ig-webhook] hmac-diag log
+    bodyLen:          body.length,
+    bodyBytes:        buf.byteLength,
+    bodyHex32:        hex32,
   });
 }
