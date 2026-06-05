@@ -112,6 +112,18 @@ export async function POST(req: NextRequest) {
   const sig     = req.headers.get("x-hub-signature-256") ?? "";
   const expected = "sha256=" + createHmac("sha256", appSecret).update(rawBody).digest("hex");
 
+  // ── Previous-secret fallback ──────────────────────────────────────────────
+  // After a Meta App Secret rotation, Meta continues signing outgoing webhook
+  // deliveries with the PREVIOUS secret during a propagation window.
+  // Set META_APP_SECRET_PREV in Vercel to the value of META_APP_SECRET before
+  // the most recent rotation. If this matches, the webhook is valid — Meta has
+  // not yet propagated to the new secret for this subscription.
+  const prevSecret   = process.env.META_APP_SECRET_PREV ?? null;
+  const expectedPrev = prevSecret
+    ? "sha256=" + createHmac("sha256", prevSecret).update(rawBody).digest("hex")
+    : null;
+  const sigMatchesPrev = expectedPrev !== null && expectedPrev === sig;
+
   // Diagnostic: log enough to debug without exposing the full secret
   console.log(
     `[ig-webhook] sig-diag secret_source=${secretSource}` +
@@ -162,12 +174,14 @@ export async function POST(req: NextRequest) {
     strAndBufIdentical:  expectedFromStr === expectedFromBuf,
   });
 
-  // 4. OLD APP SECRET CHECK
+  // 4. OLD APP SECRET CHECK + PREV SECRET CHECK
   const OLD_APP_SECRET = "56e0a2c62e4d5943f6205a2cbc2daf00";
   const expectedOld    = "sha256=" + createHmac("sha256", OLD_APP_SECRET).update(bodyBuffer).digest("hex");
   console.error("[ig-webhook] old-secret-check", {
-    equalWithOldSecret: expectedOld === sig,
-    oldSecretPrefix:    OLD_APP_SECRET.slice(0, 6),
+    equalWithOldSecret:  expectedOld === sig,
+    oldSecretPrefix:     OLD_APP_SECRET.slice(0, 6),
+    equalWithPrevSecret: sigMatchesPrev,
+    prevSecretPrefix:    prevSecret?.slice(0, 6) ?? "(not set — add META_APP_SECRET_PREV to Vercel)",
   });
 
   // 5. FULL BODY LOG — only emitted on mismatch so the exact bytes can be
@@ -210,13 +224,22 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  if (sig !== expected) {
-    console.warn("[ig-webhook] ✗ signature mismatch — possible replay or wrong app secret");
+  const sigValid = sig === expected || sigMatchesPrev;
+
+  if (!sigValid) {
+    console.warn("[ig-webhook] ✗ signature mismatch — current secret and prev secret both failed");
     // Return 200 to prevent Meta from retrying (the request is invalid, not a transient error)
     return NextResponse.json({ ok: true });
   }
 
-  console.log("[ig-webhook] ✓ signature verified");
+  if (sigMatchesPrev && sig !== expected) {
+    // Meta is still signing with the previous secret after rotation.
+    // This is normal during Meta's propagation window (minutes to hours).
+    // Once Meta propagates, remove META_APP_SECRET_PREV from Vercel.
+    console.warn("[ig-webhook] ✓ signature verified via META_APP_SECRET_PREV — Meta still using previous secret");
+  } else {
+    console.log("[ig-webhook] ✓ signature verified");
+  }
 
   // ── 3. Parse payload ──────────────────────────────────────────────────────
   let body: IgWebhookBody;
