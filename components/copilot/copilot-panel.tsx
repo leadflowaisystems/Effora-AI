@@ -174,7 +174,7 @@ export function CopilotPanel({ orgId }: Props) {
         <button
           onClick={() => setOpen(true)}
           aria-label="Open Ace copilot"
-          className="fixed bottom-6 right-6 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-[var(--brand)] shadow-lg shadow-[var(--brand)]/30 hover:opacity-90 transition-opacity"
+          className="fixed bottom-20 right-6 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-[var(--brand)] shadow-lg shadow-[var(--brand)]/30 hover:opacity-90 transition-opacity"
         >
           <Sparkles className="h-5 w-5 text-[#0A0A0C]" />
         </button>
@@ -189,7 +189,7 @@ export function CopilotPanel({ orgId }: Props) {
             animate={{ opacity: 1, y: 0,  scale: 1 }}
             exit={{ opacity: 0, y: 20,    scale: 0.97 }}
             transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-            className="fixed bottom-0 right-0 z-50 flex flex-col w-full sm:w-[400px] h-[580px] sm:h-[600px] sm:bottom-6 sm:right-6 border border-[var(--border)] bg-[var(--bg-1)] rounded-t-2xl sm:rounded-2xl shadow-2xl overflow-hidden"
+            className="fixed bottom-0 right-0 z-50 flex flex-col w-full sm:w-[400px] h-[580px] sm:h-[600px] sm:bottom-20 sm:right-6 border border-[var(--border)] bg-[var(--bg-1)] rounded-t-2xl sm:rounded-2xl shadow-2xl overflow-hidden"
           >
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)] shrink-0">

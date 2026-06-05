@@ -164,7 +164,9 @@ export function ThreadView({ orgId, orgSlug, convId, lead, channelProvider, init
       if (prev.some((m) => m.id === msg.id)) return prev;
       return [...prev, msg];
     });
-    router.refresh();
+    // Refresh the layout (sidebar last_message_preview) without re-running this
+    // component's data fetch — defer so the optimistic update renders first.
+    setTimeout(() => router.refresh(), 300);
   }
 
   const stage = lead?.stage ?? "cold";
@@ -186,7 +188,14 @@ export function ThreadView({ orgId, orgSlug, convId, lead, channelProvider, init
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-display text-sm font-semibold text-[var(--text)] truncate">
-              {lead?.name ?? lead?.external_id ?? "Unknown lead"}
+              {(() => {
+                const name = lead?.name;
+                // Show "Instagram User" when the stored name is just a raw numeric ID
+                if (!name || /^\d+$/.test(name) || name === lead?.external_id?.replace(/^ig_/, "")) {
+                  return "Instagram User";
+                }
+                return name;
+              })() ?? lead?.external_id ?? "Unknown lead"}
             </span>
             {lead?.stage && (
               <Badge variant={STAGE_BADGE[stage] ?? "muted"} className="text-[10px] px-1.5 py-0 shrink-0">

@@ -283,7 +283,8 @@ export async function getIgUserProfile(
     `${GRAPH}/${igUserId}?fields=id,username,name&access_token=${pageToken}`,
   );
   if (!res.ok) {
-    // Non-fatal — return minimal profile
+    const errBody = await res.text().catch(() => "(unreadable)");
+    console.warn(`[ig-profile] lookup failed status=${res.status} ig_user=${igUserId} body=${errBody}`);
     return { id: igUserId, username: igUserId, name: igUserId };
   }
   const data = await res.json() as { id: string; username?: string; name?: string };

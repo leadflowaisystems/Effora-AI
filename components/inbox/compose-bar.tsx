@@ -5,6 +5,7 @@ import { Send, Loader2 } from "lucide-react";
 import { Button }   from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn }       from "@/lib/utils";
+import { useToast } from "@/components/ui/use-toast";
 import type { InboxMessage } from "@/types/inbox";
 
 interface Props {
@@ -18,6 +19,7 @@ export function ComposeBar({ orgId, convId, onSent, disabled }: Props) {
   const [text,    setText]    = React.useState("");
   const [loading, setLoading] = React.useState(false);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+  const { toast } = useToast();
 
   async function send() {
     const content = text.trim();
@@ -42,10 +44,28 @@ export function ComposeBar({ orgId, convId, onSent, disabled }: Props) {
         metadata:  { source: "manual" },
       });
 
+      if (json.delivery_failed) {
+        const reason = json.delivery_error ?? "unknown";
+        if (reason === "outside_24h_window") {
+          toast({
+            title:       "Message saved — Instagram 24h window expired",
+            description: "The lead needs to message you first before you can reach them.",
+            variant:     "destructive",
+          });
+        } else {
+          toast({
+            title:       "Message saved but not delivered",
+            description: `Instagram delivery failed: ${reason}`,
+            variant:     "destructive",
+          });
+        }
+      }
+
       // Re-focus after send
       setTimeout(() => textareaRef.current?.focus(), 50);
     } catch (err) {
       console.error("[compose]", err);
+      toast({ title: "Failed to send", description: "Please try again.", variant: "destructive" });
     } finally {
       setLoading(false);
     }

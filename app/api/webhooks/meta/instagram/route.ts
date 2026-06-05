@@ -373,17 +373,24 @@ export async function POST(req: NextRequest) {
       try {
         const { data: existingLead } = await svc
           .from("leads")
-          .select("id")
+          .select("id, name")
           .eq("org_id", orgId)
           .eq("channel", "instagram")
           .eq("external_id", externalId)
           .maybeSingle();
 
         if (existingLead) {
-          leadId = (existingLead as { id: string }).id;
-          await svc.from("leads")
-            .update({ last_seen_at: now, updated_at: now })
-            .eq("id", leadId);
+          leadId = (existingLead as { id: string; name?: string | null }).id;
+          const currentName = (existingLead as { id: string; name?: string | null }).name ?? "";
+          // Re-enrich name if still a raw numeric ID (profile lookup may have failed earlier)
+          const nameIsNumeric = !currentName || /^\d+$/.test(currentName);
+          const shouldEnrich = nameIsNumeric && !!displayName && !/^\d+$/.test(displayName);
+          if (shouldEnrich) {
+            console.log(`[ig-webhook] re-enriching lead name from "${currentName}" to "${displayName}" lead=${leadId}`);
+            await svc.from("leads").update({ last_seen_at: now, updated_at: now, name: displayName }).eq("id", leadId);
+          } else {
+            await svc.from("leads").update({ last_seen_at: now, updated_at: now }).eq("id", leadId);
+          }
           console.log(`[ig-webhook] lead upserted action=updated lead=${leadId}`);
         } else {
           const { data: newLead, error: le } = await svc.from("leads").insert({

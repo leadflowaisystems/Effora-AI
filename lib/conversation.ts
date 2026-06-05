@@ -167,7 +167,10 @@ export async function deliverOutboundMessage(
         if (is24hWindow) {
           console.warn(`[ig-send] automation delivery skipped (outside 24h window) conv=${conversationId} source=${source}`);
         } else {
-          console.error(`[ig-send] automation delivery failed conv=${conversationId} source=${source}:`, reason);
+          console.error(`[ig-send] automation delivery failed conv=${conversationId} source=${source} reason="${reason}"`);
+          if (source === "payment_link") {
+            console.error(`[ig-send] PAYMENT LINK DELIVERY FAILURE — Meta rejected payment link message. Check if URL is allowed by Meta policy. conv=${conversationId} error="${reason}"`);
+          }
         }
       }
     }

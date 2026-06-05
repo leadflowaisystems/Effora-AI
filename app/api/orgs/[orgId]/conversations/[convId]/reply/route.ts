@@ -46,6 +46,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     .single();
 
   let providerMessageId: string | null = null;
+  const deliveryMeta: Record<string, string> = {};
 
   const channelProvider = (conv as { channel_provider?: string } | null)?.channel_provider ?? "";
   console.log(`[ig-send] request conv=${params.convId} channel_provider=${channelProvider}`);
@@ -53,6 +54,8 @@ export async function POST(req: NextRequest, { params }: Params) {
   // Send via Meta Graph API if this is an Instagram conversation.
   // Accept both "instagram" (written by the webhook handler) and
   // "meta_instagram" (the integration provider value) — they are the same channel.
+  // Delivery failure is non-fatal: the message is always stored in the DB so the
+  // coach can see what was typed, and delivery_error metadata surfaces the reason.
   if (IG_PROVIDERS.has(channelProvider)) {
     const { data: lead } = await svc
       .from("leads")
@@ -67,6 +70,10 @@ export async function POST(req: NextRequest, { params }: Params) {
 
     if (!rawIgUserId) {
       console.error("[ig-send] graph error: could not resolve IG user ID from lead.external_id");
+      deliveryMeta.delivery_error = "missing_psid";
+    } else if (!/^\d+$/.test(rawIgUserId)) {
+      console.log(`[ig-send] skipping delivery — external_id="${rawIgUserId}" is not a numeric PSID`);
+      deliveryMeta.delivery_error = "non_numeric_psid";
     } else {
       try {
         console.log(`[ig-send] graph request POST /{page_id}/messages recipient=${rawIgUserId}`);
@@ -74,8 +81,16 @@ export async function POST(req: NextRequest, { params }: Params) {
         providerMessageId = result.provider_message_id;
         console.log(`[ig-send] graph response ok provider_message_id=${providerMessageId}`);
       } catch (sendErr) {
-        console.error("[ig-send] graph error:", sendErr);
-        return NextResponse.json({ error: "Failed to deliver message via Instagram" }, { status: 502 });
+        const reason = sendErr instanceof Error ? sendErr.message : String(sendErr);
+        const is24hWindow =
+          reason.includes("outside") || reason.includes("131047") ||
+          reason.includes("131026") || reason.includes("368");
+        deliveryMeta.delivery_error = is24hWindow ? "outside_24h_window" : reason;
+        if (is24hWindow) {
+          console.warn(`[ig-send] manual delivery skipped (outside 24h window) conv=${params.convId}`);
+        } else {
+          console.error(`[ig-send] manual delivery failed conv=${params.convId}:`, reason);
+        }
       }
     }
   } else {
@@ -89,7 +104,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     content,
     sent_at:            now,
     provider_message_id: providerMessageId,
-    metadata:           { source: "manual", sent_by: user.id },
+    metadata:           { source: "manual", sent_by: user.id, ...deliveryMeta },
   }).select("id, content, sent_at").single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -99,5 +114,6 @@ export async function POST(req: NextRequest, { params }: Params) {
     last_message_preview: content.slice(0, 80),
   }).eq("id", params.convId);
 
-  return NextResponse.json({ message });
+  const deliveryFailed = !!deliveryMeta.delivery_error;
+  return NextResponse.json({ message, delivery_failed: deliveryFailed, delivery_error: deliveryMeta.delivery_error ?? null });
 }
