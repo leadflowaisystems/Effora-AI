@@ -231,23 +231,30 @@ export const subscribePageToWebhooks = subscribeIgToWebhooks;
 /**
  * Send an Instagram DM to a user via the Graph API.
  * Loads the integration row for the org to get the stored page token.
+ *
+ * Pass imageUrl to send an image attachment instead of text.
  */
 export async function sendInstagramMessage(
   orgId:              string,
   recipientIgUserId:  string,
   text:               string,
+  imageUrl?:          string,
 ): Promise<{ provider_message_id: string }> {
   const config = await loadMetaConfig(orgId);
   console.log(`[ig-send] token loaded page_id=${config.page_id} org=${orgId}`);
 
   const url = `${GRAPH}/${config.page_id}/messages?access_token=${decryptSecret(config.access_token_enc)}`;
 
+  const messagePayload = imageUrl
+    ? { attachment: { type: "image", payload: { url: imageUrl, is_reusable: true } } }
+    : { text };
+
   const res = await fetch(url, {
     method:  "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       recipient: { id: recipientIgUserId },
-      message:   { text },
+      message:   messagePayload,
     }),
   });
 
@@ -304,15 +311,14 @@ export async function getIgUserProfile(
     return { id: igUserId, username: shortId, name: shortId };
   }
   const data = await res.json() as { id: string; username?: string; name?: string };
-  // Prefer display name, then @username, then short ID
-  const username = data.username ? `@${data.username}` : null;
-  const shortId  = igUserId.length > 6 ? `IG …${igUserId.slice(-6)}` : `IG ${igUserId}`;
-  const display  = data.name || username || shortId;
-  console.log(`[ig-profile] resolved ig_user=${igUserId} name="${data.name}" username="${data.username}" display="${display}"`);
+  // Return real values only. Fallback display ("IG …xxx") is the UI's responsibility,
+  // not this function's — so callers can detect "no real name" vs "real name available".
+  const shortId = igUserId.length > 6 ? `IG …${igUserId.slice(-6)}` : `IG ${igUserId}`;
+  console.log(`[ig-profile] resolved ig_user=${igUserId} name="${data.name}" username="${data.username}"`);
   return {
     id:       data.id,
     username: data.username ?? igUserId,
-    name:     display,
+    name:     data.name || (data.username ? `@${data.username}` : shortId),
   };
 }
 

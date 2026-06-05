@@ -77,7 +77,21 @@ function MessageBubble({ msg }: { msg: InboxMessage }) {
             ⚠ AI generated — not delivered to Instagram
           </span>
         )}
-        <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+        {msg.metadata?.["attachment_url"] ? (
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={msg.metadata["attachment_url"] as string}
+              alt="Image attachment"
+              className="max-w-[240px] rounded-lg object-cover mb-1"
+            />
+            {msg.content && msg.content !== "📷 Image" && (
+              <p className="whitespace-pre-wrap break-words text-sm">{msg.content}</p>
+            )}
+          </>
+        ) : (
+          <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+        )}
         <p className={cn(
           "mt-1 text-[10px]",
           isOut ? "text-[var(--brand)]/60 text-right" : "text-[var(--text-3)]"

@@ -60,68 +60,140 @@ export function InboxShell({
   React.useEffect(() => {
     const supabase = createClient();
 
+    const sortDesc = (list: InboxConversation[]) =>
+      [...list].sort((a, b) => {
+        if (!a.last_message_at) return 1;
+        if (!b.last_message_at) return -1;
+        return new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime();
+      });
+
     const channel = supabase
       .channel(`inbox-shell:${orgId}`)
-      // New conversation created (new lead messaged for the first time)
+      // New conversation created (new lead messaged for the first time).
+      // Build the item immediately from payload.new so it appears instantly, then
+      // enrich lead data asynchronously — eliminates the blocking API round-trip.
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "conversations", filter: `org_id=eq.${orgId}` },
         async (payload) => {
-          const convId = (payload.new as { id: string }).id;
+          const raw = payload.new as {
+            id: string; channel_provider: string; last_message_at: string | null;
+            last_message_preview: string | null; lead_id: string;
+          };
+          // Add conversation immediately with unknown lead (shows ID as name until enriched)
+          const placeholder: InboxConversation = {
+            id:                   raw.id,
+            channel_provider:     raw.channel_provider,
+            last_message_at:      raw.last_message_at,
+            last_message_preview: raw.last_message_preview ?? null,
+            hasPendingDraft:      false,
+            lead:                 null,
+          };
+          setConversations((prev) => {
+            if (prev.some((c) => c.id === raw.id)) return prev;
+            const next = sortDesc([placeholder, ...prev]);
+            setInboxCache(orgId, next);
+            return next;
+          });
+
+          // Enrich with lead data in the background (non-blocking)
           try {
-            // Fetch conversation with lead data
-            const res = await fetch(`/api/orgs/${orgId}/conversations/${convId}`);
+            const res = await fetch(`/api/orgs/${orgId}/conversations/${raw.id}`);
             if (!res.ok) return;
             const json = await res.json() as {
-              conversation: { id: string; channel_provider: string; last_message_at: string | null; lead: InboxLead | null };
+              conversation: { id: string; lead: InboxLead | null };
             };
-            const raw = payload.new as { last_message_preview?: string | null };
             const leadRaw = json.conversation.lead;
-            const newConv: InboxConversation = {
-              id:                   json.conversation.id,
-              channel_provider:     json.conversation.channel_provider,
-              last_message_at:      json.conversation.last_message_at,
-              last_message_preview: raw.last_message_preview ?? null,
-              hasPendingDraft:      false,
-              lead:                 leadRaw ? { ...leadRaw, stage: leadRaw.stage as LeadStage } : null,
-            };
-            setConversations((prev) => {
-              if (prev.some((c) => c.id === newConv.id)) return prev;
-              const next = [newConv, ...prev];
-              setInboxCache(orgId, next);
-              return next;
-            });
-          } catch { /* non-fatal */ }
+            if (!leadRaw) return;
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id === raw.id
+                  ? { ...c, lead: { ...leadRaw, stage: leadRaw.stage as LeadStage } }
+                  : c,
+              ),
+            );
+          } catch { /* non-fatal — placeholder stays until next page load */ }
         },
       )
-      // Existing conversation updated (new message — move to top, update preview)
+      // Existing conversation updated (new message from any source).
+      // If the conversation is already in the list, update + re-sort.
+      // If not (e.g., beyond the initial 60-item limit), fetch it and insert at top.
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "conversations", filter: `org_id=eq.${orgId}` },
-        (payload) => {
+        async (payload) => {
           const upd = payload.new as {
-            id: string; last_message_at: string | null; last_message_preview: string | null;
+            id: string; last_message_at: string | null; last_message_preview: string | null; lead_id: string;
           };
           setConversations((prev) => {
-            const next = prev
-              .map((c) =>
-                c.id === upd.id
-                  ? { ...c, last_message_at: upd.last_message_at, last_message_preview: upd.last_message_preview }
-                  : c,
-              )
-              .sort((a, b) => {
-                if (!a.last_message_at) return 1;
-                if (!b.last_message_at) return -1;
-                return new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime();
-              });
-            setInboxCache(orgId, next);
-            return next;
+            const exists = prev.some((c) => c.id === upd.id);
+            if (exists) {
+              const next = sortDesc(
+                prev.map((c) =>
+                  c.id === upd.id
+                    ? { ...c, last_message_at: upd.last_message_at, last_message_preview: upd.last_message_preview }
+                    : c,
+                ),
+              );
+              setInboxCache(orgId, next);
+              return next;
+            }
+            // Conversation not in current list — fetch and prepend it
+            fetch(`/api/orgs/${orgId}/conversations/${upd.id}`)
+              .then((r) => r.ok ? r.json() : null)
+              .then((json: { conversation: { id: string; channel_provider: string; last_message_at: string | null; lead: InboxLead | null } } | null) => {
+                if (!json) return;
+                const conv = json.conversation;
+                setConversations((p) => {
+                  if (p.some((c) => c.id === conv.id)) return p;
+                  const next = sortDesc([{
+                    id:                   conv.id,
+                    channel_provider:     conv.channel_provider,
+                    last_message_at:      upd.last_message_at,
+                    last_message_preview: upd.last_message_preview,
+                    hasPendingDraft:      false,
+                    lead:                 conv.lead ? { ...conv.lead, stage: conv.lead.stage as LeadStage } : null,
+                  }, ...p]);
+                  setInboxCache(orgId, next);
+                  return next;
+                });
+              })
+              .catch(() => null);
+            return prev; // return unchanged for now; fetch above will update
           });
         },
       )
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
+  }, [orgId]);
+
+  // Optimistic sort: listen for a custom DOM event fired by ComposeBar/ThreadView
+  // after a message is sent. Moves the conversation to the top instantly (0ms),
+  // before the Supabase realtime event arrives (~0.5–2 s later).
+  React.useEffect(() => {
+    function handleConversationUpdated(e: Event) {
+      const { convId, timestamp } = (e as CustomEvent<{ convId: string; timestamp: string }>).detail;
+      setConversations((prev) => {
+        const exists = prev.some((c) => c.id === convId);
+        if (!exists) return prev;
+        const sortDesc = (list: InboxConversation[]) =>
+          [...list].sort((a, b) => {
+            if (!a.last_message_at) return 1;
+            if (!b.last_message_at) return -1;
+            return new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime();
+          });
+        const next = sortDesc(
+          prev.map((c) =>
+            c.id === convId ? { ...c, last_message_at: timestamp } : c,
+          ),
+        );
+        setInboxCache(orgId, next);
+        return next;
+      });
+    }
+    window.addEventListener("conversation-updated", handleConversationUpdated);
+    return () => window.removeEventListener("conversation-updated", handleConversationUpdated);
   }, [orgId]);
 
   // On mobile: hide list when inside a conversation

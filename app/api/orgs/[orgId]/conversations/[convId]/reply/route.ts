@@ -28,13 +28,14 @@ export async function POST(req: NextRequest, { params }: Params) {
   const user = await assertMember(params.orgId);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const body = await req.json().catch(() => ({})) as { content?: string };
+  const body = await req.json().catch(() => ({})) as { content?: string; attachment_url?: string };
 
-  if (!body.content?.trim()) {
-    return NextResponse.json({ error: "content is required" }, { status: 400 });
+  if (!body.content?.trim() && !body.attachment_url?.trim()) {
+    return NextResponse.json({ error: "content or attachment_url is required" }, { status: 400 });
   }
 
-  const content = body.content.trim();
+  const content      = body.content?.trim() ?? "";
+  const attachmentUrl = body.attachment_url?.trim() || undefined;
   const now     = new Date().toISOString();
   const svc     = createServiceClient();
 
@@ -77,7 +78,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     } else {
       try {
         console.log(`[ig-send] graph request POST /{page_id}/messages recipient=${rawIgUserId}`);
-        const result = await sendInstagramMessage(params.orgId, rawIgUserId, content);
+        const result = await sendInstagramMessage(params.orgId, rawIgUserId, content, attachmentUrl);
         providerMessageId = result.provider_message_id;
         console.log(`[ig-send] graph response ok provider_message_id=${providerMessageId}`);
       } catch (sendErr) {
@@ -104,21 +105,29 @@ export async function POST(req: NextRequest, { params }: Params) {
     console.log(`[ig-send] skipping Meta delivery — channel_provider=${channelProvider} is not Instagram`);
   }
 
+  // Display content: for image-only messages use the URL as the stored content
+  const storedContent = content || attachmentUrl || "";
+
   const { data: message, error } = await svc.from("messages").insert({
     conversation_id:    params.convId,
     org_id:             params.orgId,
     direction:          "outbound",
-    content,
+    content:            storedContent,
     sent_at:            now,
     provider_message_id: providerMessageId,
-    metadata:           { source: "manual", sent_by: user.id, ...deliveryMeta },
+    metadata:           {
+      source:         "manual",
+      sent_by:        user.id,
+      attachment_url: attachmentUrl ?? null,
+      ...deliveryMeta,
+    },
   }).select("id, content, sent_at").single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   await svc.from("conversations").update({
     last_message_at:      now,
-    last_message_preview: content.slice(0, 80),
+    last_message_preview: (content || (attachmentUrl ? "📷 Image" : "")).slice(0, 80),
   }).eq("id", params.convId);
 
   const deliveryFailed = !!deliveryMeta.delivery_error;

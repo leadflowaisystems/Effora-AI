@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { createPaymentLink } from "@/lib/razorpay";
 import { inngest } from "@/lib/inngest/client";
-import { getOrCreateConversation, insertOutboundMessage } from "@/lib/conversation";
+import { getOrCreateConversation, deliverOutboundMessage } from "@/lib/conversation";
 import { generatePaymentLinkMessage } from "@/lib/ai";
 import { sendEmail } from "@/lib/email";
 import { paymentLink as paymentLinkEmail } from "@/lib/email-templates";
@@ -156,9 +156,10 @@ async function handler(req: NextRequest, { params }: Params) {
       });
       msgContent = aiResult.content;
     }
-    await insertOutboundMessage(conversationId, params.orgId, msgContent, "payment_link");
+    const { delivered, provider_message_id } = await deliverOutboundMessage(conversationId, params.orgId, msgContent, "payment_link");
+    console.log(`[link-generate] payment link message delivered=${delivered} provider_message_id=${provider_message_id ?? "null"} conv=${conversationId}`);
   } catch (e) {
-    console.error("[link-generate] sync message insert failed, falling back to Inngest:", e);
+    console.error("[link-generate] sync message delivery failed, falling back to Inngest:", e);
     await inngest.send({
       name: "payment.link-message",
       data: { orgId: params.orgId, paymentId: p.id, description },

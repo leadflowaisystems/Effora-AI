@@ -355,17 +355,28 @@ export async function POST(req: NextRequest) {
       const externalId = "ig_" + senderIgsid;
 
       // ── 5. Resolve sender display name (best-effort) ────────────────────
-      let displayName = senderIgsid;
+      // resolvedName is null when profile lookup fails so we never store a
+      // "IG …xxx" fallback string into the DB — only real names are persisted.
+      let resolvedName: string | null = null;
       if (pageToken) {
         try {
           const profile = await getIgUserProfile(senderIgsid, pageToken);
-          displayName = profile.name || profile.username || senderIgsid;
-          console.log(`[ig-webhook] profile resolved display_name="${displayName}"`);
+          // Only accept the name if it's a real value, not the "IG …xxx" fallback
+          const isRealName = profile.name &&
+            !profile.name.startsWith("IG …") &&
+            !profile.name.startsWith("IG .") &&
+            !/^\d+$/.test(profile.name);
+          if (isRealName) {
+            resolvedName = profile.name;
+          } else if (profile.username && !/^\d+$/.test(profile.username)) {
+            resolvedName = `@${profile.username}`;
+          }
+          console.log(`[ig-webhook] profile resolved display_name="${resolvedName ?? "(none — will keep existing or use fallback)"}" raw_name="${profile.name}" username="${profile.username}"`);
         } catch (e) {
           console.error("[ig-webhook] profile lookup failed (non-fatal):", e);
         }
       } else {
-        console.log("[ig-webhook] no page token — skipping profile lookup, using sender ID as name");
+        console.log("[ig-webhook] no page token — skipping profile lookup");
       }
 
       // ── 6. Upsert lead ──────────────────────────────────────────────────
@@ -382,22 +393,30 @@ export async function POST(req: NextRequest) {
         if (existingLead) {
           leadId = (existingLead as { id: string; name?: string | null }).id;
           const currentName = (existingLead as { id: string; name?: string | null }).name ?? "";
-          // Re-enrich name if still a raw numeric ID (profile lookup may have failed earlier)
-          const nameIsNumeric = !currentName || /^\d+$/.test(currentName);
-          const shouldEnrich = nameIsNumeric && !!displayName && !/^\d+$/.test(displayName);
+          // Re-enrich if: (a) name is blank/numeric IGSID, OR (b) name is a stored
+          // "IG …" fallback from a previous failed lookup — and we now have a real name.
+          const nameNeedsEnrichment =
+            !currentName ||
+            /^\d+$/.test(currentName) ||
+            currentName.startsWith("IG …") ||
+            currentName.startsWith("IG .");
+          const shouldEnrich = nameNeedsEnrichment && !!resolvedName;
           if (shouldEnrich) {
-            console.log(`[ig-webhook] re-enriching lead name from "${currentName}" to "${displayName}" lead=${leadId}`);
-            await svc.from("leads").update({ last_seen_at: now, updated_at: now, name: displayName }).eq("id", leadId);
+            console.log(`[ig-webhook] re-enriching lead name from "${currentName}" to "${resolvedName}" lead=${leadId}`);
+            await svc.from("leads").update({ last_seen_at: now, updated_at: now, name: resolvedName }).eq("id", leadId);
           } else {
             await svc.from("leads").update({ last_seen_at: now, updated_at: now }).eq("id", leadId);
           }
           console.log(`[ig-webhook] lead upserted action=updated lead=${leadId}`);
         } else {
+          // For new leads use resolvedName if available, otherwise store the IGSID as the name
+          // so there's always a non-null name. The UI has its own display fallback.
+          const nameForInsert = resolvedName ?? senderIgsid;
           const { data: newLead, error: le } = await svc.from("leads").insert({
             org_id:       orgId,
             channel:      "instagram",
             external_id:  externalId,
-            name:         displayName,
+            name:         nameForInsert,
             stage:        "cold",
             score:        0,
             source:       "instagram",
