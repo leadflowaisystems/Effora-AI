@@ -16,6 +16,7 @@ import { inngest } from "../client";
 import { createServiceClient } from "@/lib/supabase/server";
 import { qualifyLead, draftReply } from "@/lib/ai";
 import { getCalLink, embedMetadataInCalLink } from "@/lib/booking";
+import { deliverOutboundMessage } from "@/lib/conversation";
 
 interface DmReceivedData {
   orgId:          string;
@@ -136,15 +137,8 @@ export const onDmReceived = inngest.createFunction(
         const now = new Date().toISOString();
 
         if (ctx.org?.auto_send_replies) {
-          // Auto-send: insert outbound message + record draft as 'sent'
-          await svc.from("messages").insert({
-            conversation_id: conversationId,
-            org_id:          orgId,
-            direction:       "outbound",
-            content:         draft.content,
-            sent_at:         now,
-            metadata:        { source: "ai", model: process.env.LLM_MODEL_SMART ?? "llama-3.3-70b-versatile" },
-          });
+          // Auto-send: deliver to Instagram (if applicable) + insert outbound message
+          await deliverOutboundMessage(conversationId, orgId, draft.content, "ai");
 
           await svc.from("ai_drafts").insert({
             conversation_id: conversationId,
@@ -154,6 +148,8 @@ export const onDmReceived = inngest.createFunction(
             status:          "sent",
           });
 
+          // deliverOutboundMessage already updated conversations.last_message_preview,
+          // but overwrite with the [AI] prefix for inbox display
           await svc.from("conversations").update({
             last_message_at:      now,
             last_message_preview: `[AI] ${draft.content.slice(0, 78)}`,

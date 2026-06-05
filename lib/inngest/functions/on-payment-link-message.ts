@@ -17,6 +17,7 @@ import { generatePaymentLinkMessage } from "@/lib/ai";
 import { getLeadFirstName } from "@/lib/leads";
 import { sendEmail } from "@/lib/email";
 import { paymentLink as paymentLinkTemplate } from "@/lib/email-templates";
+import { deliverOutboundMessage } from "@/lib/conversation";
 
 interface PaymentLinkMessageData {
   orgId:        string;
@@ -123,26 +124,11 @@ export const onPaymentLinkMessage = inngest.createFunction(
       return result.content;
     });
 
-    // ── 3. Insert message + update conversation preview ───────────
+    // ── 3. Deliver to channel + store message ─────────────────────
     await step.run("insert-message", async () => {
-      const svc = createServiceClient();
-      const now = new Date().toISOString();
-
-      await svc.from("messages").insert({
-        conversation_id: ctx.conversationId,
-        org_id:          orgId,
-        direction:       "outbound",
-        content,
-        sent_at:         now,
-        metadata:        { source: "payment_link" },
-      });
-
-      await svc.from("conversations").update({
-        last_message_at:      now,
-        last_message_preview: content.slice(0, 80),
-      }).eq("id", ctx.conversationId);
-
-      console.log(`[payment-link-msg] message inserted for conv ${ctx.conversationId}`);
+      const { delivered, provider_message_id } =
+        await deliverOutboundMessage(ctx.conversationId, orgId, content, "payment_link");
+      console.log(`[payment-link-msg] message delivered=${delivered} provider_message_id=${provider_message_id ?? "null"} conv=${ctx.conversationId}`);
 
       // Send transactional email if lead has email
       if (ctx.leadEmail) {
