@@ -211,19 +211,34 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  if (sig !== expected) {
-    console.warn("[ig-webhook] ✗ signature mismatch — possible replay or wrong app secret");
-    return NextResponse.json({ ok: true });
-  }
+  // ── Signature gate ────────────────────────────────────────────────────────
+  // META_WEBHOOK_DEBUG_BYPASS_SIGNATURE=true skips enforcement for pipeline
+  // testing only. Remove the env var to re-enable enforcement. Never commit
+  // with bypass active — it is controlled entirely by the Vercel env var.
+  const signatureValid  = sig === expected;
+  const bypassSignature = process.env.META_WEBHOOK_DEBUG_BYPASS_SIGNATURE === "true";
 
-  console.log("[ig-webhook] ✓ signature verified");
+  if (!signatureValid) {
+    console.error("[ig-webhook] SIGNATURE FAILED - received_sig does not match expected_sig");
+    if (!bypassSignature) {
+      console.warn("[ig-webhook] ✗ signature mismatch — halting (set META_WEBHOOK_DEBUG_BYPASS_SIGNATURE=true to bypass for pipeline testing)");
+      return NextResponse.json({ ok: true });
+    }
+    console.error("[ig-webhook] ================================================================");
+    console.error("[ig-webhook] DEBUG MODE: META_WEBHOOK_DEBUG_BYPASS_SIGNATURE=true");
+    console.error("[ig-webhook] continuing despite signature failure — pipeline test in progress");
+    console.error("[ig-webhook] ================================================================");
+  } else {
+    console.log("[ig-webhook] ✓ signature verified");
+  }
 
   // ── 3. Parse payload ──────────────────────────────────────────────────────
   let body: IgWebhookBody;
   try {
     body = JSON.parse(rawBody);
+    console.log(`[ig-webhook] payload parsed object=${body.object} entries=${body.entry?.length ?? 0}`);
   } catch {
-    console.warn("[ig-webhook] invalid JSON body");
+    console.error("[ig-webhook] PARSE ERROR: invalid JSON body — cannot process");
     return NextResponse.json({ ok: true });
   }
 
@@ -245,6 +260,7 @@ export async function POST(req: NextRequest) {
       .eq("provider", "meta_instagram")
       .eq("active", true);
     allIntegrations = (intRows ?? []) as { org_id: string; config: Record<string, string> }[];
+    console.log(`[ig-webhook] integrations loaded count=${allIntegrations.length}`);
   } catch (e) {
     console.error("[ig-webhook] DB error loading integrations:", e);
     return NextResponse.json({ ok: true });
@@ -253,6 +269,8 @@ export async function POST(req: NextRequest) {
   // ── 4. Process each entry ─────────────────────────────────────────────────
   for (const entry of body.entry ?? []) {
     const entryId = entry.id;
+    console.log(`[ig-webhook] processing entry entry_id=${entryId} messaging_count=${entry.messaging?.length ?? 0}`);
+
     // Instagram Messaging API (/{ig-user-id}/subscribed_apps):
     //   entry[].id = Instagram Business Account ID  → match by config.instagram_business_account_id
     // Fallback for any legacy page-subscribed events:
@@ -264,9 +282,10 @@ export async function POST(req: NextRequest) {
     ) ?? null;
 
     if (!integration) {
-      console.warn(
-        `[ig-webhook] no active meta_instagram integration for entry_id=${entryId}` +
-        ` (checked ${allIntegrations.length} integrations by ig_account_id and page_id)`,
+      console.error(
+        `[ig-webhook] integration found=false entry_id=${entryId}` +
+        ` checked=${allIntegrations.length} rows` +
+        ` — no active meta_instagram row matches this IG account ID or page ID`,
       );
       continue;
     }
@@ -275,28 +294,40 @@ export async function POST(req: NextRequest) {
     const cfg     = integration.config;
     const igBizId = cfg.instagram_business_account_id;
 
-    console.log(`[ig-webhook] ✓ integration found org=${orgId} ig_account=${igBizId}`);
+    console.log(`[ig-webhook] integration found org=${orgId} ig_account=${igBizId}`);
 
     // Decrypt page token for profile lookups + message sending
     let pageToken: string | null = null;
     try {
       pageToken = cfg.access_token_enc ? decryptSecret(cfg.access_token_enc) : null;
+      console.log(`[ig-webhook] page token decrypted ok=${!!pageToken}`);
     } catch (e) {
-      console.warn("[ig-webhook] token decrypt failed (non-fatal):", e);
+      console.error("[ig-webhook] page token decrypt failed (non-fatal):", e);
     }
 
     for (const messaging of entry.messaging ?? []) {
       const msg = messaging.message;
-      if (!msg) continue;
+      if (!msg) {
+        console.log("[ig-webhook] messaging event has no message field — skipping");
+        continue;
+      }
 
       // Skip echo messages (sent by the page/IG account itself)
-      if (msg.is_echo) continue;
+      if (msg.is_echo) {
+        console.log(`[ig-webhook] skipping echo message mid=${msg.mid}`);
+        continue;
+      }
 
       const messageText = msg.text ?? null;
       const senderIgsid = messaging.sender.id;
 
       // Ignore self-messages (sender is the IG business account)
-      if (senderIgsid === igBizId) continue;
+      if (senderIgsid === igBizId) {
+        console.log(`[ig-webhook] skipping self-message sender=${senderIgsid}`);
+        continue;
+      }
+
+      console.log(`[ig-webhook] inbound DM sender=${senderIgsid} has_text=${!!messageText} mid=${msg.mid}`);
 
       // ── Log to webhook_events for debug panel ─────────────────────────────
       try {
@@ -307,11 +338,12 @@ export async function POST(req: NextRequest) {
           event_type: msg.mid ? "message" : "messaging_postback",
           sender_id:  senderIgsid,
           payload:    { entry_id: entryId, mid: msg.mid, has_text: !!messageText },
-          verified:   true,
+          verified:   signatureValid,
           created_at: now,
         });
+        console.log(`[ig-webhook] webhook_events row inserted verified=${signatureValid}`);
       } catch (e) {
-        console.warn("[ig-webhook] webhook_events insert failed (non-fatal):", e);
+        console.error("[ig-webhook] webhook_events insert failed (non-fatal):", e);
       }
 
       // Skip messages without text (images, stickers, etc.)
@@ -328,9 +360,12 @@ export async function POST(req: NextRequest) {
         try {
           const profile = await getIgUserProfile(senderIgsid, pageToken);
           displayName = profile.name || profile.username || senderIgsid;
+          console.log(`[ig-webhook] profile resolved display_name="${displayName}"`);
         } catch (e) {
-          console.warn("[ig-webhook] profile lookup failed (non-fatal):", e);
+          console.error("[ig-webhook] profile lookup failed (non-fatal):", e);
         }
+      } else {
+        console.log("[ig-webhook] no page token — skipping profile lookup, using sender ID as name");
       }
 
       // ── 6. Upsert lead ──────────────────────────────────────────────────
@@ -349,6 +384,7 @@ export async function POST(req: NextRequest) {
           await svc.from("leads")
             .update({ last_seen_at: now, updated_at: now })
             .eq("id", leadId);
+          console.log(`[ig-webhook] lead upserted action=updated lead=${leadId}`);
         } else {
           const { data: newLead, error: le } = await svc.from("leads").insert({
             org_id:       orgId,
@@ -367,13 +403,12 @@ export async function POST(req: NextRequest) {
             continue;
           }
           leadId = (newLead as { id: string }).id;
+          console.log(`[ig-webhook] lead upserted action=created lead=${leadId}`);
         }
       } catch (e) {
         console.error("[ig-webhook] lead upsert error:", e);
         continue;
       }
-
-      console.log(`[ig-webhook] ✓ lead upserted lead=${leadId}`);
 
       // ── 7. Upsert conversation ──────────────────────────────────────────
       let conversationId: string;
@@ -388,6 +423,7 @@ export async function POST(req: NextRequest) {
 
         if (existingConv) {
           conversationId = (existingConv as { id: string }).id;
+          console.log(`[ig-webhook] conversation upserted action=found conv=${conversationId}`);
         } else {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const { data: newConv, error: ce } = await (svc as any).from("conversations").insert({
@@ -404,13 +440,12 @@ export async function POST(req: NextRequest) {
             continue;
           }
           conversationId = (newConv as { id: string }).id;
+          console.log(`[ig-webhook] conversation upserted action=created conv=${conversationId}`);
         }
       } catch (e) {
         console.error("[ig-webhook] conversation upsert error:", e);
         continue;
       }
-
-      console.log(`[ig-webhook] ✓ conversation upserted conv=${conversationId}`);
 
       // ── 8. Insert inbound message ────────────────────────────────────────
       let messageId: string;
@@ -429,18 +464,22 @@ export async function POST(req: NextRequest) {
           continue;
         }
         messageId = (insertedMsg as { id: string }).id;
+        console.log(`[ig-webhook] message inserted msg=${messageId}`);
       } catch (e) {
         console.error("[ig-webhook] message insert error:", e);
         continue;
       }
 
-      console.log(`[ig-webhook] ✓ message inserted msg=${messageId}`);
-
       // ── 9. Update conversation preview ───────────────────────────────────
-      await svc.from("conversations").update({
-        last_message_at:      now,
-        last_message_preview: messageText.slice(0, 80),
-      }).eq("id", conversationId);
+      try {
+        await svc.from("conversations").update({
+          last_message_at:      now,
+          last_message_preview: messageText.slice(0, 80),
+        }).eq("id", conversationId);
+        console.log(`[ig-webhook] conversation preview updated conv=${conversationId}`);
+      } catch (e) {
+        console.error("[ig-webhook] conversation preview update failed (non-fatal):", e);
+      }
 
       // ── 10. Fire Inngest event for AI processing ─────────────────────────
       try {
@@ -448,12 +487,13 @@ export async function POST(req: NextRequest) {
           name: "dm.received",
           data: { orgId, leadId, conversationId, messageId },
         });
-        console.log(`[ig-webhook] ✓ Inngest dm.received fired lead=${leadId} conv=${conversationId}`);
+        console.log(`[ig-webhook] workflow triggered event=dm.received lead=${leadId} conv=${conversationId} msg=${messageId}`);
       } catch (e) {
-        console.error("[ig-webhook] Inngest send failed (non-fatal):", e);
+        console.error("[ig-webhook] workflow trigger failed (Inngest send failed):", e);
       }
     }
   }
 
+  console.log("[ig-webhook] processing complete");
   return NextResponse.json({ ok: true });
 }
