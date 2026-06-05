@@ -154,6 +154,16 @@ export async function POST(req: NextRequest) {
     equal:              expected === sig,
   });
 
+  // 5. OLD APP SECRET CHECK — does Meta's signature match the previous app's secret?
+  //    If equalWithOldSecret=true the old app (1883195202375416) is still signing deliveries.
+  //    Remove once root cause is confirmed.
+  const OLD_APP_SECRET = "56e0a2c62e4d5943f6205a2cbc2daf00";
+  const expectedOld    = "sha256=" + createHmac("sha256", OLD_APP_SECRET).update(rawBody).digest("hex");
+  console.error("[ig-webhook] old-secret-check", {
+    equalWithOldSecret: expectedOld === sig,
+    oldSecretPrefix:    OLD_APP_SECRET.slice(0, 6),
+  });
+
   // 5. Parse payload safely and identify webhook type
   try {
     const parsed = JSON.parse(rawBody);
