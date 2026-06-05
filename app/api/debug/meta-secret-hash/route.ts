@@ -37,7 +37,7 @@ export async function GET() {
 
   // Char-code array of the raw env var — reveals invisible characters
   // (newlines = 10, carriage returns = 13, spaces = 32, zero-width = 8203, etc.)
-  const charCodes = raw ? [...raw].map((c) => c.charCodeAt(0)) : null;
+  const charCodes = raw ? raw.split("").map((c) => c.charCodeAt(0)) : null;
   const hasInvisibleChars = charCodes
     ? charCodes.some((c) => c < 32 || c > 126)
     : null;
