@@ -15,6 +15,7 @@ import { inngest } from "../client";
 import { createServiceClient } from "@/lib/supabase/server";
 import { generateBookingConfirmMessage } from "@/lib/ai";
 import { getLeadFirstName, formatMeetingTime } from "@/lib/leads";
+import { deliverOutboundMessage } from "@/lib/conversation";
 
 interface BookingConfirmMessageData {
   orgId:     string;
@@ -111,26 +112,11 @@ export const onBookingConfirmMessage = inngest.createFunction(
       return result.content;
     });
 
-    // ── 3. Insert message + update conversation preview ───────────
+    // ── 3. Deliver to channel + store message ─────────────────────
     await step.run("insert-message", async () => {
-      const svc = createServiceClient();
-      const now = new Date().toISOString();
-
-      await svc.from("messages").insert({
-        conversation_id: ctx.conversationId,
-        org_id:          orgId,
-        direction:       "outbound",
-        content,
-        sent_at:         now,
-        metadata:        { source: "booking_confirm" },
-      });
-
-      await svc.from("conversations").update({
-        last_message_at:      now,
-        last_message_preview: content.slice(0, 80),
-      }).eq("id", ctx.conversationId);
-
-      console.log(`[booking-confirm] message inserted for conv ${ctx.conversationId}`);
+      const { delivered, provider_message_id } =
+        await deliverOutboundMessage(ctx.conversationId, orgId, content, "booking_confirm");
+      console.log(`[booking-confirm] message delivered=${delivered} provider_message_id=${provider_message_id ?? "null"} conv=${ctx.conversationId}`);
     });
 
     return { bookingId, conversationId: ctx.conversationId, sent: true };

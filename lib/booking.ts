@@ -7,6 +7,7 @@
  */
 
 import { createServiceClient } from "@/lib/supabase/server";
+import { deliverOutboundMessage } from "@/lib/conversation";
 
 /** Returns the plain-text booking URL from the calcom integration, or null. */
 export async function getCalLink(orgId: string): Promise<string | null> {
@@ -51,27 +52,16 @@ export function embedMetadataInCalLink(
   }
 }
 
-/** Inserts an outbound message and updates conversation last_message fields. */
+/**
+ * Delivers an outbound message on the conversation's channel and stores it.
+ * Delegates to deliverOutboundMessage() which handles Instagram Graph API
+ * delivery for IG conversations and falls back gracefully on other channels.
+ */
 export async function sendChannelMessage(
   conversationId: string,
   orgId: string,
   content: string,
   source: "reminder_24h" | "reminder_1h" | "rebook" | "system" = "system"
 ): Promise<void> {
-  const svc = createServiceClient();
-  const now = new Date().toISOString();
-
-  await svc.from("messages").insert({
-    conversation_id: conversationId,
-    org_id:          orgId,
-    direction:       "outbound",
-    content,
-    sent_at:         now,
-    metadata:        { source },
-  });
-
-  await svc.from("conversations").update({
-    last_message_at:      now,
-    last_message_preview: content.slice(0, 80),
-  }).eq("id", conversationId);
+  await deliverOutboundMessage(conversationId, orgId, content, source);
 }
