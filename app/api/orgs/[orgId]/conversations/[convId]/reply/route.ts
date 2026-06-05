@@ -85,10 +85,17 @@ export async function POST(req: NextRequest, { params }: Params) {
         const is24hWindow =
           reason.includes("outside") || reason.includes("131047") ||
           reason.includes("131026") || reason.includes("368");
-        deliveryMeta.delivery_error = is24hWindow ? "outside_24h_window" : reason;
-        if (is24hWindow) {
+        const isPermissionError =
+          reason.includes('"code":200') || reason.includes("\"code\": 200") ||
+          reason.includes("Advanced Access") || reason.includes("instagram_manage_messages");
+        if (isPermissionError) {
+          deliveryMeta.delivery_error = "meta_permission_development_mode";
+          console.error(`[ig-send] META PERMISSION ERROR conv=${params.convId}: App lacks Advanced Access to instagram_manage_messages — recipient is not a Meta App tester. Apply for App Review to enable messaging to all users.`);
+        } else if (is24hWindow) {
+          deliveryMeta.delivery_error = "outside_24h_window";
           console.warn(`[ig-send] manual delivery skipped (outside 24h window) conv=${params.convId}`);
         } else {
+          deliveryMeta.delivery_error = reason;
           console.error(`[ig-send] manual delivery failed conv=${params.convId}:`, reason);
         }
       }

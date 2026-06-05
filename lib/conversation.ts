@@ -157,19 +157,29 @@ export async function deliverOutboundMessage(
         const reason = err instanceof Error ? err.message : String(err);
         // Detect Meta's 24-hour customer-initiated messaging window errors.
         // Error codes: 131047 (WA), 131026 (IG), 368 (legacy IG), or plain-text "outside".
-        // These are expected when the lead hasn't messaged within 24h — log as WARN, not ERROR.
         const is24hWindow =
           reason.includes("outside") ||
           reason.includes("131047") ||
           reason.includes("131026") ||
           reason.includes("368");
-        deliveryMeta.delivery_error = is24hWindow ? "outside_24h_window" : reason;
-        if (is24hWindow) {
+        // Detect Meta OAuthException code 200: app lacks Advanced Access to
+        // instagram_manage_messages OR recipient is not a tester (Development Mode).
+        // This means the Meta app is not yet approved for production — only app
+        // admins/developers/testers can receive messages until App Review is approved.
+        const isPermissionError =
+          reason.includes('"code":200') || reason.includes("\"code\": 200") ||
+          reason.includes("Advanced Access") || reason.includes("instagram_manage_messages");
+        if (isPermissionError) {
+          deliveryMeta.delivery_error = "meta_permission_development_mode";
+          console.error(`[ig-send] META PERMISSION ERROR conv=${conversationId} source=${source}: App lacks Advanced Access to instagram_manage_messages. In Development Mode, only Meta App admins/developers/testers can receive messages. Apply for App Review at https://developers.facebook.com/apps/ to get Advanced Access. error="${reason}"`);
+        } else if (is24hWindow) {
+          deliveryMeta.delivery_error = "outside_24h_window";
           console.warn(`[ig-send] automation delivery skipped (outside 24h window) conv=${conversationId} source=${source}`);
         } else {
+          deliveryMeta.delivery_error = reason;
           console.error(`[ig-send] automation delivery failed conv=${conversationId} source=${source} reason="${reason}"`);
           if (source === "payment_link") {
-            console.error(`[ig-send] PAYMENT LINK DELIVERY FAILURE — Meta rejected payment link message. Check if URL is allowed by Meta policy. conv=${conversationId} error="${reason}"`);
+            console.error(`[ig-send] PAYMENT LINK DELIVERY FAILURE — Meta rejected payment link message. conv=${conversationId} error="${reason}"`);
           }
         }
       }

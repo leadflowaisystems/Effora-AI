@@ -137,30 +137,46 @@ export const onDmReceived = inngest.createFunction(
         const now = new Date().toISOString();
 
         if (ctx.org?.auto_send_replies) {
-          // Auto-send: deliver to Instagram (if applicable) + insert outbound message
-          await deliverOutboundMessage(conversationId, orgId, draft.content, "ai");
+          // Idempotency guard: if this Inngest step is retried after deliverOutboundMessage
+          // already inserted the message, skip re-delivery to prevent duplicates on Instagram.
+          const { data: existingMsg } = await svc
+            .from("messages")
+            .select("id")
+            .eq("conversation_id", conversationId)
+            .eq("direction", "outbound")
+            .eq("content", draft.content)
+            .gte("sent_at", new Date(Date.now() - 300_000).toISOString())
+            .maybeSingle();
 
-          await svc.from("ai_drafts").insert({
-            conversation_id: conversationId,
-            org_id:          orgId,
-            message_id:      messageId,
-            content:         draft.content,
-            status:          "sent",
-          });
+          if (existingMsg) {
+            console.log(`[on-dm-received] idempotency: skipping duplicate AI delivery conv=${conversationId}`);
+          } else {
+            // Auto-send: deliver to Instagram (if applicable) + insert outbound message
+            const { delivered } = await deliverOutboundMessage(conversationId, orgId, draft.content, "ai");
+            console.log(`[on-dm-received] AI delivery delivered=${delivered} conv=${conversationId}`);
 
-          // deliverOutboundMessage already updated conversations.last_message_preview,
-          // but overwrite with the [AI] prefix for inbox display
-          await svc.from("conversations").update({
-            last_message_at:      now,
-            last_message_preview: `[AI] ${draft.content.slice(0, 78)}`,
-          }).eq("id", conversationId);
+            await svc.from("ai_drafts").insert({
+              conversation_id: conversationId,
+              org_id:          orgId,
+              message_id:      messageId,
+              content:         draft.content,
+              status:          "sent",  // delivery outcome tracked in messages.metadata.delivery_error
+            });
 
-          // Hot leads that received an auto-sent booking reply → booking_sent
-          if (qualification.stage === "hot" && calLinkForDraft) {
-            await svc.from("leads").update({
-              stage:      "booking_sent",
-              updated_at: now,
-            }).eq("id", leadId);
+            // deliverOutboundMessage already updated conversations.last_message_preview,
+            // but overwrite with the [AI] prefix for inbox display
+            await svc.from("conversations").update({
+              last_message_at:      now,
+              last_message_preview: `[AI] ${draft.content.slice(0, 78)}`,
+            }).eq("id", conversationId);
+
+            // Hot leads that received an auto-sent booking reply → booking_sent
+            if (qualification.stage === "hot" && calLinkForDraft && delivered) {
+              await svc.from("leads").update({
+                stage:      "booking_sent",
+                updated_at: now,
+              }).eq("id", leadId);
+            }
           }
         } else {
           // Queue for human approval

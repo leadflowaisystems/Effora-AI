@@ -98,7 +98,14 @@ export function ConversationItem({ conv, href, active, orgId, onDelete }: Props)
             "text-sm font-medium truncate",
             active ? "text-[var(--text)]" : "text-[var(--text-2)]"
           )}>
-            {lead?.name ?? lead?.external_id ?? "Unknown"}
+            {(() => {
+              const name  = lead?.name;
+              const rawId = lead?.external_id?.replace(/^ig_/, "") ?? "";
+              if (!name || name === rawId || /^\d{10,}$/.test(name)) {
+                return rawId.length > 6 ? `IG …${rawId.slice(-6)}` : (rawId || "Unknown");
+              }
+              return name;
+            })()}
           </span>
           <span className="text-[11px] text-[var(--text-3)] shrink-0">
             {timeAgo(conv.last_message_at)}

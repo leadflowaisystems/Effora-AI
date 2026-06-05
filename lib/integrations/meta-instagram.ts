@@ -275,23 +275,44 @@ export async function sendInstagramMessage(
 /**
  * Fetch an Instagram user's public profile using the page token.
  */
+/**
+ * Fetch an Instagram user's profile via the Messenger API.
+ *
+ * Requires instagram_manage_messages permission.
+ * - In Development Mode: only works for Meta App admins/developers/testers.
+ * - With Advanced Access (post App Review): works for all users.
+ *
+ * Fields prioritised: name → username → shortened ID fallback.
+ */
 export async function getIgUserProfile(
   igUserId:    string,
   pageToken:   string,
 ): Promise<IgProfile> {
   const res = await fetch(
-    `${GRAPH}/${igUserId}?fields=id,username,name&access_token=${pageToken}`,
+    `${GRAPH}/${igUserId}?fields=id,name,username&access_token=${pageToken}`,
   );
   if (!res.ok) {
     const errBody = await res.text().catch(() => "(unreadable)");
-    console.warn(`[ig-profile] lookup failed status=${res.status} ig_user=${igUserId} body=${errBody}`);
-    return { id: igUserId, username: igUserId, name: igUserId };
+    const isPermissionErr = errBody.includes('"code":200') || errBody.includes("Advanced Access") || errBody.includes("instagram_manage_messages");
+    if (isPermissionErr) {
+      console.warn(`[ig-profile] permission error — app in Development Mode or lacks Advanced Access. ig_user=${igUserId}. Apply for App Review for instagram_manage_messages.`);
+    } else {
+      console.warn(`[ig-profile] lookup failed status=${res.status} ig_user=${igUserId} body=${errBody}`);
+    }
+    // Fallback: format as a short readable ID (last 6 digits)
+    const shortId = igUserId.length > 6 ? `IG …${igUserId.slice(-6)}` : `IG ${igUserId}`;
+    return { id: igUserId, username: shortId, name: shortId };
   }
   const data = await res.json() as { id: string; username?: string; name?: string };
+  // Prefer display name, then @username, then short ID
+  const username = data.username ? `@${data.username}` : null;
+  const shortId  = igUserId.length > 6 ? `IG …${igUserId.slice(-6)}` : `IG ${igUserId}`;
+  const display  = data.name || username || shortId;
+  console.log(`[ig-profile] resolved ig_user=${igUserId} name="${data.name}" username="${data.username}" display="${display}"`);
   return {
     id:       data.id,
     username: data.username ?? igUserId,
-    name:     data.name     ?? data.username ?? igUserId,
+    name:     display,
   };
 }
 

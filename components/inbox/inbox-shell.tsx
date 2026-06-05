@@ -11,7 +11,9 @@ import { RemovedToast }              from "./removed-toast";
 import { formatInr }                 from "@/lib/time";
 import { cn }                        from "@/lib/utils";
 import { getInboxCache, setInboxCache } from "@/lib/inbox-cache";
-import type { InboxConversation }    from "@/types/inbox";
+import { createClient }              from "@/lib/supabase/client";
+import type { InboxConversation, InboxLead } from "@/types/inbox";
+import type { LeadStage }            from "@/types/database";
 
 interface Props {
   orgSlug:            string;
@@ -52,6 +54,75 @@ export function InboxShell({
     setConversations(serverConversations);
     setInboxCache(orgId, serverConversations);
   }, [orgId, serverConversations]);
+
+  // Realtime: subscribe to conversation INSERT/UPDATE for this org so new Instagram
+  // DMs appear in the sidebar within ~1 second without waiting for layout re-render.
+  React.useEffect(() => {
+    const supabase = createClient();
+
+    const channel = supabase
+      .channel(`inbox-shell:${orgId}`)
+      // New conversation created (new lead messaged for the first time)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "conversations", filter: `org_id=eq.${orgId}` },
+        async (payload) => {
+          const convId = (payload.new as { id: string }).id;
+          try {
+            // Fetch conversation with lead data
+            const res = await fetch(`/api/orgs/${orgId}/conversations/${convId}`);
+            if (!res.ok) return;
+            const json = await res.json() as {
+              conversation: { id: string; channel_provider: string; last_message_at: string | null; lead: InboxLead | null };
+            };
+            const raw = payload.new as { last_message_preview?: string | null };
+            const leadRaw = json.conversation.lead;
+            const newConv: InboxConversation = {
+              id:                   json.conversation.id,
+              channel_provider:     json.conversation.channel_provider,
+              last_message_at:      json.conversation.last_message_at,
+              last_message_preview: raw.last_message_preview ?? null,
+              hasPendingDraft:      false,
+              lead:                 leadRaw ? { ...leadRaw, stage: leadRaw.stage as LeadStage } : null,
+            };
+            setConversations((prev) => {
+              if (prev.some((c) => c.id === newConv.id)) return prev;
+              const next = [newConv, ...prev];
+              setInboxCache(orgId, next);
+              return next;
+            });
+          } catch { /* non-fatal */ }
+        },
+      )
+      // Existing conversation updated (new message — move to top, update preview)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "conversations", filter: `org_id=eq.${orgId}` },
+        (payload) => {
+          const upd = payload.new as {
+            id: string; last_message_at: string | null; last_message_preview: string | null;
+          };
+          setConversations((prev) => {
+            const next = prev
+              .map((c) =>
+                c.id === upd.id
+                  ? { ...c, last_message_at: upd.last_message_at, last_message_preview: upd.last_message_preview }
+                  : c,
+              )
+              .sort((a, b) => {
+                if (!a.last_message_at) return 1;
+                if (!b.last_message_at) return -1;
+                return new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime();
+              });
+            setInboxCache(orgId, next);
+            return next;
+          });
+        },
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [orgId]);
 
   // On mobile: hide list when inside a conversation
   const inThread = /\/inbox\/[^/]+/.test(pathname);

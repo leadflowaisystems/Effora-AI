@@ -46,10 +46,16 @@ export function ComposeBar({ orgId, convId, onSent, disabled }: Props) {
 
       if (json.delivery_failed) {
         const reason = json.delivery_error ?? "unknown";
-        if (reason === "outside_24h_window") {
+        if (reason === "meta_permission_development_mode") {
           toast({
-            title:       "Message saved — Instagram 24h window expired",
-            description: "The lead needs to message you first before you can reach them.",
+            title:       "Instagram blocked — App Review required",
+            description: "Your Meta app is in Development Mode. Only App testers can receive messages. Apply for Advanced Access to instagram_manage_messages in Meta App Dashboard.",
+            variant:     "destructive",
+          });
+        } else if (reason === "outside_24h_window") {
+          toast({
+            title:       "Message saved — 24h window expired",
+            description: "Instagram only allows replies within 24h of the lead's last message. The lead must message you first.",
             variant:     "destructive",
           });
         } else {

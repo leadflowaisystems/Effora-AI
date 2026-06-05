@@ -67,9 +67,14 @@ function MessageBubble({ msg }: { msg: InboxMessage }) {
           ? "bg-[var(--brand-glow)] border border-[var(--brand)]/30 text-[var(--text)]"
           : "bg-[var(--bg-3)] border border-[var(--border)] text-[var(--text)]"
       )}>
-        {isAi && (
+        {isAi && !msg.metadata?.["delivery_error"] && (
           <span className="mb-1 flex items-center gap-1 text-[10px] text-[var(--brand)] font-medium">
             ✨ AI sent
+          </span>
+        )}
+        {isAi && !!msg.metadata?.["delivery_error"] && (
+          <span className="mb-1 flex items-center gap-1 text-[10px] text-amber-400 font-medium">
+            ⚠ AI generated — not delivered to Instagram
           </span>
         )}
         <p className="whitespace-pre-wrap break-words">{msg.content}</p>
@@ -190,12 +195,13 @@ export function ThreadView({ orgId, orgSlug, convId, lead, channelProvider, init
             <span className="font-display text-sm font-semibold text-[var(--text)] truncate">
               {(() => {
                 const name = lead?.name;
-                // Show "Instagram User" when the stored name is just a raw numeric ID
-                if (!name || /^\d+$/.test(name) || name === lead?.external_id?.replace(/^ig_/, "")) {
-                  return "Instagram User";
+                const rawId = lead?.external_id?.replace(/^ig_/, "") ?? "";
+                // Show a readable short-ID when the stored name is still the raw numeric IGSID
+                if (!name || name === rawId || /^\d{10,}$/.test(name)) {
+                  return rawId.length > 6 ? `IG …${rawId.slice(-6)}` : (rawId || "Instagram User");
                 }
                 return name;
-              })() ?? lead?.external_id ?? "Unknown lead"}
+              })()}
             </span>
             {lead?.stage && (
               <Badge variant={STAGE_BADGE[stage] ?? "muted"} className="text-[10px] px-1.5 py-0 shrink-0">
