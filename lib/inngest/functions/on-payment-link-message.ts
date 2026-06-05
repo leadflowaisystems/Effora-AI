@@ -102,26 +102,37 @@ export const onPaymentLinkMessage = inngest.createFunction(
       // Use passed description → voice profile offer → generic fallback
       const desc = description || ctx.voice?.offer || "the program";
 
-      const result = await generatePaymentLinkMessage({
-        leadFirstName: firstName,
-        amountInr:     ctx.amountInr,
-        description:   desc,
-        paymentUrl:    ctx.paymentUrl,
-        voiceProfile:  ctx.voice
-          ? {
-              tone:          ctx.voice.tone,
-              offer:         ctx.voice.offer,
-              price_range:   "",
-              sells:         "",
-              objections:    [],
-              extra_context: "",
-            }
-          : null,
-        orgId,
-      });
+      // Deterministic fallback — used when LLM generation fails so delivery
+      // always proceeds regardless of AI availability.
+      const fallback =
+        `Hi ${firstName}, here's your payment link for ${desc} ` +
+        `(₹${ctx.amountInr.toLocaleString("en-IN")}): ${ctx.paymentUrl}`;
 
-      console.log(`[payment-link-msg] generated: "${result.content.slice(0, 80)}…"`);
-      return result.content;
+      try {
+        const result = await generatePaymentLinkMessage({
+          leadFirstName: firstName,
+          amountInr:     ctx.amountInr,
+          description:   desc,
+          paymentUrl:    ctx.paymentUrl,
+          voiceProfile:  ctx.voice
+            ? {
+                tone:          ctx.voice.tone,
+                offer:         ctx.voice.offer,
+                price_range:   "",
+                sells:         "",
+                objections:    [],
+                extra_context: "",
+              }
+            : null,
+          orgId,
+        });
+        console.log(`[payment-link-msg] generated: "${result.content.slice(0, 80)}…"`);
+        return result.content;
+      } catch (err) {
+        console.warn(`[payment-link-msg] LLM generation failed — using fallback template:`, err);
+        console.log(`[payment-link-msg] fallback: "${fallback.slice(0, 80)}…"`);
+        return fallback;
+      }
     });
 
     // ── 3. Deliver to channel + store message ─────────────────────

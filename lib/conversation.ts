@@ -155,8 +155,20 @@ export async function deliverOutboundMessage(
         console.log(`[ig-send] automation delivery ok provider_message_id=${providerMessageId}`);
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
-        deliveryMeta.delivery_error = reason;
-        console.error(`[ig-send] automation delivery failed conv=${conversationId} source=${source}:`, reason);
+        // Detect Meta's 24-hour customer-initiated messaging window errors.
+        // Error codes: 131047 (WA), 131026 (IG), 368 (legacy IG), or plain-text "outside".
+        // These are expected when the lead hasn't messaged within 24h — log as WARN, not ERROR.
+        const is24hWindow =
+          reason.includes("outside") ||
+          reason.includes("131047") ||
+          reason.includes("131026") ||
+          reason.includes("368");
+        deliveryMeta.delivery_error = is24hWindow ? "outside_24h_window" : reason;
+        if (is24hWindow) {
+          console.warn(`[ig-send] automation delivery skipped (outside 24h window) conv=${conversationId} source=${source}`);
+        } else {
+          console.error(`[ig-send] automation delivery failed conv=${conversationId} source=${source}:`, reason);
+        }
       }
     }
   }
