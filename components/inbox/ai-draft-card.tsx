@@ -32,7 +32,20 @@ export function AiDraftCard({ draft, orgId, convId, onDone }: Props) {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Request failed");
 
-      onDone(json.message ? { ...json.message, direction: "outbound" as const } : undefined);
+      const newMsg = json.message ? { ...json.message, direction: "outbound" as const } : undefined;
+
+      // Optimistic updates — no router.refresh() needed:
+      // 1. conversation-updated moves sidebar to top instantly
+      // 2. draft-resolved clears the pending indicator
+      // Both are also handled by Supabase realtime after DB commit.
+      if (newMsg) {
+        window.dispatchEvent(new CustomEvent("conversation-updated", {
+          detail: { convId, timestamp: newMsg.sent_at ?? new Date().toISOString() },
+        }));
+      }
+      window.dispatchEvent(new CustomEvent("draft-resolved", { detail: { convId } }));
+
+      onDone(newMsg);
     } catch (err) {
       console.error("[draft]", err);
     } finally {

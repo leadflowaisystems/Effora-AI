@@ -13,7 +13,9 @@ interface CacheEntry {
   timestamp:     number;
 }
 
-const CACHE_TTL_MS = 60_000;
+// 5-minute TTL — realtime keeps the cache current so stale eviction is
+// only needed for sessions that lost their websocket without reconnecting.
+const CACHE_TTL_MS = 5 * 60_000;
 const cache = new Map<string, CacheEntry>();
 
 export function getInboxCache(orgId: string): InboxConversation[] | null {

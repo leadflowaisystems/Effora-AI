@@ -44,8 +44,9 @@ export function NewDmSheet({ open, onOpenChange, orgId, orgSlug }: Props) {
       toast({ title: "DM queued", description: "AI is qualifying the lead…", variant: "success" });
       onOpenChange(false);
       setName(""); setHandle(""); setContent("");
+      // Navigate to the new conversation. No router.refresh() — the realtime
+      // INSERT subscription in inbox-shell will add it to the sidebar automatically.
       router.push(`/org/${orgSlug}/inbox/${json.conversationId}`);
-      router.refresh();
     } catch (err) {
       toast({
         title:   "Error",

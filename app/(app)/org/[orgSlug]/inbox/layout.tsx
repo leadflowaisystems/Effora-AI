@@ -44,6 +44,7 @@ export default async function InboxLayout({ children, params }: Props) {
       lead:leads (id, name, external_id, channel, score, stage, avatar_url)
     `)
     .eq("org_id", org.id)
+    .is("deleted_at", null)
     .order("last_message_at", { ascending: false, nullsFirst: false })
     .limit(60);
 

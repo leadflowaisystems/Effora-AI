@@ -27,6 +27,15 @@ interface Props {
   children:           React.ReactNode;
 }
 
+// ── Sort helper (module-level, not re-created on every render) ────────────────
+function sortByLastMessage(list: InboxConversation[]): InboxConversation[] {
+  return [...list].sort((a, b) => {
+    if (!a.last_message_at) return 1;
+    if (!b.last_message_at) return -1;
+    return new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime();
+  });
+}
+
 export function InboxShell({
   orgSlug,
   orgId,
@@ -43,44 +52,77 @@ export function InboxShell({
   const [autoSend,   setAutoSend]   = React.useState(initialAutoSend);
   const [savingAuto, setSavingAuto] = React.useState(false);
 
-  // Show cached conversations instantly while server data loads in the background.
-  // On first mount the server prop is authoritative; we warm the cache from it.
+  // ── Conversation list state ───────────────────────────────────────────────
+  // Seed from cache (instant, avoids flash) then merge with server data.
   const cached = React.useMemo(() => getInboxCache(orgId), [orgId]);
   const [conversations, setConversations] = React.useState<InboxConversation[]>(
     cached ?? serverConversations,
   );
+
+  // Keep a ref always in sync with state so async realtime handlers can read
+  // the current list without stale closures.
+  const conversationsRef = React.useRef<InboxConversation[]>(conversations);
+  React.useEffect(() => { conversationsRef.current = conversations; }, [conversations]);
+
+  // Smart merge: when server data arrives (initial mount + org navigation),
+  // incorporate new conversations we don't have yet but preserve any realtime-
+  // updated timestamps that are newer than what the server returned.
   React.useEffect(() => {
-    // Sync server data into state + cache whenever the layout re-renders
-    setConversations(serverConversations);
-    setInboxCache(orgId, serverConversations);
+    setConversations((prev) => {
+      // First mount or org change — prev is either cache or the same server data.
+      // Build a map of what we already know.
+      const prevMap = new Map(prev.map((c) => [c.id, c]));
+
+      const merged = serverConversations.map((sc) => {
+        const existing = prevMap.get(sc.id);
+        if (!existing) return sc; // new from server — add it
+        // Keep whichever timestamp is more recent (realtime may be ahead of server)
+        const existingTs = existing.last_message_at
+          ? new Date(existing.last_message_at).getTime() : 0;
+        const serverTs   = sc.last_message_at
+          ? new Date(sc.last_message_at).getTime() : 0;
+        return existingTs >= serverTs ? existing : { ...sc, lead: existing.lead ?? sc.lead };
+      });
+
+      // Preserve realtime-added conversations not yet in server's 60-item window
+      prev.forEach((c) => {
+        if (!serverConversations.some((sc) => sc.id === c.id)) merged.push(c);
+      });
+
+      const sorted = sortByLastMessage(merged);
+      setInboxCache(orgId, sorted);
+      return sorted;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, serverConversations]);
 
-  // Realtime: subscribe to conversation INSERT/UPDATE for this org so new Instagram
-  // DMs appear in the sidebar within ~1 second without waiting for layout re-render.
+  // ── Supabase Realtime ────────────────────────────────────────────────────
+  // Now that conversations + ai_drafts are in the supabase_realtime publication
+  // (migration 024), these subscriptions receive real events.
+  //
+  // Latency chain after migration:
+  //   DB write → WAL → Supabase realtime broker → client websocket → setState
+  //   Typical: 50–300 ms end-to-end from DB commit to UI update.
   React.useEffect(() => {
     const supabase = createClient();
-
-    const sortDesc = (list: InboxConversation[]) =>
-      [...list].sort((a, b) => {
-        if (!a.last_message_at) return 1;
-        if (!b.last_message_at) return -1;
-        return new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime();
-      });
+    const t_subscribe = performance.now();
 
     const channel = supabase
       .channel(`inbox-shell:${orgId}`)
-      // New conversation created (new lead messaged for the first time).
-      // Build the item immediately from payload.new so it appears instantly, then
-      // enrich lead data asynchronously — eliminates the blocking API round-trip.
+
+      // ── New conversation (first DM from a new lead) ───────────────────────
+      // Render immediately from payload.new, enrich lead in background.
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "conversations", filter: `org_id=eq.${orgId}` },
         async (payload) => {
+          const t0 = performance.now();
           const raw = payload.new as {
             id: string; channel_provider: string; last_message_at: string | null;
             last_message_preview: string | null; lead_id: string;
           };
-          // Add conversation immediately with unknown lead (shows ID as name until enriched)
+
+          // Add placeholder immediately — zero latency to UI
           const placeholder: InboxConversation = {
             id:                   raw.id,
             channel_provider:     raw.channel_provider,
@@ -91,18 +133,17 @@ export function InboxShell({
           };
           setConversations((prev) => {
             if (prev.some((c) => c.id === raw.id)) return prev;
-            const next = sortDesc([placeholder, ...prev]);
+            const next = sortByLastMessage([placeholder, ...prev]);
             setInboxCache(orgId, next);
             return next;
           });
+          console.log(`[inbox-perf] conv INSERT rendered in ${(performance.now() - t0).toFixed(1)}ms`);
 
-          // Enrich with lead data in the background (non-blocking)
+          // Enrich lead name/stage in background (non-blocking)
           try {
             const res = await fetch(`/api/orgs/${orgId}/conversations/${raw.id}`);
             if (!res.ok) return;
-            const json = await res.json() as {
-              conversation: { id: string; lead: InboxLead | null };
-            };
+            const json = await res.json() as { conversation: { id: string; lead: InboxLead | null } };
             const leadRaw = json.conversation.lead;
             if (!leadRaw) return;
             setConversations((prev) =>
@@ -112,23 +153,28 @@ export function InboxShell({
                   : c,
               ),
             );
-          } catch { /* non-fatal — placeholder stays until next page load */ }
+          } catch { /* placeholder stays until next mount */ }
         },
       )
-      // Existing conversation updated (new message from any source).
-      // If the conversation is already in the list, update + re-sort.
-      // If not (e.g., beyond the initial 60-item limit), fetch it and insert at top.
+
+      // ── Existing conversation updated (any new message) ───────────────────
+      // Re-sort immediately. If conv is outside the 60-item window, fetch + prepend.
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "conversations", filter: `org_id=eq.${orgId}` },
         async (payload) => {
+          const t0 = performance.now();
           const upd = payload.new as {
-            id: string; last_message_at: string | null; last_message_preview: string | null; lead_id: string;
+            id: string; last_message_at: string | null;
+            last_message_preview: string | null; lead_id: string;
           };
-          setConversations((prev) => {
-            const exists = prev.some((c) => c.id === upd.id);
-            if (exists) {
-              const next = sortDesc(
+
+          // Check membership without a state-setter side-effect
+          const exists = conversationsRef.current.some((c) => c.id === upd.id);
+
+          if (exists) {
+            setConversations((prev) => {
+              const next = sortByLastMessage(
                 prev.map((c) =>
                   c.id === upd.id
                     ? { ...c, last_message_at: upd.last_message_at, last_message_preview: upd.last_message_preview }
@@ -137,63 +183,85 @@ export function InboxShell({
               );
               setInboxCache(orgId, next);
               return next;
-            }
-            // Conversation not in current list — fetch and prepend it
-            fetch(`/api/orgs/${orgId}/conversations/${upd.id}`)
-              .then((r) => r.ok ? r.json() : null)
-              .then((json: { conversation: { id: string; channel_provider: string; last_message_at: string | null; lead: InboxLead | null } } | null) => {
-                if (!json) return;
-                const conv = json.conversation;
-                setConversations((p) => {
-                  if (p.some((c) => c.id === conv.id)) return p;
-                  const next = sortDesc([{
-                    id:                   conv.id,
-                    channel_provider:     conv.channel_provider,
-                    last_message_at:      upd.last_message_at,
-                    last_message_preview: upd.last_message_preview,
-                    hasPendingDraft:      false,
-                    lead:                 conv.lead ? { ...conv.lead, stage: conv.lead.stage as LeadStage } : null,
-                  }, ...p]);
-                  setInboxCache(orgId, next);
-                  return next;
-                });
-              })
-              .catch(() => null);
-            return prev; // return unchanged for now; fetch above will update
-          });
+            });
+            console.log(`[inbox-perf] conv UPDATE re-sorted in ${(performance.now() - t0).toFixed(1)}ms`);
+          } else {
+            // Conv not in current window — fetch full data and prepend
+            try {
+              const res = await fetch(`/api/orgs/${orgId}/conversations/${upd.id}`);
+              if (!res.ok) return;
+              const json = await res.json() as {
+                conversation: { id: string; channel_provider: string; last_message_at: string | null; lead: InboxLead | null };
+              };
+              const conv = json.conversation;
+              setConversations((prev) => {
+                if (prev.some((c) => c.id === conv.id)) return prev;
+                const next = sortByLastMessage([{
+                  id:                   conv.id,
+                  channel_provider:     conv.channel_provider,
+                  last_message_at:      upd.last_message_at,
+                  last_message_preview: upd.last_message_preview,
+                  hasPendingDraft:      false,
+                  lead:                 conv.lead ? { ...conv.lead, stage: conv.lead.stage as LeadStage } : null,
+                }, ...prev]);
+                setInboxCache(orgId, next);
+                return next;
+              });
+              console.log(`[inbox-perf] conv UPDATE (outside window) fetched+prepended in ${(performance.now() - t0).toFixed(1)}ms`);
+            } catch { /* non-fatal */ }
+          }
         },
       )
-      .subscribe();
+
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          console.log(`[inbox-perf] realtime channel SUBSCRIBED in ${(performance.now() - t_subscribe).toFixed(1)}ms — org=${orgId}`);
+        }
+      });
 
     return () => { supabase.removeChannel(channel); };
   }, [orgId]);
 
-  // Optimistic sort: listen for a custom DOM event fired by ComposeBar/ThreadView
-  // after a message is sent. Moves the conversation to the top instantly (0ms),
-  // before the Supabase realtime event arrives (~0.5–2 s later).
+  // ── Optimistic sort (0ms) — from compose bar and AI draft card ───────────
+  // Fires before realtime arrives (~50–300ms), gives instant visual feedback.
   React.useEffect(() => {
-    function handleConversationUpdated(e: Event) {
+    function onConversationUpdated(e: Event) {
       const { convId, timestamp } = (e as CustomEvent<{ convId: string; timestamp: string }>).detail;
       setConversations((prev) => {
-        const exists = prev.some((c) => c.id === convId);
-        if (!exists) return prev;
-        const sortDesc = (list: InboxConversation[]) =>
-          [...list].sort((a, b) => {
-            if (!a.last_message_at) return 1;
-            if (!b.last_message_at) return -1;
-            return new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime();
-          });
-        const next = sortDesc(
-          prev.map((c) =>
-            c.id === convId ? { ...c, last_message_at: timestamp } : c,
-          ),
+        if (!prev.some((c) => c.id === convId)) return prev;
+        const next = sortByLastMessage(
+          prev.map((c) => c.id === convId ? { ...c, last_message_at: timestamp } : c),
         );
         setInboxCache(orgId, next);
         return next;
       });
     }
-    window.addEventListener("conversation-updated", handleConversationUpdated);
-    return () => window.removeEventListener("conversation-updated", handleConversationUpdated);
+
+    // Update hasPendingDraft when AI draft is resolved (approved/rejected)
+    function onDraftResolved(e: Event) {
+      const { convId } = (e as CustomEvent<{ convId: string }>).detail;
+      setConversations((prev) =>
+        prev.map((c) => c.id === convId ? { ...c, hasPendingDraft: false } : c),
+      );
+    }
+
+    // Update hasPendingDraft when a new AI draft arrives (realtime INSERT on ai_drafts
+    // triggers this event from thread-view's subscription)
+    function onDraftCreated(e: Event) {
+      const { convId } = (e as CustomEvent<{ convId: string }>).detail;
+      setConversations((prev) =>
+        prev.map((c) => c.id === convId ? { ...c, hasPendingDraft: true } : c),
+      );
+    }
+
+    window.addEventListener("conversation-updated", onConversationUpdated);
+    window.addEventListener("draft-resolved",       onDraftResolved);
+    window.addEventListener("draft-created",        onDraftCreated);
+    return () => {
+      window.removeEventListener("conversation-updated", onConversationUpdated);
+      window.removeEventListener("draft-resolved",       onDraftResolved);
+      window.removeEventListener("draft-created",        onDraftCreated);
+    };
   }, [orgId]);
 
   // On mobile: hide list when inside a conversation
@@ -220,19 +288,18 @@ export function InboxShell({
   const pct = isUnlimited ? 0 : Math.min(100, Math.round((monthlyAiMsgCount / Math.max(aiMsgsPerMonth, 1)) * 100));
 
   return (
-    // Full-bleed: cancel AppShell's p-4 md:p-6 padding so split pane reaches edges
     <div
       className="relative -m-4 md:-m-6 flex overflow-hidden bg-[var(--bg)]"
       style={{ height: "calc(100vh - 3.5rem)" }}
     >
-      {/* Soft toast when a stale convId redirects back here */}
       <RemovedToast />
+
       {/* ── Left panel ────────────────────────────── */}
       <div className={cn(
         "flex w-[300px] shrink-0 flex-col overflow-hidden border-r border-[var(--border)]",
         inThread ? "hidden md:flex" : "flex"
       )}>
-        {/* Mini toolbar above list — auto-send toggle + usage */}
+        {/* Mini toolbar */}
         <div className="flex h-9 shrink-0 items-center justify-between gap-4 border-b border-[var(--border)] bg-[var(--bg-1)] px-3">
           <div className="flex items-center gap-1.5">
             <Switch
@@ -254,7 +321,7 @@ export function InboxShell({
           )}
         </div>
 
-        {/* AI limit banner — shown when >= 80% used or at limit */}
+        {/* AI limit banner */}
         {(isAtLimit || isNearLimit) && (
           <Link
             href={`/org/${orgSlug}/settings/billing`}
@@ -271,9 +338,7 @@ export function InboxShell({
                 ? `AI limit reached (${monthlyAiMsgCount}/${aiMsgsPerMonth})`
                 : `${pct}% of AI replies used`}
             </span>
-            <span className="shrink-0 font-medium underline underline-offset-2">
-              Upgrade
-            </span>
+            <span className="shrink-0 font-medium underline underline-offset-2">Upgrade</span>
           </Link>
         )}
 
@@ -294,7 +359,6 @@ export function InboxShell({
         {children}
       </div>
 
-      {/* ── New DM sheet ──────────────────────────── */}
       <NewDmSheet
         open={dmOpen}
         onOpenChange={setDmOpen}

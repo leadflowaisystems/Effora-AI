@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Instagram, Phone, MessageSquare } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -13,6 +12,12 @@ import { ComposeBar  } from "./compose-bar";
 import { timeAgo }   from "@/lib/time";
 import { createClient } from "@/lib/supabase/client";
 import type { InboxMessage, InboxDraft, InboxLead } from "@/types/inbox";
+
+// NOTE: useRouter is intentionally absent. router.refresh() has been
+// removed — it caused layout re-renders, state overwrites, and visible
+// flicker on every send. All updates now flow through Supabase Realtime
+// (conversations + ai_drafts in publication after migration 024) and
+// optimistic CustomEvent dispatches. No polling. No server re-fetches.
 
 interface Props {
   orgId:            string;
@@ -44,12 +49,10 @@ function ChannelTag({ provider }: { provider?: string }) {
   );
 }
 
-/* ── Stage badge styling ── */
 const STAGE_BADGE: Record<string, Parameters<typeof Badge>[0]["variant"]> = {
-  hot:  "hot",  warm: "warm", cold: "cold",
+  hot: "hot", warm: "warm", cold: "cold",
 };
 
-/* ── Message bubble ── */
 function MessageBubble({ msg }: { msg: InboxMessage }) {
   const isOut = msg.direction === "outbound";
   const isAi  = msg.metadata?.source === "ai";
@@ -58,7 +61,7 @@ function MessageBubble({ msg }: { msg: InboxMessage }) {
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+      transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
       className={cn("flex", isOut ? "justify-end" : "justify-start")}
     >
       <div className={cn(
@@ -103,46 +106,47 @@ function MessageBubble({ msg }: { msg: InboxMessage }) {
   );
 }
 
-/* ── Thread view ── */
 export function ThreadView({ orgId, orgSlug, convId, lead, channelProvider, initialMessages, initialDraft }: Props) {
-  const router   = useRouter();
   const [messages, setMessages] = React.useState<InboxMessage[]>(initialMessages);
   const [draft,    setDraft]    = React.useState<InboxDraft | null>(initialDraft);
   const bottomRef = React.useRef<HTMLDivElement>(null);
+  const mountedAt = React.useRef<number>(performance.now());
 
-  // Scroll to bottom on mount and when messages change
+  // Scroll to bottom on mount and new messages
   React.useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length]);
 
-  // Supabase Realtime: subscribe to new messages for this conversation.
-  // Falls back to 5s polling for AI drafts (which come via Inngest, not direct DB insert the realtime catches).
+  // ── Realtime: new messages in this thread ─────────────────────────────────
+  // messages table has been in supabase_realtime since initial setup.
+  // Catches: inbound DMs (webhook), manual replies, AI-approved messages,
+  // payment/booking messages from Inngest, and any other automated outbound.
   React.useEffect(() => {
     const supabase = createClient();
 
     const channel = supabase
-      .channel(`conversation:${convId}`)
+      .channel(`thread:${convId}`)
       .on(
         "postgres_changes",
-        {
-          event:  "INSERT",
-          schema: "public",
-          table:  "messages",
-          filter: `conversation_id=eq.${convId}`,
-        },
+        { event: "INSERT", schema: "public", table: "messages", filter: `conversation_id=eq.${convId}` },
         (payload) => {
+          const t0 = performance.now();
           const newMsg = payload.new as {
             id: string; direction: string; content: string; sent_at: string; metadata: Record<string, unknown>;
           };
           setMessages((prev) => {
-            if (prev.some((m) => m.id === newMsg.id)) return prev;
-            return [...prev, {
+            if (prev.some((m) => m.id === newMsg.id)) return prev; // dedup with optimistic add
+            const updated = [...prev, {
               id:        newMsg.id,
               direction: newMsg.direction as "inbound" | "outbound",
               content:   newMsg.content,
               sent_at:   newMsg.sent_at,
               metadata:  newMsg.metadata ?? {},
             }];
+            const elapsed = (performance.now() - t0).toFixed(1);
+            const sessionMs = (performance.now() - mountedAt.current).toFixed(0);
+            console.log(`[inbox-perf] message INSERT visible +${elapsed}ms (session=${sessionMs}ms) dir=${newMsg.direction} id=${newMsg.id}`);
+            return updated;
           });
         },
       )
@@ -151,41 +155,66 @@ export function ThreadView({ orgId, orgSlug, convId, lead, channelProvider, init
     return () => { supabase.removeChannel(channel); };
   }, [convId]);
 
-  // Poll every 5 s to pick up Inngest-generated drafts (ai_drafts table not in realtime scope)
+  // ── Realtime: AI draft for this conversation ──────────────────────────────
+  // ai_drafts added to supabase_realtime publication (migration 024).
+  // Replaces the previous 5-second setInterval poll — drafts now appear
+  // within ~100ms of Inngest inserting them, not up to 5000ms later.
   React.useEffect(() => {
-    const interval = setInterval(async () => {
-      try {
-        const res = await fetch(`/api/orgs/${orgId}/conversations/${convId}`);
-        if (!res.ok) return;
-        const json = await res.json() as { pendingDraft?: InboxDraft | null };
-        if (json.pendingDraft && !draft) {
-          setDraft(json.pendingDraft);
-        }
-      } catch { /* non-fatal */ }
-    }, 5000);
-    return () => clearInterval(interval);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId, convId]);
+    const supabase = createClient();
+
+    const channel = supabase
+      .channel(`drafts:${convId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "ai_drafts", filter: `conversation_id=eq.${convId}` },
+        (payload) => {
+          const t0 = performance.now();
+          const d = payload.new as {
+            id: string; content: string; status: string;
+            edited_content: string | null; created_at: string;
+          };
+          if (d.status !== "pending") return;
+          setDraft({
+            id:             d.id,
+            content:        d.content,
+            status:         "pending",
+            edited_content: d.edited_content,
+            created_at:     d.created_at,
+          });
+          console.log(`[inbox-perf] AI draft INSERT visible +${(performance.now() - t0).toFixed(1)}ms`);
+          // Signal inbox sidebar to light up the draft indicator
+          window.dispatchEvent(new CustomEvent("draft-created", { detail: { convId } }));
+        },
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [convId]);
 
   function handleDraftDone(newMsg?: { id: string; content: string; sent_at: string; direction: "outbound" }) {
     setDraft(null);
     if (newMsg) {
-      setMessages((prev) => [...prev, { ...newMsg, metadata: { source: "ai" } }]);
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === newMsg.id)) return prev;
+        return [...prev, { ...newMsg, metadata: { source: "ai" } }];
+      });
+      // Optimistic sort: move conversation to top immediately
+      window.dispatchEvent(new CustomEvent("conversation-updated", {
+        detail: { convId, timestamp: newMsg.sent_at },
+      }));
     }
-    router.refresh();
+    // Clear pending draft indicator in sidebar — no router.refresh() needed
+    window.dispatchEvent(new CustomEvent("draft-resolved", { detail: { convId } }));
   }
 
   function handleSent(msg: InboxMessage) {
-    // Dedup against Realtime: the Supabase websocket can fire the INSERT event
-    // before the HTTP response returns (persistent connection vs full round-trip),
-    // so the message may already be in state from the Realtime handler.
+    // Dedup: realtime INSERT may fire before HTTP response returns
     setMessages((prev) => {
       if (prev.some((m) => m.id === msg.id)) return prev;
       return [...prev, msg];
     });
-    // Refresh the layout (sidebar last_message_preview) without re-running this
-    // component's data fetch — defer so the optimistic update renders first.
-    setTimeout(() => router.refresh(), 300);
+    // Optimistic sort dispatched by ComposeBar immediately after fetch resolves.
+    // No router.refresh() — realtime conversation UPDATE handles sidebar preview.
   }
 
   const stage = lead?.stage ?? "cold";
@@ -196,7 +225,6 @@ export function ThreadView({ orgId, orgSlug, convId, lead, channelProvider, init
 
       {/* ── Thread header ── */}
       <div className="flex h-14 shrink-0 items-center gap-3 border-b border-[var(--border)] bg-[var(--bg-1)] px-4">
-        {/* Mobile back button */}
         <Link
           href={`/org/${orgSlug}/inbox`}
           className="md:hidden flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-3)] hover:bg-[var(--bg-3)] hover:text-[var(--text)] transition-colors"
@@ -208,17 +236,11 @@ export function ThreadView({ orgId, orgSlug, convId, lead, channelProvider, init
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-display text-sm font-semibold text-[var(--text)] truncate">
               {(() => {
-                const name = lead?.name;
+                const name  = lead?.name;
                 const rawId = lead?.external_id?.replace(/^ig_/, "") ?? "";
-                // Show the short-ID fallback when: name is absent, is the raw IGSID,
-                // is a numeric IGSID, or is a stored "IG …"/"@IG …" fallback artifact.
                 const isPlaceholder =
-                  !name ||
-                  name === rawId ||
-                  /^\d{10,}$/.test(name) ||
-                  name.startsWith("IG …") ||
-                  name.startsWith("IG .") ||
-                  name.startsWith("@IG ");
+                  !name || name === rawId || /^\d{10,}$/.test(name) ||
+                  name.startsWith("IG …") || name.startsWith("IG .") || name.startsWith("@IG ");
                 if (isPlaceholder) {
                   return rawId.length > 6 ? `IG …${rawId.slice(-6)}` : (rawId || "Instagram User");
                 }
@@ -252,7 +274,6 @@ export function ThreadView({ orgId, orgSlug, convId, lead, channelProvider, init
           ))}
         </AnimatePresence>
 
-        {/* AI Draft card (pinned above compose) */}
         <AnimatePresence>
           {draft && (
             <AiDraftCard
