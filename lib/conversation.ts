@@ -5,14 +5,17 @@
  * insertOutboundMessage      — DB-only store (no channel delivery).
  * deliverOutboundMessage     — attempt channel delivery then store result.
  *                              Use this for all automation paths that need to
- *                              reach Instagram (or any future channel).
+ *                              reach Instagram or WhatsApp (or any future channel).
  */
 
 import { createServiceClient } from "@/lib/supabase/server";
 import { sendInstagramMessage } from "@/lib/integrations/meta-instagram";
+import { sendWhatsAppMessage }  from "@/lib/integrations/whatsapp-cloud";
 
 // channel_provider values that map to Instagram
 const IG_PROVIDERS = new Set(["instagram", "meta_instagram"]);
+// channel_provider values that map to WhatsApp Cloud API
+const WA_PROVIDERS = new Set(["whatsapp_cloud"]);
 
 /**
  * Returns the most recent conversation for a lead, creating one if none exists.
@@ -181,6 +184,44 @@ export async function deliverOutboundMessage(
           if (source === "payment_link") {
             console.error(`[ig-send] PAYMENT LINK DELIVERY FAILURE — Meta rejected payment link message. conv=${conversationId} error="${reason}"`);
           }
+        }
+      }
+    }
+  }
+
+  // ── 2b. Attempt WhatsApp delivery ─────────────────────────────────────────
+  if (WA_PROVIDERS.has(channelProvider) && leadId) {
+    const { data: lead } = await svc
+      .from("leads")
+      .select("external_id")
+      .eq("id", leadId)
+      .single();
+
+    const rawExtId   = (lead as { external_id?: string } | null)?.external_id ?? "";
+    // Strip "wa_" prefix; remainder is the E.164-style phone number (e.g. "917890123456")
+    const waPhone    = rawExtId.replace(/^wa_/, "");
+    const hasPhone   = !!waPhone;
+
+    if (!hasPhone) {
+      console.log(`[wa-send] automation skipping — external_id="${rawExtId}" has no phone conv=${conversationId}`);
+    } else {
+      try {
+        console.log(`[wa-send] automation delivery conv=${conversationId} recipient=${waPhone} source=${source}`);
+        const result = await sendWhatsAppMessage(orgId, waPhone, content);
+        providerMessageId = result.provider_message_id;
+        delivered = true;
+        console.log(`[wa-send] automation delivery ok provider_message_id=${providerMessageId}`);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        // WA 24-hour customer-initiated window (error 131047)
+        const is24hWindow =
+          reason.includes("131047") || reason.includes("outside");
+        if (is24hWindow) {
+          deliveryMeta.delivery_error = "outside_24h_window";
+          console.warn(`[wa-send] automation delivery skipped (outside 24h window) conv=${conversationId} source=${source}`);
+        } else {
+          deliveryMeta.delivery_error = reason;
+          console.error(`[wa-send] automation delivery failed conv=${conversationId} source=${source} reason="${reason}"`);
         }
       }
     }

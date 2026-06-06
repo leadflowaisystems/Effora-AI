@@ -22,7 +22,7 @@ interface Props {
 
 const TABS: { id: ChannelTab; label: string; icon: React.ReactNode; provider?: string }[] = [
   { id: "all",       label: "All",       icon: <MessageSquare className="h-3 w-3" /> },
-  { id: "instagram", label: "Instagram", icon: <Instagram     className="h-3 w-3" />, provider: "meta_instagram" },
+  { id: "instagram", label: "Instagram", icon: <Instagram     className="h-3 w-3" />, provider: "instagram" },
   { id: "whatsapp",  label: "WhatsApp",  icon: <Phone         className="h-3 w-3" />, provider: "whatsapp_cloud" },
   { id: "manual",    label: "Manual",    icon: <MessageSquare className="h-3 w-3" />, provider: "manual" },
 ];

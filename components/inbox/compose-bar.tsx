@@ -15,13 +15,15 @@ const EmojiPicker = dynamic(
 );
 
 interface Props {
-  orgId:    string;
-  convId:   string;
-  onSent:   (msg: InboxMessage) => void;
-  disabled?: boolean;
+  orgId:           string;
+  convId:          string;
+  onSent:          (msg: InboxMessage) => void;
+  disabled?:       boolean;
+  channelProvider?: string;
 }
 
-export function ComposeBar({ orgId, convId, onSent, disabled }: Props) {
+export function ComposeBar({ orgId, convId, onSent, disabled, channelProvider }: Props) {
+  const isWhatsApp = channelProvider === "whatsapp_cloud";
   const [text,         setText]         = React.useState("");
   const [loading,      setLoading]      = React.useState(false);
   const [showEmoji,    setShowEmoji]    = React.useState(false);
@@ -149,15 +151,17 @@ export function ComposeBar({ orgId, convId, onSent, disabled }: Props) {
             variant:     "destructive",
           });
         } else if (reason === "outside_24h_window") {
+          const channel = isWhatsApp ? "WhatsApp" : "Instagram";
           toast({
             title:       "Message saved — 24h window expired",
-            description: "Instagram only allows replies within 24h of the lead's last message.",
+            description: `${channel} only allows replies within 24h of the lead's last message.`,
             variant:     "destructive",
           });
         } else {
+          const channel = isWhatsApp ? "WhatsApp" : "Instagram";
           toast({
             title:       "Message saved but not delivered",
-            description: `Instagram delivery failed: ${reason}`,
+            description: `${channel} delivery failed: ${reason}`,
             variant:     "destructive",
           });
         }
@@ -252,22 +256,26 @@ export function ComposeBar({ orgId, convId, onSent, disabled }: Props) {
           )}
         </div>
 
-        {/* Image attach button */}
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[var(--text-3)] transition-colors hover:bg-[var(--bg-3)] hover:text-[var(--text)]"
-          aria-label="Attach image"
-        >
-          <ImagePlus className="h-4.5 w-4.5" />
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/jpeg,image/png,image/gif,image/webp,image/heic"
-          className="sr-only"
-          onChange={handleImageSelect}
-        />
+        {/* Image attach button — Instagram only; WA requires media-ID upload flow */}
+        {!isWhatsApp && (
+          <>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[var(--text-3)] transition-colors hover:bg-[var(--bg-3)] hover:text-[var(--text)]"
+              aria-label="Attach image"
+            >
+              <ImagePlus className="h-4.5 w-4.5" />
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/gif,image/webp,image/heic"
+              className="sr-only"
+              onChange={handleImageSelect}
+            />
+          </>
+        )}
 
         {/* Text input */}
         <textarea

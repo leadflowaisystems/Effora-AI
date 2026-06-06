@@ -290,7 +290,7 @@ export function ThreadView({ orgId, orgSlug, convId, lead, channelProvider, init
       </div>
 
       {/* ── Compose bar ── */}
-      <ComposeBar orgId={orgId} convId={convId} onSent={handleSent} />
+      <ComposeBar orgId={orgId} convId={convId} onSent={handleSent} channelProvider={channelProvider} />
     </div>
   );
 }

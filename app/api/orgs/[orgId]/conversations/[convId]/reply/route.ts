@@ -7,10 +7,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { sendInstagramMessage } from "@/lib/integrations/meta-instagram";
+import { sendWhatsAppMessage }  from "@/lib/integrations/whatsapp-cloud";
 
 // channel_provider values that map to Instagram (webhook writes "instagram",
 // but the integration provider is "meta_instagram" — accept both)
 const IG_PROVIDERS = new Set(["instagram", "meta_instagram"]);
+// channel_provider values that map to WhatsApp Cloud API
+const WA_PROVIDERS = new Set(["whatsapp_cloud"]);
 
 interface Params { params: { orgId: string; convId: string } }
 
@@ -101,8 +104,45 @@ export async function POST(req: NextRequest, { params }: Params) {
         }
       }
     }
+  } else if (WA_PROVIDERS.has(channelProvider)) {
+    // ── WhatsApp Cloud API manual reply ──────────────────────────────────────
+    const { data: lead } = await svc
+      .from("leads")
+      .select("external_id")
+      .eq("id", (conv as { lead_id: string }).lead_id)
+      .single();
+
+    const rawExtId = ((lead as { external_id: string } | null)?.external_id ?? "")
+      .replace(/^wa_/, "");
+
+    console.log(`[wa-send] manual reply conv=${params.convId} recipient=${rawExtId || "(empty)"}`);
+
+    if (!rawExtId) {
+      console.error("[wa-send] could not resolve phone from lead.external_id");
+      deliveryMeta.delivery_error = "missing_phone";
+    } else if (!content.trim()) {
+      // Image-only not yet supported for WA in manual path — store as text
+      console.log("[wa-send] skipping — empty content (WA image send not yet supported in manual path)");
+    } else {
+      try {
+        const result = await sendWhatsAppMessage(params.orgId, rawExtId, content);
+        providerMessageId = result.provider_message_id;
+        console.log(`[wa-send] delivery ok provider_message_id=${providerMessageId}`);
+      } catch (sendErr) {
+        const reason = sendErr instanceof Error ? sendErr.message : String(sendErr);
+        const is24hWindow =
+          reason.includes("131047") || reason.includes("outside");
+        if (is24hWindow) {
+          deliveryMeta.delivery_error = "outside_24h_window";
+          console.warn(`[wa-send] delivery skipped (outside 24h window) conv=${params.convId}`);
+        } else {
+          deliveryMeta.delivery_error = reason;
+          console.error(`[wa-send] delivery failed conv=${params.convId}:`, reason);
+        }
+      }
+    }
   } else {
-    console.log(`[ig-send] skipping Meta delivery — channel_provider=${channelProvider} is not Instagram`);
+    console.log(`[ig-send] skipping delivery — channel_provider=${channelProvider} is not Instagram or WhatsApp`);
   }
 
   // Display content: for image-only messages use the URL as the stored content

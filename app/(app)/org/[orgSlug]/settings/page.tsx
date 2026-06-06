@@ -11,7 +11,7 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import {
   Instagram, CalendarDays, CreditCard, Mic, Receipt, Users,
-  Shield, UserX, ChevronRight, CheckCircle2, Circle, Lock,
+  Shield, UserX, ChevronRight, CheckCircle2, Circle, Lock, Phone,
 } from "lucide-react";
 
 interface Props { params: { orgSlug: string } }
@@ -49,10 +49,11 @@ export default async function SettingsIndexPage({ params }: Props) {
   const voice = voiceRes.data as { id: string; tone: string } | null;
 
   // Derive per-section status
-  const hasInstagram = integrations.some((i) => i.provider === "instagram" && i.active);
-  const hasManyChat  = integrations.some((i) => i.provider === "manychat"  && i.active);
-  const hasCalcom    = integrations.some((i) => i.provider === "calcom"    && i.active);
-  const hasRazorpay  = integrations.some((i) => i.provider === "razorpay"  && i.active);
+  const hasInstagram = integrations.some((i) => (i.provider === "instagram" || i.provider === "meta_instagram") && i.active);
+  const hasManyChat  = integrations.some((i) => i.provider === "manychat"       && i.active);
+  const hasCalcom    = integrations.some((i) => i.provider === "calcom"         && i.active);
+  const hasRazorpay  = integrations.some((i) => i.provider === "razorpay"       && i.active);
+  const hasWhatsApp  = integrations.some((i) => i.provider === "whatsapp_cloud" && i.active);
   const hasVoice     = !!voice;
 
   type StatusVariant = "connected" | "configured" | "not_connected" | "coming_soon";
@@ -73,10 +74,19 @@ export default async function SettingsIndexPage({ params }: Props) {
       key: "channel",
       href: `settings/channel`,
       icon: <Instagram className="h-5 w-5" />,
-      title: "Channels",
+      title: "Instagram",
       description: "Connect Instagram DMs or ManyChat to receive leads automatically.",
       status:      (hasInstagram || hasManyChat) ? "connected" : "not_connected",
       statusLabel: (hasInstagram || hasManyChat) ? "Connected" : "Not connected",
+    },
+    {
+      key: "whatsapp",
+      href: `settings/whatsapp`,
+      icon: <Phone className="h-5 w-5" />,
+      title: "WhatsApp",
+      description: "Connect WhatsApp Business to receive and reply to DMs in real time.",
+      status:      hasWhatsApp ? "connected" : "not_connected",
+      statusLabel: hasWhatsApp ? "Connected" : "Not connected",
     },
     {
       key: "cal",
