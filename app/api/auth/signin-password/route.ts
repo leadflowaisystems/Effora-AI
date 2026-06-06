@@ -53,9 +53,11 @@ export async function POST(req: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        getAll:  () => req.cookies.getAll(),
-        setAll: (cookiesToSet: Array<{ name: string; value: string; options: CookieOptions }>) =>
-          pendingCookies.push(...cookiesToSet),
+        getAll: () => req.cookies.getAll(),
+        // Block body returns void instead of the number returned by Array.push().
+        setAll: (cookiesToSet: Array<{ name: string; value: string; options: CookieOptions }>) => {
+          pendingCookies.push(...cookiesToSet);
+        },
       },
     }
   );

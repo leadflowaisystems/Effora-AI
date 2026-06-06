@@ -67,9 +67,14 @@ export async function POST(req: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        getAll:  () => req.cookies.getAll(),
-        setAll:  (cookiesToSet: Array<{ name: string; value: string; options: CookieOptions }>) =>
-          pendingCookies.push(...cookiesToSet),
+        getAll: () => req.cookies.getAll(),
+        // Block body returns void instead of the number returned by Array.push().
+        // This makes the signature compatible with @supabase/ssr >=0.5 where
+        // SetAllCookies requires "void | Promise<void>", while also satisfying
+        // noImplicitAny on 0.4.x which cannot infer the parameter type.
+        setAll: (cookiesToSet: Array<{ name: string; value: string; options: CookieOptions }>) => {
+          pendingCookies.push(...cookiesToSet);
+        },
       },
     }
   );
