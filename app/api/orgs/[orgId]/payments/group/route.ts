@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { z } from "zod";
-import { getOrCreateConversation, insertOutboundMessage } from "@/lib/conversation";
+import { getOrCreateConversation, deliverOutboundMessage } from "@/lib/conversation";
 
 interface Params { params: { orgId: string } }
 
@@ -94,7 +94,8 @@ export async function POST(req: NextRequest, { params }: Params) {
           lead?.channel === "instagram" ? "meta_instagram" : "manual_crm";
 
         const convId = await getOrCreateConversation(params.orgId, p.lead_id, provider);
-        await insertOutboundMessage(convId, params.orgId, msg, "group_payment");
+        // deliverOutboundMessage so Instagram group members receive the receipt DM
+        await deliverOutboundMessage(convId, params.orgId, msg, "group_payment");
       } catch (e) {
         console.warn("[payments/group] inbox message failed for", p.lead_id, e);
       }

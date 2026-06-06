@@ -210,8 +210,16 @@ export function ThreadView({ orgId, orgSlug, convId, lead, channelProvider, init
               {(() => {
                 const name = lead?.name;
                 const rawId = lead?.external_id?.replace(/^ig_/, "") ?? "";
-                // Show a readable short-ID when the stored name is still the raw numeric IGSID
-                if (!name || name === rawId || /^\d{10,}$/.test(name)) {
+                // Show the short-ID fallback when: name is absent, is the raw IGSID,
+                // is a numeric IGSID, or is a stored "IG …"/"@IG …" fallback artifact.
+                const isPlaceholder =
+                  !name ||
+                  name === rawId ||
+                  /^\d{10,}$/.test(name) ||
+                  name.startsWith("IG …") ||
+                  name.startsWith("IG .") ||
+                  name.startsWith("@IG ");
+                if (isPlaceholder) {
                   return rawId.length > 6 ? `IG …${rawId.slice(-6)}` : (rawId || "Instagram User");
                 }
                 return name;

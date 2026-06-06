@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { getAccessState } from "@/lib/access";
 import { generatePaymentReceivedMessage } from "@/lib/ai";
-import { getOrCreateConversation, insertOutboundMessage } from "@/lib/conversation";
+import { getOrCreateConversation, deliverOutboundMessage } from "@/lib/conversation";
 import { sendEmail } from "@/lib/email";
 import { paymentReceived } from "@/lib/email-templates";
 import { getLeadFirstName } from "@/lib/leads";
@@ -106,7 +106,13 @@ async function handler(req: NextRequest, { params }: Params) {
     content: `Payment received ${firstName ? `, ${firstName}` : ""}. ₹${amount_inr.toLocaleString("en-IN")} for ${desc} confirmed. Welcome — I'll be in touch with next steps.`,
   }));
 
-  await insertOutboundMessage(conversationId, params.orgId, aiResult.content, "payment_received");
+  // Use deliverOutboundMessage so Instagram leads actually receive the receipt DM.
+  // For manual/offline payments the conversation channel_provider may be "manual"
+  // (no Instagram delivery attempted) or "instagram" (delivery attempted).
+  const { delivered: receiptDelivered } = await deliverOutboundMessage(
+    conversationId, params.orgId, aiResult.content, "payment_received",
+  );
+  console.log(`[payments/manual] receipt message delivered=${receiptDelivered} conv=${conversationId}`);
 
   // ── Send email ────────────────────────────────────────────────
   if (leadEmail) {

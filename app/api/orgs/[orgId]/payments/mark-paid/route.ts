@@ -7,7 +7,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { generatePaymentReceivedMessage } from "@/lib/ai";
-import { getOrCreateConversation, insertOutboundMessage } from "@/lib/conversation";
+import { getOrCreateConversation, deliverOutboundMessage } from "@/lib/conversation";
 import { sendEmail } from "@/lib/email";
 import { paymentReceived } from "@/lib/email-templates";
 import { getLeadFirstName } from "@/lib/leads";
@@ -114,7 +114,11 @@ export async function POST(req: NextRequest, { params }: Params) {
   }).catch(() => ({
     content: `Payment received${firstName ? `, ${firstName}` : ""}. ₹${resolvedAmount.toLocaleString("en-IN")} confirmed for ${resolvedDesc}. Welcome — I'll send the next steps shortly.`,
   }));
-  await insertOutboundMessage(convId, params.orgId, aiMsg.content, "payment_received");
+  // Use deliverOutboundMessage so Instagram leads receive the receipt DM.
+  const { delivered: receiptDelivered } = await deliverOutboundMessage(
+    convId, params.orgId, aiMsg.content, "payment_received",
+  );
+  console.log(`[payments/mark-paid] receipt message delivered=${receiptDelivered} conv=${convId}`);
 
   // Email
   if (leadEmail) {

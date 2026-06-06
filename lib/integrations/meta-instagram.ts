@@ -294,9 +294,11 @@ export async function sendInstagramMessage(
 export async function getIgUserProfile(
   igUserId:    string,
   pageToken:   string,
+  timeoutMs:   number = 3000,
 ): Promise<IgProfile> {
   const res = await fetch(
     `${GRAPH}/${igUserId}?fields=id,name,username&access_token=${pageToken}`,
+    { signal: AbortSignal.timeout(timeoutMs) },
   );
   if (!res.ok) {
     const errBody = await res.text().catch(() => "(unreadable)");
@@ -306,9 +308,12 @@ export async function getIgUserProfile(
     } else {
       console.warn(`[ig-profile] lookup failed status=${res.status} ig_user=${igUserId} body=${errBody}`);
     }
-    // Fallback: format as a short readable ID (last 6 digits)
+    // On failure: return the raw numeric IGSID as username (not "IG …xxx") so
+    // callers can detect failure: /^\d+$/.test(username) == true means "no real name".
+    // name still carries the display fallback so UI can render it, but the webhook
+    // handler filters "IG …" names from DB storage.
     const shortId = igUserId.length > 6 ? `IG …${igUserId.slice(-6)}` : `IG ${igUserId}`;
-    return { id: igUserId, username: shortId, name: shortId };
+    return { id: igUserId, username: igUserId, name: shortId };
   }
   const data = await res.json() as { id: string; username?: string; name?: string };
   // Return real values only. Fallback display ("IG …xxx") is the UI's responsibility,
