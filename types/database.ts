@@ -332,6 +332,8 @@ export interface Database {
           channel_provider: string;
           last_message_at: string | null;
           last_message_preview: string | null;
+          auto_reply_enabled: boolean;
+          deleted_at: string | null;
           created_at: string;
         };
         Insert: {
@@ -341,6 +343,8 @@ export interface Database {
           channel_provider?: string;
           last_message_at?: string | null;
           last_message_preview?: string | null;
+          auto_reply_enabled?: boolean;
+          deleted_at?: string | null;
           created_at?: string;
         };
         Update: {
@@ -350,6 +354,8 @@ export interface Database {
           channel_provider?: string;
           last_message_at?: string | null;
           last_message_preview?: string | null;
+          auto_reply_enabled?: boolean;
+          deleted_at?: string | null;
           created_at?: string;
         };
         Relationships: [];

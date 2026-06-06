@@ -57,8 +57,7 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const svc = createServiceClient();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error } = await (svc as any)
+  const { error } = await svc
     .from("conversations")
     .update({ deleted_at: new Date().toISOString() })
     .eq("id", params.convId)

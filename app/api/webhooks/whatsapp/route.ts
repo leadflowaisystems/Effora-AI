@@ -181,8 +181,7 @@ export async function POST(req: NextRequest) {
         if (existingConv) {
           conversationId = (existingConv as { id: string }).id;
         } else {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { data: newConv, error: ce } = await (svc as any).from("conversations").insert({
+          const { data: newConv, error: ce } = await svc.from("conversations").insert({
             org_id:               orgId,
             lead_id:              leadId,
             channel_provider:     "whatsapp_cloud",
