@@ -38,7 +38,7 @@ function initials(name: string | null, fallback: string): string {
 }
 
 function ChannelIcon({ provider }: { provider: string }) {
-  if (provider === "meta_instagram") return (
+  if (provider === "instagram") return (
     <span className="flex items-center gap-0.5 rounded px-1 py-0.5 bg-pink-500/10 text-pink-400 text-[10px] font-medium">
       <Instagram className="h-2.5 w-2.5" /> IG
     </span>
