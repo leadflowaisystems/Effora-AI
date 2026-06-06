@@ -7,6 +7,7 @@ import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { z } from "zod";
 import { inngest } from "@/lib/inngest/client";
 import { getOrCreateConversation, deliverOutboundMessage } from "@/lib/conversation";
+import { getCalLink } from "@/lib/booking";
 
 interface Params { params: { orgId: string } }
 
@@ -54,6 +55,10 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   const now     = new Date().toISOString();
   const endsAt  = new Date(new Date(parsed.data.starts_at).getTime() + 60 * 60 * 1000).toISOString(); // +1h default
+
+  // Fetch the org's Cal.com booking link once — used as fallback when no meeting_url is supplied.
+  // This makes the UI placeholder "Leave blank to use Cal.com link" actually true.
+  const orgCalLink = await getCalLink(params.orgId).catch(() => null);
 
   const rows = (members as Array<{ lead_id: string; lead: { id: string; name: string | null } }>).map((m) => ({
     org_id:         params.orgId,
@@ -107,10 +112,12 @@ export async function POST(req: NextRequest, { params }: Params) {
           .replace(/\{\{time\}\}/gi,       timeStr)
           .replace(/\{\{link\}\}/gi,       parsed.data.meeting_url ?? "");
       } else {
+        // Use explicitly-provided meeting_url, falling back to the org's Cal.com booking link.
+        const linkForMsg = parsed.data.meeting_url?.trim() || orgCalLink || null;
         msg = [
           `Hi ${firstName}! Your class booking is confirmed.`,
           `📅 ${groupName} — ${dateStr} at ${timeStr}`,
-          parsed.data.meeting_url ? `🔗 Join here: ${parsed.data.meeting_url}` : "",
+          linkForMsg ? `🔗 Join here: ${linkForMsg}` : "",
           `See you there! 🙌`,
         ].filter(Boolean).join("\n");
       }

@@ -57,9 +57,11 @@ export async function POST(req: NextRequest, { params }: Params) {
     amount_inr:     parsed.data.amount_inr,
     status:         "paid",
     payment_method: parsed.data.payment_method,
-    received_at:    parsed.data.received_at ?? now,
-    description:    parsed.data.description ?? null,
-    notes:          `Group payment: ${(group as { name: string }).name}`,
+    // "received_at" is not a column — the correct column is captured_at
+    captured_at:    parsed.data.received_at ?? now,
+    notes:          parsed.data.description
+      ? `Group payment: ${(group as { name: string }).name} — ${parsed.data.description}`
+      : `Group payment: ${(group as { name: string }).name}`,
     created_at:     now,
     updated_at:     now,
   }));

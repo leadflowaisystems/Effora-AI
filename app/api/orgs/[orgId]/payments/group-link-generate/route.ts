@@ -7,7 +7,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { z } from "zod";
-import { getOrCreateConversation, insertOutboundMessage } from "@/lib/conversation";
+import { getOrCreateConversation, deliverOutboundMessage } from "@/lib/conversation";
 import { createPaymentLink } from "@/lib/razorpay";
 import { getLeadFirstName } from "@/lib/leads";
 import { inngest } from "@/lib/inngest/client";
@@ -120,22 +120,31 @@ export async function POST(req: NextRequest, { params }: Params) {
         }
       }
 
-      // Create payment row
-      const { data: payment } = await svc.from("payments").insert({
+      // Create payment row.
+      // NOTE: "description" is NOT a column in the payments table — use notes instead.
+      const { data: payment, error: payErr } = await svc.from("payments").insert({
         org_id:           params.orgId,
         lead_id:          lead.id,
         amount_inr,
         status:           "pending",
         payment_method:   linkMethod,
         payment_link_url: linkUrl || null,
-        description,
-        notes:            `Group request: ${(group as { name: string }).name}`,
+        link_url:         linkUrl || null,
+        link_method:      linkMethod,
+        notes:            `Group request: ${(group as { name: string }).name} — ${description}`,
+        source:           "group_request",
         custom_message:   custom_message?.trim() || null,
         created_at:       now,
         updated_at:       now,
       }).select("id").single();
 
-      // Write to inbox conversation immediately
+      if (payErr || !payment) {
+        console.error("[payments/group-link-generate] payment insert failed for lead", lead.id, payErr?.message);
+        results.push({ lead_id: lead.id, ok: false, error: payErr?.message ?? "payment insert failed" });
+        continue;
+      }
+
+      // Write to inbox conversation and deliver to real channel
       const fullName = lead.name ?? "there";
       const amtStr   = `₹${amount_inr.toLocaleString("en-IN")}`;
       const msg = custom_message?.trim()
@@ -150,13 +159,16 @@ export async function POST(req: NextRequest, { params }: Params) {
         : `Hi ${firstName}! A payment of ${amtStr} is due for "${description}". Please reach out to complete your payment.`;
 
       const provider =
-        lead.channel === "whatsapp" ? "whatsapp_cloud" :
+        lead.channel === "whatsapp" || lead.channel === "whatsapp_cloud" ? "whatsapp_cloud" :
         lead.channel === "instagram" ? "meta_instagram" : "manual_crm";
 
       const convId = await getOrCreateConversation(params.orgId, lead.id, provider);
+      // Update payment row with conversation_id (safe to fail — non-critical)
       await svc.from("payments").update({ conversation_id: convId })
         .eq("id", (payment as { id: string }).id).catch(() => null);
-      await insertOutboundMessage(convId, params.orgId, msg, "group_payment_request");
+      // deliverOutboundMessage: sends to real WA/IG channel AND stores to DB
+      const { delivered } = await deliverOutboundMessage(convId, params.orgId, msg, "group_payment_request");
+      console.log(`[payments/group-link-generate] lead=${lead.id} conv=${convId} delivered=${delivered} provider=${provider}`);
 
       successCount++;
       results.push({ lead_id: lead.id, ok: true, msg });
