@@ -133,7 +133,7 @@ export async function POST(req: NextRequest) {
         // Resolve sender display name from contacts array
         const contactName = value.contacts?.find((c) => c.wa_id === senderPhone)?.profile?.name ?? senderPhone;
 
-        // Find or create lead
+        // ── 1. Find or create lead (upsert pattern) ──────────────────────────
         const { data: existingLead } = await svc
           .from("leads")
           .select("id")
@@ -146,7 +146,8 @@ export async function POST(req: NextRequest) {
 
         if (existingLead) {
           leadId = (existingLead as { id: string }).id;
-          await svc.from("leads").update({ last_seen_at: now, updated_at: now }).eq("id", leadId);
+          // fire-and-forget update — don't block the response
+          svc.from("leads").update({ last_seen_at: now, updated_at: now }).eq("id", leadId).then(() => {});
         } else {
           const { data: newLead, error: le } = await svc.from("leads").insert({
             org_id:       orgId,
@@ -167,7 +168,7 @@ export async function POST(req: NextRequest) {
           leadId = (newLead as { id: string }).id;
         }
 
-        // Find or create conversation
+        // ── 2. Find or create conversation + insert message in parallel ───────
         const { data: existingConv } = await svc
           .from("conversations")
           .select("id")
@@ -197,33 +198,34 @@ export async function POST(req: NextRequest) {
           conversationId = (newConv as { id: string }).id;
         }
 
-        // Insert inbound message
-        const { data: insertedMsg, error: me } = await svc.from("messages").insert({
-          conversation_id: conversationId,
-          org_id:          orgId,
-          direction:       "inbound",
-          content:         messageText,
-          sent_at:         new Date(parseInt(msg.timestamp) * 1000).toISOString(),
-          metadata:        { source: "whatsapp", sender_phone: senderPhone, wamid: msg.id },
-        }).select("id").single();
+        // ── 3. Insert message + update preview in parallel ────────────────────
+        const [msgRes] = await Promise.all([
+          svc.from("messages").insert({
+            conversation_id: conversationId,
+            org_id:          orgId,
+            direction:       "inbound",
+            content:         messageText,
+            sent_at:         new Date(parseInt(msg.timestamp) * 1000).toISOString(),
+            metadata:        { source: "whatsapp", sender_phone: senderPhone, wamid: msg.id },
+          }).select("id").single(),
+          svc.from("conversations").update({
+            last_message_at:      now,
+            last_message_preview: messageText.slice(0, 80),
+          }).eq("id", conversationId),
+        ]);
 
+        const { data: insertedMsg, error: me } = msgRes as { data: { id: string } | null; error: { message: string } | null };
         if (me || !insertedMsg) {
           console.error("[wa-webhook] message insert failed:", me?.message);
           continue;
         }
-        const messageId = (insertedMsg as { id: string }).id;
+        const messageId = insertedMsg.id;
 
-        // Update conversation preview
-        await svc.from("conversations").update({
-          last_message_at:      now,
-          last_message_preview: messageText.slice(0, 80),
-        }).eq("id", conversationId);
-
-        // Fire Inngest event
-        await inngest.send({
+        // ── 4. Fire Inngest event (fire-and-forget — Meta retries on 200 loss) ─
+        inngest.send({
           name: "whatsapp.message_received",
           data: { orgId, leadId, conversationId, messageId, senderPhone },
-        });
+        }).catch((err: unknown) => console.error("[wa-webhook] inngest.send failed:", err));
 
         console.log(`[wa-webhook] ✓ message lead=${leadId} conv=${conversationId}`);
       }

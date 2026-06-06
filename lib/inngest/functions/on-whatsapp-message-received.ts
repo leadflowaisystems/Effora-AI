@@ -2,14 +2,18 @@
  * Inngest function: whatsapp.message_received
  *
  * Same flow as on-dm-received but fires the WhatsApp Cloud API send path.
- * Steps: load-context → qualify-lead → update-lead → draft-reply → save-or-send
+ *
+ * Steps (reduced from 5 → 2 for latency):
+ *   1. load-context      — parallel DB reads + Cal.com link
+ *   2. qualify-and-reply — qualify (fast model) → if warm/hot: draft+send in same step
+ *                          (eliminates 3 Inngest step round-trips vs original 5-step design)
  */
 
 import { inngest }              from "../client";
 import { createServiceClient }  from "@/lib/supabase/server";
 import { qualifyLead, draftReply } from "@/lib/ai";
 import { getCalLink, embedMetadataInCalLink } from "@/lib/booking";
-import { sendWhatsAppMessage }  from "@/lib/integrations/whatsapp-cloud";
+import { deliverOutboundMessage } from "@/lib/conversation";
 
 interface WAMessageData {
   orgId:          string;
@@ -28,9 +32,9 @@ export const onWhatsAppMessageReceived = inngest.createFunction(
   },
   { event: "whatsapp.message_received" },
   async ({ event, step }) => {
-    const { orgId, leadId, conversationId, messageId, senderPhone } = event.data as WAMessageData;
+    const { orgId, leadId, conversationId, messageId, senderPhone: _senderPhone } = event.data as WAMessageData;
 
-    // ── 1. Load context ──────────────────────────────────────────────────────
+    // ── 1. Load context (parallel DB + Cal.com) ──────────────────────────────
     const ctx = await step.run("load-context", async () => {
       const svc = createServiceClient();
 
@@ -64,102 +68,94 @@ export const onWhatsAppMessageReceived = inngest.createFunction(
       return { skipped: true, reason: "Missing context" };
     }
 
-    // ── 2. Qualify ───────────────────────────────────────────────────────────
-    const qualification = await step.run("qualify-lead", async () => {
-      return qualifyLead({ messages: ctx.messages, voiceProfile: ctx.voiceProfile, orgId });
-    });
-
-    // ── 3. Persist score + stage ─────────────────────────────────────────────
-    await step.run("update-lead", async () => {
+    // ── 2. Qualify → (if warm/hot) draft + send — all in ONE step ───────────
+    //    Merging qualify, update-lead, draft-reply and save-or-send into a single
+    //    Inngest step eliminates 3 step-boundary round-trips (~150–600ms saved).
+    const result = await step.run("qualify-and-reply", async () => {
       const svc = createServiceClient();
       const now = new Date().toISOString();
+
+      // 2a. Qualify
+      const qualification = await qualifyLead({
+        messages:     ctx.messages,
+        voiceProfile: ctx.voiceProfile,
+        orgId,
+      });
+
+      // 2b. Persist score + stage immediately after qualify
       await svc.from("leads").update({
         score:        qualification.score,
         stage:        qualification.stage,
         last_seen_at: now,
         updated_at:   now,
       }).eq("id", leadId);
-    });
 
-    // ── 4 + 5. Draft + save/send (warm or hot only) ──────────────────────────
-    if (qualification.stage === "hot" || qualification.stage === "warm") {
+      // 2c. Draft + send only for warm / hot leads
+      if (qualification.stage !== "hot" && qualification.stage !== "warm") {
+        return { score: qualification.score, stage: qualification.stage, drafted: false };
+      }
+
       const calLinkForDraft = qualification.stage === "hot" && ctx.calLink
         ? embedMetadataInCalLink(ctx.calLink, conversationId, leadId)
         : null;
 
-      const draft = await step.run("draft-reply", async () => {
-        return draftReply({
-          messages:     ctx.messages,
-          voiceProfile: ctx.voiceProfile,
-          score:        qualification.score,
-          stage:        qualification.stage,
-          orgId,
-          calLink:      calLinkForDraft,
+      // 2d. Check per-conversation auto-reply override
+      const { data: convRow } = await svc
+        .from("conversations")
+        .select("auto_reply_enabled")
+        .eq("id", conversationId)
+        .single();
+      const autoReply =
+        (convRow as { auto_reply_enabled: boolean } | null)?.auto_reply_enabled
+        ?? ctx.org?.auto_send_replies;
+
+      // 2e. Draft
+      const draft = await draftReply({
+        messages:     ctx.messages,
+        voiceProfile: ctx.voiceProfile,
+        score:        qualification.score,
+        stage:        qualification.stage,
+        orgId,
+        calLink:      calLinkForDraft,
+      });
+
+      if (autoReply) {
+        // deliverOutboundMessage sends via WA Cloud API AND stores message to DB atomically
+        const { delivered, provider_message_id } = await deliverOutboundMessage(
+          conversationId, orgId, draft.content, "ai_whatsapp"
+        );
+        console.log(`[wa-inngest] ai reply delivered=${delivered} provider_message_id=${provider_message_id ?? "null"} conv=${conversationId}`);
+
+        await svc.from("ai_drafts").insert({
+          conversation_id: conversationId,
+          org_id:          orgId,
+          message_id:      messageId,
+          content:         draft.content,
+          status:          "sent",
         });
-      });
 
-      await step.run("save-or-send", async () => {
-        const svc = createServiceClient();
-        const now = new Date().toISOString();
-
-        // Check per-conversation override
-        const { data: convRow } = await svc
-          .from("conversations")
-          .select("auto_reply_enabled")
-          .eq("id", conversationId)
-          .single();
-        const autoReply = (convRow as { auto_reply_enabled: boolean } | null)?.auto_reply_enabled
-          ?? ctx.org?.auto_send_replies;
-
-        if (autoReply) {
-          // Send via WhatsApp Cloud API then record
-          try {
-            await sendWhatsAppMessage(orgId, senderPhone, draft.content);
-          } catch (e) {
-            console.error("[wa-inngest] sendWhatsAppMessage failed:", e);
-          }
-
-          await svc.from("messages").insert({
-            conversation_id: conversationId,
-            org_id:          orgId,
-            direction:       "outbound",
-            content:         draft.content,
-            sent_at:         now,
-            metadata:        { source: "ai_whatsapp", model: process.env.LLM_MODEL_SMART ?? "llama-3.3-70b-versatile" },
-          });
-
-          await svc.from("ai_drafts").insert({
-            conversation_id: conversationId,
-            org_id:          orgId,
-            message_id:      messageId,
-            content:         draft.content,
-            status:          "sent",
-          });
-
-          await svc.from("conversations").update({
-            last_message_at:      now,
-            last_message_preview: `[AI] ${draft.content.slice(0, 78)}`,
-          }).eq("id", conversationId);
-
-          if (qualification.stage === "hot" && calLinkForDraft) {
-            await svc.from("leads").update({ stage: "booking_sent", updated_at: now }).eq("id", leadId);
-          }
-        } else {
-          await svc.from("ai_drafts").insert({
-            conversation_id: conversationId,
-            org_id:          orgId,
-            message_id:      messageId,
-            content:         draft.content,
-            status:          "pending",
-          });
+        if (qualification.stage === "hot" && calLinkForDraft) {
+          await svc.from("leads").update({ stage: "booking_sent", updated_at: now }).eq("id", leadId);
         }
-      });
-    }
+      } else {
+        // Save as pending draft for manual review
+        await svc.from("ai_drafts").insert({
+          conversation_id: conversationId,
+          org_id:          orgId,
+          message_id:      messageId,
+          content:         draft.content,
+          status:          "pending",
+        });
+      }
 
-    return {
-      score:   qualification.score,
-      stage:   qualification.stage,
-      drafted: qualification.stage === "hot" || qualification.stage === "warm",
-    };
+      return {
+        score:   qualification.score,
+        stage:   qualification.stage,
+        drafted: true,
+        sent:    autoReply,
+      };
+    });
+
+    return result;
   },
 );

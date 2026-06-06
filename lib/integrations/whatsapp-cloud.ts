@@ -140,11 +140,26 @@ export async function saveWhatsAppIntegration(
       active:   true,
     });
   }
+  // Clear cached config so the next send picks up the new token
+  invalidateWhatsAppConfigCache(orgId);
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
+// Module-level config cache — avoids a DB round-trip on every sendWhatsAppMessage call.
+// TTL: 5 minutes. Invalidated automatically when saveWhatsAppIntegration runs.
+const WA_CONFIG_CACHE = new Map<string, { config: WhatsAppConfig; expiresAt: number }>();
+const WA_CONFIG_TTL_MS = 5 * 60_000;
+
+/** Call this whenever the integration is saved/updated to clear the stale cache entry. */
+export function invalidateWhatsAppConfigCache(orgId: string): void {
+  WA_CONFIG_CACHE.delete(orgId);
+}
+
 async function loadWhatsAppConfig(orgId: string): Promise<WhatsAppConfig> {
+  const cached = WA_CONFIG_CACHE.get(orgId);
+  if (cached && cached.expiresAt > Date.now()) return cached.config;
+
   const svc = createServiceClient();
   const { data, error } = await svc
     .from("integrations")
@@ -156,5 +171,7 @@ async function loadWhatsAppConfig(orgId: string): Promise<WhatsAppConfig> {
   if (error || !data?.active) {
     throw new Error(`No active WhatsApp Cloud integration for org ${orgId}`);
   }
-  return data.config as unknown as WhatsAppConfig;
+  const config = data.config as unknown as WhatsAppConfig;
+  WA_CONFIG_CACHE.set(orgId, { config, expiresAt: Date.now() + WA_CONFIG_TTL_MS });
+  return config;
 }

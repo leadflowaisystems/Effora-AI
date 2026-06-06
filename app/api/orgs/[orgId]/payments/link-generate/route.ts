@@ -54,7 +54,7 @@ async function handler(req: NextRequest, { params }: Params) {
   const [orgRes, rzpRes, leadRes, vpRes] = await Promise.all([
     svc.from("orgs").select("name, upi_id").eq("id", params.orgId).single(),
     svc.from("integrations").select("config, active").eq("org_id", params.orgId).eq("provider", "razorpay").eq("active", true).maybeSingle(),
-    svc.from("leads").select("id, name, external_id, metadata").eq("id", lead_id).eq("org_id", params.orgId).single(),
+    svc.from("leads").select("id, name, external_id, channel, metadata").eq("id", lead_id).eq("org_id", params.orgId).single(),
     svc.from("voice_profiles").select("tone, offer, price_range, sells, objections, extra_context").eq("org_id", params.orgId).maybeSingle(),
   ]);
 
@@ -62,7 +62,7 @@ async function handler(req: NextRequest, { params }: Params) {
 
   const org   = orgRes.data as { name: string; upi_id: string | null } | null;
   const rzp   = rzpRes.data as { config: Record<string, string>; active: boolean } | null;
-  const lead  = leadRes.data as { id: string; name: string | null; external_id?: string | null; metadata?: Record<string, unknown> };
+  const lead  = leadRes.data as { id: string; name: string | null; external_id?: string | null; channel?: string | null; metadata?: Record<string, unknown> };
   const vp    = vpRes.data as { tone: string; offer: string; price_range: string; sells: string; objections: string[]; extra_context: string } | null;
   const leadEmail = (lead.metadata?.email) as string | undefined ?? null;
   const firstName = getLeadFirstName({ name: lead.name, external_id: lead.external_id ?? null });
@@ -110,8 +110,14 @@ async function handler(req: NextRequest, { params }: Params) {
     }
   }
 
-  // ── Get or create conversation so Inngest handler can thread the message ──
-  const conversationId = await getOrCreateConversation(params.orgId, lead_id, "manual");
+  // ── Get or create conversation using the lead's real channel provider ────
+  // Hardcoding "manual" previously caused payment messages to land in a
+  // manual_crm conversation instead of the lead's WA/IG conversation.
+  const leadChannel = lead.channel ?? "manual";
+  const convProvider =
+    leadChannel === "whatsapp" || leadChannel === "whatsapp_cloud" ? "whatsapp_cloud" :
+    leadChannel === "instagram" ? "meta_instagram" : "manual";
+  const conversationId = await getOrCreateConversation(params.orgId, lead_id, convProvider);
 
   // Insert payment row WITH conversation_id so on-payment-link-message can find it
   const { data: payment, error } = await svc.from("payments").insert({

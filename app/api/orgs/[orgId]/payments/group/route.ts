@@ -90,7 +90,7 @@ export async function POST(req: NextRequest, { params }: Params) {
         ].join("\n");
 
         const provider =
-          lead?.channel === "whatsapp" ? "whatsapp_cloud" :
+          lead?.channel === "whatsapp" || lead?.channel === "whatsapp_cloud" ? "whatsapp_cloud" :
           lead?.channel === "instagram" ? "meta_instagram" : "manual_crm";
 
         const convId = await getOrCreateConversation(params.orgId, p.lead_id, provider);

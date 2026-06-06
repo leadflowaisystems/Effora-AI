@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { z } from "zod";
 import { inngest } from "@/lib/inngest/client";
-import { getOrCreateConversation, insertOutboundMessage } from "@/lib/conversation";
+import { getOrCreateConversation, deliverOutboundMessage } from "@/lib/conversation";
 
 interface Params { params: { orgId: string } }
 
@@ -92,6 +92,8 @@ export async function POST(req: NextRequest, { params }: Params) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const svcForConv = createServiceClient() as any;
 
+  const bookingConvMap = new Map<string, string>(); // bookingId → convId
+
   await Promise.allSettled(insertedList.map(async (b) => {
     try {
       const fullName  = memberMap.get(b.lead_id) ?? "there";
@@ -116,20 +118,30 @@ export async function POST(req: NextRequest, { params }: Params) {
       const { data: leadRow } = await svcForConv.from("leads").select("channel").eq("id", b.lead_id).single();
       const leadChannel = (leadRow as { channel: string } | null)?.channel ?? "manual";
       const provider =
-        leadChannel === "whatsapp" ? "whatsapp_cloud" :
+        leadChannel === "whatsapp" || leadChannel === "whatsapp_cloud" ? "whatsapp_cloud" :
         leadChannel === "instagram" ? "meta_instagram" : "manual_crm";
 
       const convId = await getOrCreateConversation(params.orgId, b.lead_id, provider);
-      await insertOutboundMessage(convId, params.orgId, msg, "group_booking");
+      // deliverOutboundMessage sends to real WA/IG channel AND stores to DB
+      const { delivered } = await deliverOutboundMessage(convId, params.orgId, msg, "group_booking");
+      bookingConvMap.set(b.id, convId);
+      console.log(`[bookings/group] booking=${b.id} lead=${b.lead_id} conv=${convId} delivered=${delivered}`);
     } catch (e) {
       console.warn("[bookings/group] inbox message failed for", b.lead_id, e);
     }
   }));
 
-  // 2. Also fire booking-created Inngest events (for email confirmations etc.)
+  // 2. Also fire booking-created Inngest events (for 24h/1h reminders + email).
+  //    conversationId is required by on-booking-created for reminder delivery.
   const events = insertedList.map((b) => ({
     name: "booking.created" as const,
-    data: { orgId: params.orgId, bookingId: b.id, leadId: b.lead_id },
+    data: {
+      orgId:          params.orgId,
+      bookingId:      b.id,
+      leadId:         b.lead_id,
+      conversationId: bookingConvMap.get(b.id) ?? null,
+      startsAt:       parsed.data.starts_at,
+    },
   }));
   if (events.length > 0) {
     await inngest.send(events).catch(() => null); // non-fatal
