@@ -12,6 +12,7 @@ import { sendEmail } from "@/lib/email";
 import { paymentReceived } from "@/lib/email-templates";
 import { getLeadFirstName } from "@/lib/leads";
 import { z } from "zod";
+import { writeLeadEvent } from "@/lib/lead-events";
 
 export const maxDuration = 30;
 
@@ -70,6 +71,12 @@ export async function POST(req: NextRequest, { params }: Params) {
     resolvedAmount    = p.amount_inr;
     resolvedDesc      = description ?? p.notes ?? "the program";
     resolvedPaymentId = p.id;
+    void writeLeadEvent({
+      orgId: params.orgId, leadId: p.lead_id,
+      eventType: "payment_paid", entityType: "payment", entityId: p.id,
+      title: `Payment marked as received — ₹${p.amount_inr.toLocaleString("en-IN")}`,
+      metadata: { amount_inr: p.amount_inr },
+    });
   } else {
     // Create a new captured payment row
     if (!lead_id || !amount_inr) {
@@ -82,10 +89,23 @@ export async function POST(req: NextRequest, { params }: Params) {
       notes: description ?? null, created_at: now, updated_at: now,
     }).select("id").single();
     if (pErr) return NextResponse.json({ error: pErr.message }, { status: 500 });
+    const newId = (pNew as { id: string }).id;
     resolvedLeadId    = lead_id;
     resolvedAmount    = amount_inr;
     resolvedDesc      = description ?? "the program";
-    resolvedPaymentId = (pNew as { id: string }).id;
+    resolvedPaymentId = newId;
+    void writeLeadEvent({
+      orgId: params.orgId, leadId: lead_id,
+      eventType: "payment_created", entityType: "payment", entityId: newId,
+      title: `Payment recorded — ₹${amount_inr.toLocaleString("en-IN")}`,
+      metadata: { amount_inr },
+    });
+    void writeLeadEvent({
+      orgId: params.orgId, leadId: lead_id,
+      eventType: "payment_paid", entityType: "payment", entityId: newId,
+      title: `Payment marked as received — ₹${amount_inr.toLocaleString("en-IN")}`,
+      metadata: { amount_inr },
+    });
   }
 
   // Load lead + voice profile + org

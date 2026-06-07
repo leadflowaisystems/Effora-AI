@@ -9,21 +9,6 @@ function firstName(name: string | null): string {
   return first ? `, ${first}` : "";
 }
 
-function formatStart(isoString: string): string {
-  try {
-    return new Date(isoString).toLocaleString("en-IN", {
-      weekday: "short",
-      month:   "short",
-      day:     "numeric",
-      hour:    "2-digit",
-      minute:  "2-digit",
-      timeZone: "Asia/Kolkata",
-    }) + " IST";
-  } catch {
-    return isoString;
-  }
-}
-
 export interface ReminderParams {
   leadName:   string | null;
   startsAt:   string;
@@ -33,9 +18,10 @@ export interface ReminderParams {
 
 export function build24hReminder(p: ReminderParams): string {
   const name  = firstName(p.leadName);
+  const offer = p.coachOffer?.trim() || "our upcoming session";
 
   const lines = [
-    `Hey${name}! Just a quick heads-up — we have a call coming up soon.`,
+    `Hey${name}! Just a quick heads-up — our ${offer} is coming up soon.`,
     ``,
     `Really looking forward to chatting and figuring out how I can help you move things forward.`,
   ];
@@ -49,9 +35,10 @@ export function build24hReminder(p: ReminderParams): string {
 }
 
 export function build1hReminder(p: ReminderParams): string {
-  const name = firstName(p.leadName);
+  const name  = firstName(p.leadName);
+  const offer = p.coachOffer?.trim() || "our call";
 
-  const lines = [`Hey${name}! Our call is coming up — just a quick heads-up ⏰`];
+  const lines = [`Hey${name}! Our ${offer} is coming up in about an hour ⏰`];
 
   if (p.meetingUrl) {
     lines.push(``, `Click here to join when you're ready: ${p.meetingUrl}`);

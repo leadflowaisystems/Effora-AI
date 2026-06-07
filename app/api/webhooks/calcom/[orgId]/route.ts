@@ -21,6 +21,7 @@ import { createHmac } from "crypto";
 import { createServiceClient } from "@/lib/supabase/server";
 import { decryptSecret, isEncrypted } from "@/lib/crypto";
 import { inngest } from "@/lib/inngest/client";
+import { writeLeadEvent } from "@/lib/lead-events";
 
 interface Params { params: { orgId: string } }
 
@@ -203,6 +204,16 @@ export async function POST(req: NextRequest, { params }: Params) {
 
     await svc.from("leads").update(leadUpdate).eq("id", leadId);
 
+    // Write lead event for booking created via Cal.com (non-fatal)
+    if (booking?.id && leadId) {
+      void writeLeadEvent({
+        orgId, leadId,
+        eventType: "booking_created", entityType: "booking", entityId: booking.id,
+        title: "Booking created (Cal.com)",
+        metadata: { starts_at: startTime, attendee_email: attendee.email ?? null },
+      });
+    }
+
     // Emit Inngest events — reminders pipeline + immediate confirmation message
     if (booking?.id) {
       await inngest.send([
@@ -252,6 +263,12 @@ export async function POST(req: NextRequest, { params }: Params) {
     const bk = booking as {
       id: string; lead_id: string; conversation_id: string | null;
     };
+
+    void writeLeadEvent({
+      orgId, leadId: bk.lead_id,
+      eventType: "booking_no_show", entityType: "booking", entityId: bk.id,
+      title: "No-show (Cal.com)",
+    });
 
     await inngest.send({
       name: "booking.no_show",

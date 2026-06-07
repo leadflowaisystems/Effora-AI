@@ -11,6 +11,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
+import { writeLeadEvent } from "@/lib/lead-events";
 
 interface Params { params: { orgId: string; paymentId: string } }
 
@@ -32,6 +33,16 @@ export async function DELETE(req: NextRequest, { params }: Params) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const svc  = createServiceClient() as any;
 
+  // Fetch lead_id before deleting so we can write the event
+  const { data: pay } = await svc
+    .from("payments")
+    .select("lead_id, amount_inr")
+    .eq("id", params.paymentId)
+    .eq("org_id", params.orgId)
+    .single();
+  const leadId   = (pay as { lead_id: string; amount_inr: number } | null)?.lead_id ?? null;
+  const amountInr = (pay as { lead_id: string; amount_inr: number } | null)?.amount_inr ?? 0;
+
   if (mode === "hard") {
     // Permanent deletion — remove the row entirely.
     const { error } = await svc
@@ -44,6 +55,14 @@ export async function DELETE(req: NextRequest, { params }: Params) {
       console.error("[payments/hard-delete]", error.message);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+    if (leadId) {
+      void writeLeadEvent({
+        orgId: params.orgId, leadId,
+        eventType: "payment_deleted", entityType: "payment", entityId: params.paymentId,
+        title: `Payment permanently deleted — ₹${amountInr.toLocaleString("en-IN")}`,
+        metadata: { amount_inr: amountInr },
+      });
+    }
   } else {
     // Soft delete — hide from list, preserve for reports + lead history.
     const { error } = await svc
@@ -55,6 +74,14 @@ export async function DELETE(req: NextRequest, { params }: Params) {
     if (error) {
       console.error("[payments/soft-delete]", error.message);
       return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    if (leadId) {
+      void writeLeadEvent({
+        orgId: params.orgId, leadId,
+        eventType: "payment_archived", entityType: "payment", entityId: params.paymentId,
+        title: `Payment removed from list — ₹${amountInr.toLocaleString("en-IN")}`,
+        metadata: { amount_inr: amountInr },
+      });
     }
   }
 

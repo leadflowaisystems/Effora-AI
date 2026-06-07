@@ -30,7 +30,7 @@ export default async function LeadDetailPage({ params }: Props) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const svc = createServiceClient() as any;
 
-  const [leadRes, convsRes, bookingsRes, paymentsRes] = await Promise.all([
+  const [leadRes, convsRes, bookingsRes, paymentsRes, leadEventsRes] = await Promise.all([
     svc.from("leads")
        .select("id,name,external_id,channel,score,stage,tags,notes,ltv_inr,last_seen_at,created_at,source,avatar_url,metadata")
        .eq("id", params.leadId).eq("org_id", org.id).single(),
@@ -46,9 +46,14 @@ export default async function LeadDetailPage({ params }: Props) {
        // Hard-deleted bookings are gone from the DB entirely (correct behaviour).
        .order("starts_at", { ascending: false }),
     svc.from("payments")
-       .select("id,amount_inr,status,payment_link_url,notes,created_at,updated_at")
+       .select("id,amount_inr,status,payment_link_url,notes,created_at,updated_at,deleted_at")
        .eq("org_id", org.id).eq("lead_id", params.leadId)
        .order("created_at", { ascending: false }),
+    svc.from("lead_events")
+       .select("id,event_type,entity_type,entity_id,title,metadata,created_at")
+       .eq("org_id", org.id).eq("lead_id", params.leadId)
+       .order("created_at", { ascending: false })
+       .limit(100),
   ]);
 
   if (!leadRes.data) notFound();
@@ -59,6 +64,7 @@ export default async function LeadDetailPage({ params }: Props) {
       conversations={convsRes.data  ?? []}
       bookings={bookingsRes.data    ?? []}
       payments={paymentsRes.data    ?? []}
+      leadEvents={leadEventsRes.data ?? []}
       orgId={org.id}
       orgSlug={params.orgSlug}
     />

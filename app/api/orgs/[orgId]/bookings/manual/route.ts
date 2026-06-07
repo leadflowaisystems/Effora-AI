@@ -16,6 +16,7 @@ import { getLeadFirstName, formatMeetingTime } from "@/lib/leads";
 import { getCalLink } from "@/lib/booking";
 import { withErrorHandler } from "@/lib/api-handler";
 import { track, EVENTS } from "@/lib/analytics";
+import { writeLeadEvent } from "@/lib/lead-events";
 import { z } from "zod";
 
 export const maxDuration = 30;
@@ -94,6 +95,17 @@ async function handler(req: NextRequest, { params }: Params) {
 
   if (bookingErr) return NextResponse.json({ error: bookingErr.message }, { status: 500 });
   const b = booking as { id: string; starts_at: string };
+
+  // ── Write lead event (non-fatal) ──────────────────────────────
+  void writeLeadEvent({
+    orgId:      params.orgId,
+    leadId:     lead_id,
+    eventType:  "booking_created",
+    entityType: "booking",
+    entityId:   b.id,
+    title:      "Booking created (manual)",
+    metadata:   { starts_at, meeting_url: resolvedMeetingUrl },
+  });
 
   // ── Get or create conversation ────────────────────────────────
   const conversationId = await getOrCreateConversation(params.orgId, lead_id, "manual");

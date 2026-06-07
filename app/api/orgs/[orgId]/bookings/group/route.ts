@@ -8,6 +8,7 @@ import { z } from "zod";
 import { inngest } from "@/lib/inngest/client";
 import { getOrCreateConversation, deliverOutboundMessage } from "@/lib/conversation";
 import { getCalLink } from "@/lib/booking";
+import { writeLeadEvents } from "@/lib/lead-events";
 
 interface Params { params: { orgId: string } }
 
@@ -160,6 +161,17 @@ export async function POST(req: NextRequest, { params }: Params) {
     }
     console.log(`[bookings/group] DIAG END lead_id=${b.lead_id}`);
   }));
+
+  // 2a. Write lead_events for each inserted booking (non-fatal)
+  void writeLeadEvents(insertedList.map((b) => ({
+    orgId:      params.orgId,
+    leadId:     b.lead_id,
+    eventType:  "booking_created" as const,
+    entityType: "booking" as const,
+    entityId:   b.id,
+    title:      "Booking created (group)",
+    metadata:   { starts_at: parsed.data.starts_at, group_id: parsed.data.group_id },
+  })));
 
   // 2. Also fire booking-created Inngest events (for 24h/1h reminders + email).
   //    conversationId is required by on-booking-created for reminder delivery.

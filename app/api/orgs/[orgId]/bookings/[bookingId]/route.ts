@@ -11,6 +11,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
+import { writeLeadEvent } from "@/lib/lead-events";
 
 interface Params { params: { orgId: string; bookingId: string } }
 
@@ -32,6 +33,15 @@ export async function DELETE(req: NextRequest, { params }: Params) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const svc  = createServiceClient() as any;
 
+  // Fetch lead_id before deleting so we can write the event
+  const { data: bk } = await svc
+    .from("bookings")
+    .select("lead_id")
+    .eq("id", params.bookingId)
+    .eq("org_id", params.orgId)
+    .single();
+  const leadId = (bk as { lead_id: string } | null)?.lead_id ?? null;
+
   if (mode === "hard") {
     // Permanent deletion — remove the row entirely.
     const { error } = await svc
@@ -44,6 +54,14 @@ export async function DELETE(req: NextRequest, { params }: Params) {
       console.error("[bookings/hard-delete]", error.message);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+    if (leadId) {
+      // entity_id preserved in event even though the booking row is gone
+      void writeLeadEvent({
+        orgId: params.orgId, leadId,
+        eventType: "booking_deleted", entityType: "booking", entityId: params.bookingId,
+        title: "Booking permanently deleted",
+      });
+    }
   } else {
     // Soft delete — hide from list, preserve for reports + lead history.
     const { error } = await svc
@@ -55,6 +73,13 @@ export async function DELETE(req: NextRequest, { params }: Params) {
     if (error) {
       console.error("[bookings/soft-delete]", error.message);
       return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    if (leadId) {
+      void writeLeadEvent({
+        orgId: params.orgId, leadId,
+        eventType: "booking_archived", entityType: "booking", entityId: params.bookingId,
+        title: "Booking removed from list",
+      });
     }
   }
 

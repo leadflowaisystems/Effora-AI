@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { z } from "zod";
 import { getOrCreateConversation, deliverOutboundMessage } from "@/lib/conversation";
+import { writeLeadEvents } from "@/lib/lead-events";
 
 interface Params { params: { orgId: string } }
 
@@ -68,6 +69,19 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   const { data: inserted, error } = await svc.from("payments").insert(rows).select("id, lead_id");
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // Write lead_events for each inserted payment (non-fatal)
+  void writeLeadEvents(
+    ((inserted ?? []) as Array<{ id: string; lead_id: string }>).map((p) => ({
+      orgId:      params.orgId,
+      leadId:     p.lead_id,
+      eventType:  "payment_created" as const,
+      entityType: "payment" as const,
+      entityId:   p.id,
+      title:      `Payment recorded — ₹${parsed.data.amount_inr.toLocaleString("en-IN")} (group)`,
+      metadata:   { amount_inr: parsed.data.amount_inr, group_id: parsed.data.group_id },
+    }))
+  );
 
   // Write payment receipt message to each member's inbox thread immediately
   const groupName = (group as { name: string }).name;

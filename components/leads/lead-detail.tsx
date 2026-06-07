@@ -38,13 +38,15 @@ interface Lead {
 }
 interface Conversation { id: string; channel_provider: string; last_message_at: string | null; last_message_preview: string | null; created_at: string }
 interface Booking { id: string; status: string; starts_at: string | null; ends_at: string | null; meeting_url: string | null; attendee_name: string | null; attendee_email: string | null; recovery_attempt: number; created_at: string; deleted_at?: string | null }
-interface Payment { id: string; amount_inr: number; status: string; payment_link_url: string | null; notes: string | null; created_at: string; updated_at: string }
+interface Payment { id: string; amount_inr: number; status: string; payment_link_url: string | null; notes: string | null; created_at: string; updated_at: string; deleted_at?: string | null }
+interface LeadEvent { id: string; event_type: string; entity_type: string; entity_id: string | null; title: string; metadata: Record<string, unknown>; created_at: string }
 
 interface Props {
   lead:          Lead;
   conversations: Conversation[];
   bookings:      Booking[];
   payments:      Payment[];
+  leadEvents:    LeadEvent[];
   orgId:         string;
   orgSlug:       string;
 }
@@ -115,68 +117,50 @@ function Section({ title, icon: Icon, children, defaultOpen = true }: {
 
 /* ── Activity timeline helpers ───────────────────────────────────── */
 
-type ActivityItem =
-  | { kind: "booking"; data: Booking;      ts: string }
-  | { kind: "payment"; data: Payment;      ts: string }
-  | { kind: "conversation"; data: Conversation; ts: string };
+type TimelineItem =
+  | { kind: "event";        data: LeadEvent;      ts: string }
+  | { kind: "conversation"; data: Conversation;   ts: string };
 
-function buildTimeline(bookings: Booking[], payments: Payment[], convs: Conversation[]): ActivityItem[] {
-  const items: ActivityItem[] = [
-    ...bookings.map((b) => ({ kind: "booking"      as const, data: b, ts: b.starts_at ?? b.created_at })),
-    ...payments.map((p) => ({ kind: "payment"      as const, data: p, ts: p.created_at })),
-    ...convs.map((c)    => ({ kind: "conversation" as const, data: c, ts: c.last_message_at ?? c.created_at })),
+function buildTimeline(events: LeadEvent[], convs: Conversation[]): TimelineItem[] {
+  const items: TimelineItem[] = [
+    ...events.map((e) => ({ kind: "event"        as const, data: e, ts: e.created_at })),
+    ...convs.map((c)  => ({ kind: "conversation" as const, data: c, ts: c.last_message_at ?? c.created_at })),
   ];
   return items.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
 }
 
-function TimelineRow({ item, orgSlug }: { item: ActivityItem; orgSlug: string }) {
-  if (item.kind === "booking") {
-    const b = item.data;
-    const isArchived = !!b.deleted_at;
-    const cfg = {
-      completed: { color: "text-[var(--brand)]", icon: CheckCircle2 },
-      confirmed: { color: "text-emerald-400",    icon: Calendar },
-      no_show:   { color: "text-red-400",         icon: AlertTriangle },
-      cancelled: { color: "text-[var(--text-3)]", icon: XCircle },
-    }[b.status] ?? { color: "text-[var(--text-3)]", icon: Clock };
-    const Icon = cfg.icon;
-    return (
-      <div className="flex gap-3 py-2.5 border-b border-[var(--border)] last:border-0">
-        <div className={cn("mt-0.5 shrink-0", isArchived ? "text-[var(--text-3)]" : cfg.color)}><Icon className="h-4 w-4" /></div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm text-[var(--text)]">
-            Booking <span className="font-medium">{b.status.replace("_", " ")}</span>
-            {b.attendee_name && ` · ${b.attendee_name}`}
-            {isArchived && <span className="ml-1.5 text-[11px] text-[var(--text-3)] italic">(archived)</span>}
-          </p>
-          <p className="text-xs text-[var(--text-3)]">{fmtDate(b.starts_at)}</p>
-        </div>
-        {b.meeting_url && (
-          <a href={b.meeting_url} target="_blank" rel="noopener noreferrer" className="shrink-0 text-[var(--brand)] hover:underline text-xs flex items-center gap-1">
-            <ExternalLink className="h-3 w-3" /> Join
-          </a>
-        )}
-      </div>
-    );
+function eventIcon(eventType: string): { Icon: React.ElementType; color: string } {
+  switch (eventType) {
+    case "booking_created":   return { Icon: Calendar,      color: "text-emerald-400" };
+    case "booking_completed": return { Icon: CheckCircle2,  color: "text-[var(--brand)]" };
+    case "booking_no_show":   return { Icon: AlertTriangle, color: "text-red-400" };
+    case "booking_archived":  return { Icon: XCircle,       color: "text-[var(--text-3)]" };
+    case "booking_deleted":   return { Icon: XCircle,       color: "text-red-400" };
+    case "payment_created":   return { Icon: CreditCard,    color: "text-amber-400" };
+    case "payment_paid":      return { Icon: CreditCard,    color: "text-[var(--brand)]" };
+    case "payment_archived":  return { Icon: CreditCard,    color: "text-[var(--text-3)]" };
+    case "payment_deleted":   return { Icon: CreditCard,    color: "text-red-400" };
+    default:                  return { Icon: Clock,         color: "text-[var(--text-3)]" };
   }
-  if (item.kind === "payment") {
-    const p = item.data;
-    const paid = p.status === "paid";
+}
+
+function TimelineRow({ item, orgSlug }: { item: TimelineItem; orgSlug: string }) {
+  if (item.kind === "event") {
+    const e = item.data;
+    const { Icon, color } = eventIcon(e.event_type);
+    const isArchived = e.event_type.endsWith("_archived");
+    const isDeleted  = e.event_type.endsWith("_deleted");
     return (
       <div className="flex gap-3 py-2.5 border-b border-[var(--border)] last:border-0">
-        <div className={cn("mt-0.5 shrink-0", paid ? "text-[var(--brand)]" : "text-amber-400")}><CreditCard className="h-4 w-4" /></div>
+        <div className={cn("mt-0.5 shrink-0", color)}><Icon className="h-4 w-4" /></div>
         <div className="flex-1 min-w-0">
           <p className="text-sm text-[var(--text)]">
-            <span className="font-mono font-semibold">{formatInr(p.amount_inr)}</span>
-            {" · "}<span className={paid ? "text-[var(--brand)]" : "text-amber-400"}>{p.status}</span>
+            {e.title}
+            {isArchived && <span className="ml-1.5 text-[11px] text-[var(--text-3)] italic">(archived)</span>}
+            {isDeleted  && <span className="ml-1.5 text-[11px] text-red-400 italic">(deleted)</span>}
           </p>
-          <p className="text-xs text-[var(--text-3)]">{fmtDate(p.created_at)}</p>
+          <p className="text-xs text-[var(--text-3)]">{relTime(e.created_at)}</p>
         </div>
-        {p.payment_link_url && (
-          <a href={p.payment_link_url} target="_blank" rel="noopener noreferrer" className="shrink-0 text-[var(--brand)] hover:underline text-xs flex items-center gap-1">
-            <ExternalLink className="h-3 w-3" /> Link
-          </a>
-        )}
       </div>
     );
   }
@@ -199,7 +183,7 @@ function TimelineRow({ item, orgSlug }: { item: ActivityItem; orgSlug: string })
 
 /* ── Main component ─────────────────────────────────────────────────────────── */
 
-export function LeadDetail({ lead, conversations, bookings, payments, orgId, orgSlug }: Props) {
+export function LeadDetail({ lead, conversations, bookings, payments, leadEvents, orgId, orgSlug }: Props) {
   const router = useRouter();
   const [notes, setNotes]       = React.useState(lead.notes ?? "");
   const [editNotes, setEditNotes] = React.useState(false);
@@ -211,7 +195,7 @@ export function LeadDetail({ lead, conversations, bookings, payments, orgId, org
   const email     = (lead.metadata?.email as string | null) ?? null;
 
   const totalLtv  = payments.filter((p) => p.status === "paid").reduce((s, p) => s + p.amount_inr, 0);
-  const timeline  = buildTimeline(bookings, payments, conversations);
+  const timeline  = buildTimeline(leadEvents, conversations);
 
   async function saveNotes() {
     setSavingNotes(true);
@@ -428,6 +412,7 @@ export function LeadDetail({ lead, conversations, bookings, payments, orgId, org
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-mono text-sm font-semibold text-[var(--text)]">{formatInr(p.amount_inr)}</span>
                   <span className={cn("text-xs font-medium", p.status === "paid" ? "text-[var(--brand)]" : "text-amber-400")}>{p.status}</span>
+                  {p.deleted_at && <span className="text-[11px] text-[var(--text-3)] italic">(archived)</span>}
                 </div>
                 <p className="text-xs text-[var(--text-3)]">{fmtDate(p.created_at)}</p>
                 {p.notes && <p className="text-xs text-[var(--text-3)] mt-0.5">{p.notes}</p>}

@@ -14,6 +14,7 @@ import { paymentLink as paymentLinkEmail } from "@/lib/email-templates";
 import { getLeadFirstName } from "@/lib/leads";
 import { withErrorHandler } from "@/lib/api-handler";
 import { track, EVENTS } from "@/lib/analytics";
+import { writeLeadEvent } from "@/lib/lead-events";
 import { z } from "zod";
 
 interface Params { params: { orgId: string } }
@@ -138,6 +139,17 @@ async function handler(req: NextRequest, { params }: Params) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   const p = payment as { id: string };
+
+  // ── Write lead event (non-fatal) ──────────────────────────────
+  void writeLeadEvent({
+    orgId:      params.orgId,
+    leadId:     lead_id,
+    eventType:  "payment_created",
+    entityType: "payment",
+    entityId:   p.id,
+    title:      `Payment link created — ₹${amount_inr.toLocaleString("en-IN")}`,
+    metadata:   { amount_inr, description, method: linkMethod },
+  });
 
   // ── Insert payment link message into thread synchronously ────────
   try {

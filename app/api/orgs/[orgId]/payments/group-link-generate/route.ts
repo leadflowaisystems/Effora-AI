@@ -11,6 +11,7 @@ import { getOrCreateConversation, deliverOutboundMessage } from "@/lib/conversat
 import { createPaymentLink } from "@/lib/razorpay";
 import { getLeadFirstName } from "@/lib/leads";
 import { inngest } from "@/lib/inngest/client";
+import { writeLeadEvent } from "@/lib/lead-events";
 
 interface Params { params: { orgId: string } }
 
@@ -161,6 +162,17 @@ export async function POST(req: NextRequest, { params }: Params) {
         results.push({ lead_id: lead.id, ok: false, error: errMsg });
         continue;
       }
+
+      // Write lead event (non-fatal)
+      void writeLeadEvent({
+        orgId:      params.orgId,
+        leadId:     lead.id,
+        eventType:  "payment_created",
+        entityType: "payment",
+        entityId:   (payment as { id: string }).id,
+        title:      `Payment link created — ₹${amount_inr.toLocaleString("en-IN")} (group)`,
+        metadata:   { amount_inr, description },
+      });
 
       // Write to inbox conversation and deliver to real channel
       const fullName = lead.name ?? "there";

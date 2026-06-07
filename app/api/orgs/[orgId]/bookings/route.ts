@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { inngest } from "@/lib/inngest/client";
+import { writeLeadEvent } from "@/lib/lead-events";
 
 interface Params { params: { orgId: string } }
 
@@ -92,6 +93,11 @@ export async function POST(req: NextRequest, { params }: Params) {
     await svc.from("bookings").update({
       status: "completed", updated_at: now,
     }).eq("id", bookingId);
+    void writeLeadEvent({
+      orgId: params.orgId, leadId: bk.lead_id,
+      eventType: "booking_completed", entityType: "booking", entityId: bk.id,
+      title: "Meeting marked as done",
+    });
     return NextResponse.json({ ok: true });
   }
 
@@ -99,6 +105,11 @@ export async function POST(req: NextRequest, { params }: Params) {
   await svc.from("bookings").update({
     status: "no_show", updated_at: now,
   }).eq("id", bookingId);
+  void writeLeadEvent({
+    orgId: params.orgId, leadId: bk.lead_id,
+    eventType: "booking_no_show", entityType: "booking", entityId: bk.id,
+    title: "Marked as no-show",
+  });
 
   await inngest.send({
     name: "booking.no_show",
