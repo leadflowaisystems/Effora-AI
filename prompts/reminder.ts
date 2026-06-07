@@ -18,7 +18,9 @@ export interface ReminderParams {
 
 export function build24hReminder(p: ReminderParams): string {
   const name  = firstName(p.leadName);
-  const offer = p.coachOffer?.trim() || "our upcoming session";
+  // Strip any accidental leading "our " from the stored offer so the template
+  // "our ${offer}" never produces "our our ...".
+  const offer = (p.coachOffer?.trim() || "upcoming session").replace(/^our\s+/i, "");
 
   const lines = [
     `Hey${name}! Just a quick heads-up — our ${offer} is coming up soon.`,
@@ -36,7 +38,7 @@ export function build24hReminder(p: ReminderParams): string {
 
 export function build1hReminder(p: ReminderParams): string {
   const name  = firstName(p.leadName);
-  const offer = p.coachOffer?.trim() || "our call";
+  const offer = (p.coachOffer?.trim() || "call").replace(/^our\s+/i, "");
 
   const lines = [`Hey${name}! Our ${offer} is coming up in about an hour ⏰`];
 

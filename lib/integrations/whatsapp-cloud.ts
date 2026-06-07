@@ -23,12 +23,17 @@ export async function sendWhatsAppMessage(
   text:           string,
 ): Promise<{ provider_message_id: string }> {
   const config = await loadWhatsAppConfig(orgId);
+  const rawToken = decryptSecret(config.access_token_enc);
+
+  // DIAGNOSTIC — log token fingerprint immediately before the Meta send call.
+  // Compare these values against those from Settings save + wa-send-test endpoint.
+  console.log(`[wa-send] CREDENTIAL FINGERPRINT org=${orgId} tokenPrefix="${rawToken.slice(0, 12)}" tokenSuffix="${rawToken.slice(-8)}" tokenLength=${rawToken.length} phoneNumberId="${config.phone_number_id}" wabaId="${config.waba_id}" graphVersion="${GRAPH.split("/").pop()}" recipient="${recipientPhone}"`);
 
   const res = await fetch(`${GRAPH}/${config.phone_number_id}/messages`, {
     method:  "POST",
     headers: {
       "Content-Type":  "application/json",
-      "Authorization": `Bearer ${decryptSecret(config.access_token_enc)}`,
+      "Authorization": `Bearer ${rawToken}`,
     },
     body: JSON.stringify({
       messaging_product: "whatsapp",
@@ -40,10 +45,13 @@ export async function sendWhatsAppMessage(
   });
 
   if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`WhatsApp send failed: ${err}`);
+    const errBody = await res.text();
+    // Log the HTTP status + full error body so it appears in Vercel logs
+    console.error(`[wa-send] META SEND FAILED org=${orgId} phoneNumberId="${config.phone_number_id}" http_status=${res.status} error_body=${errBody}`);
+    throw new Error(`WhatsApp send failed: ${errBody}`);
   }
   const data = await res.json() as { messages: Array<{ id: string }> };
+  console.log(`[wa-send] META SEND OK org=${orgId} provider_message_id="${data.messages?.[0]?.id ?? ""}"`);
   return { provider_message_id: data.messages?.[0]?.id ?? "" };
 }
 
