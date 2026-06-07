@@ -7,9 +7,21 @@
  *   1. Header   — identity, stage, score, contact, LTV, quick actions
  *   2. Activity timeline — messages + bookings + payments merged chronologically
  *   3. Bookings — all bookings with status + permanent delete
- *   4. Payments — all payments with totals + permanent delete
+ *   4. Payments — all payments with totals + two delete modes
  *   5. Notes    — inline notes editing
  *   6. Conversations — chat thread links
+ *
+ * Payment deletion has two distinct modes:
+ *
+ *   "Delete Record"  (?mode=archive)
+ *     → CRM-visibility cleanup only. Payment and its timeline events are
+ *       soft-deleted (hidden from UI). Revenue / dashboard / reports are
+ *       UNAFFECTED because the stats endpoint ignores deleted_at.
+ *
+ *   "Delete Payment"  (?mode=hard)
+ *     → Permanent financial deletion. Row removed from DB.
+ *       Paid payments reduce collected revenue; pending reduce pending totals.
+ *       Requires explicit confirmation with a destructive warning.
  */
 
 import * as React from "react";
@@ -118,15 +130,15 @@ function Section({ title, icon: Icon, children, defaultOpen = true }: {
 /* ── Confirm Delete Modal ────────────────────────────────────────────────────── */
 
 interface ConfirmDeleteProps {
-  title:       string;
-  description: string;
-  onConfirm:   () => void;
-  onCancel:    () => void;
-  loading:     boolean;
+  title:         string;
+  warning:       string;       // financial impact line
+  description:   string;       // secondary clarification
+  onConfirm:     () => void;
+  onCancel:      () => void;
+  loading:       boolean;
 }
 
-function ConfirmDeleteModal({ title, description, onConfirm, onCancel, loading }: ConfirmDeleteProps) {
-  // Close on Escape
+function ConfirmDeleteModal({ title, warning, description, onConfirm, onCancel, loading }: ConfirmDeleteProps) {
   React.useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === "Escape" && !loading) onCancel(); };
     window.addEventListener("keydown", handler);
@@ -135,37 +147,29 @@ function ConfirmDeleteModal({ title, description, onConfirm, onCancel, loading }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-        onClick={() => { if (!loading) onCancel(); }}
-      />
-      {/* Dialog */}
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => { if (!loading) onCancel(); }} />
       <div className="relative z-10 w-full max-w-sm mx-4 rounded-[var(--radius-lg)] border border-red-500/30 bg-[var(--bg-1)] shadow-2xl p-6 space-y-4">
         <div className="flex items-start gap-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-500/15">
             <Trash2 className="h-4 w-4 text-red-400" />
           </div>
-          <div>
+          <div className="space-y-1">
             <p className="font-display text-sm font-semibold text-[var(--text)]">{title}</p>
-            <p className="text-xs text-[var(--text-3)] mt-1 leading-relaxed">{description}</p>
+            {warning && (
+              <p className="text-xs font-medium text-red-400 leading-relaxed">{warning}</p>
+            )}
+            <p className="text-xs text-[var(--text-3)] leading-relaxed">{description}</p>
           </div>
         </div>
         <div className="flex gap-2 justify-end">
-          <button
-            onClick={onCancel}
-            disabled={loading}
-            className="rounded-[var(--radius-sm)] border border-[var(--border)] px-4 py-2 text-xs font-medium text-[var(--text-2)] hover:bg-[var(--bg-3)] transition-colors disabled:opacity-50"
-          >
+          <button onClick={onCancel} disabled={loading}
+            className="rounded-[var(--radius-sm)] border border-[var(--border)] px-4 py-2 text-xs font-medium text-[var(--text-2)] hover:bg-[var(--bg-3)] transition-colors disabled:opacity-50">
             Cancel
           </button>
-          <button
-            onClick={onConfirm}
-            disabled={loading}
-            className="rounded-[var(--radius-sm)] bg-red-500 px-4 py-2 text-xs font-semibold text-white hover:bg-red-600 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-          >
+          <button onClick={onConfirm} disabled={loading}
+            className="rounded-[var(--radius-sm)] bg-red-500 px-4 py-2 text-xs font-semibold text-white hover:bg-red-600 transition-colors disabled:opacity-50 flex items-center gap-1.5">
             {loading && <Loader2 className="h-3 w-3 animate-spin" />}
-            Delete permanently
+            Delete Permanently
           </button>
         </div>
       </div>
@@ -269,10 +273,23 @@ export function LeadDetail({ lead, conversations, bookings: initialBookings, pay
   const [bookings, setBookings]   = React.useState<Booking[]>(initialBookings);
   const [payments, setPayments]   = React.useState<Payment[]>(initialPayments);
 
-  // Confirm-delete modal state
-  type DeleteTarget = { kind: "booking"; id: string; label: string } | { kind: "payment"; id: string; label: string } | null;
-  const [deleteTarget,  setDeleteTarget]  = React.useState<DeleteTarget>(null);
-  const [deleteLoading, setDeleteLoading] = React.useState(false);
+  // ── Booking delete (hard only — bookings have a single delete action) ───
+  type BookingDeleteTarget = { kind: "booking"; id: string; label: string };
+  const [bookingDeleteTarget,  setBookingDeleteTarget]  = React.useState<BookingDeleteTarget | null>(null);
+  const [bookingDeleteLoading, setBookingDeleteLoading] = React.useState(false);
+
+  // ── Payment delete — two distinct modes ──────────────────────────────────
+  // "Delete Record"  (?mode=archive): CRM cleanup, revenue UNCHANGED
+  // "Delete Payment" (?mode=hard):    Financial destruction, revenue CHANGES
+  type PaymentDeleteTarget = {
+    id:        string;
+    label:     string;
+    amountInr: number;
+    status:    string;           // "paid" | "pending" | …
+    mode:      "archive" | "hard";
+  };
+  const [paymentDeleteTarget,  setPaymentDeleteTarget]  = React.useState<PaymentDeleteTarget | null>(null);
+  const [paymentDeleteLoading, setPaymentDeleteLoading] = React.useState(false);
 
   async function deleteEvent(eventId: string) {
     if (!confirm("Delete this history event permanently?")) return;
@@ -286,35 +303,71 @@ export function LeadDetail({ lead, conversations, bookings: initialBookings, pay
     }
   }
 
-  async function confirmDelete() {
-    if (!deleteTarget) return;
-    setDeleteLoading(true);
+  // ── Confirm booking hard-delete ─────────────────────────────────────────
+  async function confirmBookingDelete() {
+    if (!bookingDeleteTarget) return;
+    setBookingDeleteLoading(true);
     try {
-      const url = deleteTarget.kind === "booking"
-        ? `/api/orgs/${orgId}/bookings/${deleteTarget.id}?mode=hard`
-        : `/api/orgs/${orgId}/payments/${deleteTarget.id}?mode=hard`;
-
-      const res = await fetch(url, { method: "DELETE" });
+      const res = await fetch(`/api/orgs/${orgId}/bookings/${bookingDeleteTarget.id}?mode=hard`, { method: "DELETE" });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         toast({ title: "Delete failed", description: (body as { error?: string }).error ?? "Unknown error", variant: "destructive" });
         return;
       }
-
-      if (deleteTarget.kind === "booking") {
-        setBookings((prev) => prev.filter((b) => b.id !== deleteTarget.id));
-        // Remove timeline events tied to this booking
-        setEvents((prev) => prev.filter((e) => !(e.entity_type === "booking" && e.entity_id === deleteTarget.id)));
-      } else {
-        setPayments((prev) => prev.filter((p) => p.id !== deleteTarget.id));
-        // Remove timeline events tied to this payment
-        setEvents((prev) => prev.filter((e) => !(e.entity_type === "payment" && e.entity_id === deleteTarget.id)));
-      }
-
-      toast({ title: `${deleteTarget.kind === "booking" ? "Booking" : "Payment"} permanently deleted`, variant: "success" });
-      setDeleteTarget(null);
+      setBookings((prev) => prev.filter((b) => b.id !== bookingDeleteTarget.id));
+      setEvents((prev) => prev.filter((e) => !(e.entity_type === "booking" && e.entity_id === bookingDeleteTarget.id)));
+      toast({ title: "Booking permanently deleted", variant: "success" });
+      setBookingDeleteTarget(null);
     } finally {
-      setDeleteLoading(false);
+      setBookingDeleteLoading(false);
+    }
+  }
+
+  // ── Payment: "Delete Record" (archive, no modal needed) ─────────────────
+  // CRM cleanup only — revenue totals unchanged (stats endpoint ignores deleted_at).
+  async function archivePayment(paymentId: string) {
+    if (!confirm("Remove this payment from lead history?\n\nThe payment will no longer appear here, but collected revenue and dashboard totals will remain unchanged.")) return;
+    try {
+      const res = await fetch(`/api/orgs/${orgId}/payments/${paymentId}?mode=archive`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        toast({ title: "Failed to remove record", description: (body as { error?: string }).error ?? "Unknown error", variant: "destructive" });
+        return;
+      }
+      // Remove from local state + clear timeline events
+      setPayments((prev) => prev.filter((p) => p.id !== paymentId));
+      setEvents((prev) => prev.filter((e) => !(e.entity_type === "payment" && e.entity_id === paymentId)));
+      toast({ title: "Payment record removed from history", description: "Revenue totals are unchanged.", variant: "success" });
+    } catch {
+      toast({ title: "Failed to remove record", variant: "destructive" });
+    }
+  }
+
+  // ── Payment: "Delete Payment" (hard, requires modal confirmation) ────────
+  // Destroys the row — financial totals change.
+  async function confirmPaymentDelete() {
+    if (!paymentDeleteTarget) return;
+    setPaymentDeleteLoading(true);
+    try {
+      const res = await fetch(`/api/orgs/${orgId}/payments/${paymentDeleteTarget.id}?mode=hard`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        toast({ title: "Delete failed", description: (body as { error?: string }).error ?? "Unknown error", variant: "destructive" });
+        return;
+      }
+      setPayments((prev) => prev.filter((p) => p.id !== paymentDeleteTarget.id));
+      setEvents((prev) => prev.filter((e) => !(e.entity_type === "payment" && e.entity_id === paymentDeleteTarget.id)));
+      const amtStr = `₹${paymentDeleteTarget.amountInr.toLocaleString("en-IN")}`;
+      toast({
+        title:       "Payment permanently deleted",
+        description: paymentDeleteTarget.status === "paid"
+          ? `Collected revenue reduced by ${amtStr}.`
+          : `Pending total reduced by ${amtStr}.`,
+        variant: "success",
+      });
+      setPaymentDeleteTarget(null);
+    } finally {
+      setPaymentDeleteLoading(false);
     }
   }
 
@@ -353,14 +406,31 @@ export function LeadDetail({ lead, conversations, bookings: initialBookings, pay
 
   return (
     <div className="space-y-6 max-w-3xl pb-16">
-      {/* Confirm-delete modal */}
-      {deleteTarget && (
+      {/* Booking hard-delete confirmation */}
+      {bookingDeleteTarget && (
         <ConfirmDeleteModal
-          title={`Delete this ${deleteTarget.kind}?`}
-          description={`"${deleteTarget.label}" will be permanently removed — this cannot be undone. Associated history events will also be cleared.`}
-          onConfirm={confirmDelete}
-          onCancel={() => { if (!deleteLoading) setDeleteTarget(null); }}
-          loading={deleteLoading}
+          title="Delete this booking?"
+          warning=""
+          description={`"${bookingDeleteTarget.label}" will be permanently removed and cannot be recovered. Associated timeline events will also be cleared.`}
+          onConfirm={confirmBookingDelete}
+          onCancel={() => { if (!bookingDeleteLoading) setBookingDeleteTarget(null); }}
+          loading={bookingDeleteLoading}
+        />
+      )}
+
+      {/* Payment hard-delete confirmation */}
+      {paymentDeleteTarget && (
+        <ConfirmDeleteModal
+          title="Delete payment permanently?"
+          warning={
+            paymentDeleteTarget.status === "paid"
+              ? `This will reduce your collected revenue by ₹${paymentDeleteTarget.amountInr.toLocaleString("en-IN")}.`
+              : `This will remove ₹${paymentDeleteTarget.amountInr.toLocaleString("en-IN")} from your pending totals.`
+          }
+          description="The payment record and all associated history events will be permanently removed. This cannot be undone."
+          onConfirm={confirmPaymentDelete}
+          onCancel={() => { if (!paymentDeleteLoading) setPaymentDeleteTarget(null); }}
+          loading={paymentDeleteLoading}
         />
       )}
 
@@ -529,7 +599,7 @@ export function LeadDetail({ lead, conversations, bookings: initialBookings, pay
                     </a>
                   )}
                   <button
-                    onClick={() => setDeleteTarget({ kind: "booking", id: b.id, label: b.attendee_name ?? fmtDate(b.starts_at) ?? "this booking" })}
+                    onClick={() => setBookingDeleteTarget({ kind: "booking", id: b.id, label: b.attendee_name ?? fmtDate(b.starts_at) ?? "this booking" })}
                     className="opacity-0 group-hover:opacity-100 transition-opacity text-[var(--text-3)] hover:text-red-400 p-1"
                     title="Delete this booking permanently"
                   >
@@ -546,7 +616,8 @@ export function LeadDetail({ lead, conversations, bookings: initialBookings, pay
       <Section title={`Payments (${payments.length})`} icon={CreditCard}>
         <div className="pt-3 space-y-3">
           {payments.length === 0 && <p className="text-sm text-[var(--text-3)] py-2">No payments.</p>}
-          {/* LTV summary */}
+
+          {/* LTV summary (uses local state — reflects visible records) */}
           {payments.length > 0 && (
             <div className="flex items-center gap-4 rounded-[var(--radius-sm)] bg-[var(--brand)]/5 border border-[var(--brand)]/15 px-4 py-2.5">
               <div>
@@ -561,36 +632,96 @@ export function LeadDetail({ lead, conversations, bookings: initialBookings, pay
               </div>
             </div>
           )}
+
           {payments.map((p) => (
             <div key={p.id} className="group rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-3)] p-4 flex items-start gap-3">
-              <div className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-full", p.status === "paid" ? "bg-[var(--brand)]/15" : "bg-amber-500/10")}>
+              {/* Status icon */}
+              <div className={cn(
+                "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
+                p.status === "paid" ? "bg-[var(--brand)]/15" : "bg-amber-500/10"
+              )}>
                 <CreditCard className={cn("h-4 w-4", p.status === "paid" ? "text-[var(--brand)]" : "text-amber-400")} />
               </div>
+
+              {/* Payment info */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-mono text-sm font-semibold text-[var(--text)]">{formatInr(p.amount_inr)}</span>
-                  <span className={cn("text-xs font-medium", p.status === "paid" ? "text-[var(--brand)]" : "text-amber-400")}>{p.status}</span>
-                  {p.deleted_at && <span className="text-[11px] text-[var(--text-3)] italic">(archived)</span>}
+                  <span className={cn("text-xs font-medium", p.status === "paid" ? "text-[var(--brand)]" : "text-amber-400")}>
+                    {p.status}
+                  </span>
                 </div>
                 <p className="text-xs text-[var(--text-3)]">{fmtDate(p.created_at)}</p>
                 {p.notes && <p className="text-xs text-[var(--text-3)] mt-0.5">{p.notes}</p>}
               </div>
+
+              {/* Actions */}
               <div className="flex items-center gap-2 shrink-0">
+                {/* Payment link */}
                 {p.payment_link_url && (
-                  <a href={p.payment_link_url} target="_blank" rel="noopener noreferrer" className="text-xs text-[var(--brand)] hover:underline flex items-center gap-1">
+                  <a href={p.payment_link_url} target="_blank" rel="noopener noreferrer"
+                    className="text-xs text-[var(--brand)] hover:underline flex items-center gap-1">
                     <ExternalLink className="h-3 w-3" /> Link
                   </a>
                 )}
-                <button
-                  onClick={() => setDeleteTarget({ kind: "payment", id: p.id, label: `₹${p.amount_inr.toLocaleString("en-IN")} — ${p.notes ?? p.status}` })}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity text-[var(--text-3)] hover:text-red-400 p-1"
-                  title="Delete this payment permanently"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+
+                {/*
+                  Two delete actions — visible on hover.
+                  Both are clearly labelled to avoid confusion.
+                */}
+                <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  {/*
+                    DELETE RECORD — CRM cleanup only.
+                    Hides this payment from lead history.
+                    Revenue totals / dashboard metrics are NOT affected.
+                  */}
+                  <button
+                    onClick={() => archivePayment(p.id)}
+                    title="Delete Record — removes from lead history only. Revenue totals unchanged."
+                    className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-2)] px-2 py-1 text-[10px] font-medium text-[var(--text-3)] hover:text-[var(--text-2)] hover:border-[var(--text-3)] transition-colors"
+                  >
+                    <Trash2 className="h-2.5 w-2.5" />
+                    Delete Record
+                  </button>
+
+                  {/*
+                    DELETE PAYMENT — financial destruction.
+                    Permanently removes the payment row from the database.
+                    Paid → collected revenue DECREASES.
+                    Pending → pending total DECREASES.
+                    Requires confirmation modal.
+                  */}
+                  <button
+                    onClick={() => setPaymentDeleteTarget({
+                      id:        p.id,
+                      label:     `₹${p.amount_inr.toLocaleString("en-IN")} — ${p.notes ?? p.status}`,
+                      amountInr: p.amount_inr,
+                      status:    p.status,
+                      mode:      "hard",
+                    })}
+                    title="Delete Payment — permanently removes financial record. Affects revenue totals."
+                    className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-red-500/30 bg-red-500/5 px-2 py-1 text-[10px] font-medium text-red-400 hover:bg-red-500/15 hover:border-red-500/60 transition-colors"
+                  >
+                    <Trash2 className="h-2.5 w-2.5" />
+                    Delete Payment
+                  </button>
+                </div>
               </div>
             </div>
           ))}
+
+          {/* Legend — only shown when there are payments, helps users understand the two actions */}
+          {payments.length > 0 && (
+            <div className="rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-3)] px-3 py-2.5 space-y-1">
+              <p className="text-[10px] font-semibold text-[var(--text-3)] uppercase tracking-wide">About these actions</p>
+              <p className="text-[11px] text-[var(--text-3)] leading-relaxed">
+                <span className="font-medium text-[var(--text-2)]">Delete Record</span> — hides from history only. Revenue &amp; dashboard totals unchanged.
+              </p>
+              <p className="text-[11px] text-[var(--text-3)] leading-relaxed">
+                <span className="font-medium text-red-400">Delete Payment</span> — permanently removes financial data. Affects collected / pending totals.
+              </p>
+            </div>
+          )}
         </div>
       </Section>
 
