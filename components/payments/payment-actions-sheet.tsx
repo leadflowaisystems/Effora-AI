@@ -83,6 +83,8 @@ export function PaymentActionsSheet({ orgId, leads, groups = [], onDone }: Props
   const [rMethod,         setRMethod]         = React.useState<"razorpay" | "upi">("razorpay");
   const [rCustomUrl,      setRCustomUrl]      = React.useState("");
   const [rCustomMessage,  setRCustomMessage]  = React.useState("");
+  const [rSchedule,       setRSchedule]       = React.useState(false);
+  const [rScheduleAt,     setRScheduleAt]     = React.useState("");
 
   // Mark form state
   const [mLead,   setMLead]   = React.useState("");
@@ -133,8 +135,9 @@ export function PaymentActionsSheet({ orgId, leads, groups = [], onDone }: Props
             amount_inr:     Number(rAmount),
             description:    rDesc,
             method:         rMethod,
-            custom_url:     rCustomUrl    || undefined,
+            custom_url:     rCustomUrl     || undefined,
             custom_message: rCustomMessage || undefined,
+            scheduled_at:   rSchedule && rScheduleAt ? new Date(rScheduleAt).toISOString() : undefined,
           }),
         });
         const data = await res.json();
@@ -267,6 +270,22 @@ export function PaymentActionsSheet({ orgId, leads, groups = [], onDone }: Props
                 className={inputCls}
                 style={{ resize: "none" }}
               />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={rSchedule} onChange={(e) => setRSchedule(e.target.checked)} className="rounded" />
+                <span className="text-xs font-medium text-[var(--text-2)]">Schedule for later</span>
+              </label>
+              {rSchedule && (
+                <input
+                  type="datetime-local"
+                  value={rScheduleAt}
+                  onChange={(e) => setRScheduleAt(e.target.value)}
+                  min={new Date().toISOString().slice(0, 16)}
+                  className={inputCls}
+                />
+              )}
             </div>
 
             <div className="space-y-1.5">

@@ -35,6 +35,7 @@ const Schema = z.object({
   method:         z.enum(["razorpay", "upi", "auto"]).default("auto"),
   custom_url:     z.string().url().optional().or(z.literal("")),
   custom_message: z.string().max(2000).optional(),
+  scheduled_at:   z.string().datetime({ offset: true }).optional(),
 });
 
 async function handler(req: NextRequest, { params }: Params) {
@@ -45,7 +46,7 @@ async function handler(req: NextRequest, { params }: Params) {
   const parsed = Schema.safeParse(raw);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message }, { status: 400 });
 
-  const { lead_id, amount_inr, description, method, custom_url, custom_message } = parsed.data;
+  const { lead_id, amount_inr, description, method, custom_url, custom_message, scheduled_at } = parsed.data;
   const now = new Date().toISOString();
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -133,6 +134,7 @@ async function handler(req: NextRequest, { params }: Params) {
     source:           linkMethod,
     custom_message:   custom_message?.trim() || null,
     conversation_id:  conversationId,
+    scheduled_at:     scheduled_at ?? null,
     created_at:       now,
     updated_at:       now,
   }).select("id").single();
@@ -151,6 +153,11 @@ async function handler(req: NextRequest, { params }: Params) {
     metadata:   { amount_inr, description, method: linkMethod },
   });
 
+  // Skip delivery for scheduled payments — will be sent at scheduled_at time
+  if (scheduled_at && new Date(scheduled_at) > new Date()) {
+    return NextResponse.json({ payment_id: p.id, link_url: linkUrl, method: linkMethod, conversation_id: conversationId, scheduled: true });
+  }
+
   // ── Insert payment link message into thread synchronously ────────
   try {
     let msgContent: string;
@@ -163,6 +170,10 @@ async function handler(req: NextRequest, { params }: Params) {
         .replace(/\{\{amount\}\}/gi,      amtStr)
         .replace(/\{\{description\}\}/gi, description)
         .replace(/\{\{link\}\}/gi,        linkUrl);
+      // Always include the payment URL — append it if {{link}} wasn't in the template
+      if (linkUrl && !/\{\{link\}\}/i.test(custom_message)) {
+        msgContent = `${msgContent}\n\n${linkUrl}`;
+      }
     } else {
       const aiResult = await generatePaymentLinkMessage({
         leadFirstName: firstName,
