@@ -30,7 +30,7 @@ export const onWeeklyScorecard = inngest.createFunction(
         const [commitsRes, bookingsRes, paymentsRes, leadsRes] = await Promise.all([
           svc.from("coach_commitments").select("status").eq("org_id", org.id).gte("due_date", weekStartStr),
           svc.from("bookings").select("id", { count: "exact", head: true }).eq("org_id", org.id).gte("created_at", weekStartFull),
-          svc.from("payments").select("amount_inr").eq("org_id", org.id).eq("status", "paid").gte("updated_at", weekStartFull),
+          svc.from("payments").select("amount_inr").eq("org_id", org.id).eq("status", "paid").is("deleted_at", null).gte("updated_at", weekStartFull),
           svc.from("leads").select("id", { count: "exact", head: true }).eq("org_id", org.id).gte("created_at", weekStartFull),
         ]);
 

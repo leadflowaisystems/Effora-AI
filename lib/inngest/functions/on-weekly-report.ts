@@ -77,8 +77,8 @@ export const onWeeklyReport = inngest.createFunction(
           svc.from("messages").select("id", { count: "exact", head: true }).eq("org_id", org.id).eq("direction", "outbound").gte("sent_at", weekAgo),
           svc.from("bookings").select("id", { count: "exact", head: true }).eq("org_id", org.id).eq("status", "confirmed").gte("created_at", weekAgo),
           svc.from("bookings").select("id", { count: "exact", head: true }).eq("org_id", org.id).eq("status", "completed").gte("updated_at", weekAgo),
-          svc.from("payments").select("amount_inr").eq("org_id", org.id).eq("status", "paid").gte("updated_at", weekAgo),
-          svc.from("payments").select("amount_inr").eq("org_id", org.id).eq("status", "paid").gte("updated_at", twoWAgo).lt("updated_at", weekAgo),
+          svc.from("payments").select("amount_inr").eq("org_id", org.id).eq("status", "paid").is("deleted_at", null).gte("updated_at", weekAgo),
+          svc.from("payments").select("amount_inr").eq("org_id", org.id).eq("status", "paid").is("deleted_at", null).gte("updated_at", twoWAgo).lt("updated_at", weekAgo),
           svc.from("org_members").select("user_id").eq("org_id", org.id).eq("role", "owner").single(),
         ]);
 
@@ -114,7 +114,7 @@ export const onWeeklyReport = inngest.createFunction(
         // Check for unpaid payments > 48h
         const { count: unpaidCount } = await svc.from("payments")
           .select("id", { count: "exact", head: true })
-          .eq("org_id", org.id).eq("status", "pending")
+          .eq("org_id", org.id).eq("status", "pending").is("deleted_at", null)
           .lt("created_at", new Date(Date.now() - 48 * 3600000).toISOString());
         if ((unpaidCount ?? 0) > 0) gaps.push(`${unpaidCount} payment link${(unpaidCount ?? 0) !== 1 ? "s" : ""} unpaid for 48h+`);
 

@@ -54,7 +54,7 @@ export default async function TrendsPage({ params }: Props) {
   const [leadsRes, bookingsRes, paymentsRes] = await Promise.all([
     svc.from("leads").select("created_at, source, stage").eq("org_id", org.id).gte("created_at", since).limit(2000),
     svc.from("bookings").select("created_at, status, starts_at").eq("org_id", org.id).gte("created_at", since).limit(1000),
-    svc.from("payments").select("created_at, status, amount_inr").eq("org_id", org.id).gte("created_at", since).limit(1000),
+    svc.from("payments").select("created_at, status, amount_inr").eq("org_id", org.id).is("deleted_at", null).gte("created_at", since).limit(1000),
   ]);
 
   return (

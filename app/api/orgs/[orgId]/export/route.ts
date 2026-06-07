@@ -49,7 +49,7 @@ export async function POST(req: NextRequest, { params }: Params) {
   // Fetch all org data in parallel
   const [leadsRes, paymentsRes, bookingsRes, convsRes] = await Promise.all([
     s.from("leads").select("id,name,external_id,channel,stage,score,tags,notes,ltv_inr,created_at").eq("org_id", params.orgId).is("deleted_at", null),
-    s.from("payments").select("id,lead_id,amount_inr,status,due_date,paid_at,note,created_at").eq("org_id", params.orgId),
+    s.from("payments").select("id,lead_id,amount_inr,status,due_date,paid_at,note,created_at").eq("org_id", params.orgId).is("deleted_at", null),
     s.from("bookings").select("id,lead_id,event_type,start_time,end_time,status,note,created_at").eq("org_id", params.orgId),
     s.from("conversations").select("id,lead_id,channel,created_at").eq("org_id", params.orgId).limit(5000),
   ]);

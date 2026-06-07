@@ -47,6 +47,7 @@ export async function GET(req: NextRequest, { params }: Params) {
     svc.from("payments")
        .select("id,amount_inr,status,payment_link_url,notes,created_at,updated_at")
        .eq("lead_id", params.leadId).eq("org_id", params.orgId)
+       .is("deleted_at", null)
        .order("created_at", { ascending: false }),
   ]);
 

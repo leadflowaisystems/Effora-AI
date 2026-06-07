@@ -18,7 +18,7 @@ export async function detectMilestones(orgId: string): Promise<Milestone[]> {
 
   const [leadsRes, paymentsRes, existingRes] = await Promise.all([
     svc.from("leads").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("deleted_at", null),
-    svc.from("payments").select("amount_inr").eq("org_id", orgId).eq("status", "paid"),
+    svc.from("payments").select("amount_inr").eq("org_id", orgId).eq("status", "paid").is("deleted_at", null),
     svc.from("milestones").select("type, value").eq("org_id", orgId),
   ]);
 

@@ -94,7 +94,7 @@ export const COPILOT_TOOLS: CopilotTool[] = [
       const [leadRes, bookingsRes, paymentsRes, convRes] = await Promise.all([
         svc.from("leads").select("*").eq("id", leadId).eq("org_id", orgId).single(),
         svc.from("bookings").select("id, status, starts_at, ends_at, meeting_url").eq("lead_id", leadId).order("starts_at", { ascending: false }).limit(5),
-        svc.from("payments").select("id, amount_inr, status, created_at").eq("lead_id", leadId).order("created_at", { ascending: false }).limit(5),
+        svc.from("payments").select("id, amount_inr, status, created_at").eq("lead_id", leadId).is("deleted_at", null).order("created_at", { ascending: false }).limit(5),
         svc.from("conversations").select("id, channel_provider, last_message_at").eq("lead_id", leadId).is("deleted_at", null).limit(1).single(),
       ]);
 
@@ -194,7 +194,7 @@ export const COPILOT_TOOLS: CopilotTool[] = [
       const limit = Math.min(Number(args.limit ?? 10), 20);
       let q = svc.from("payments")
         .select("id, amount_inr, status, created_at, updated_at, lead_id")
-        .eq("org_id", orgId)
+        .eq("org_id", orgId).is("deleted_at", null)
         .gte("created_at", from).lte("created_at", to)
         .order("created_at", { ascending: false }).limit(limit);
       if (args.status)  q = q.eq("status", args.status);
@@ -219,7 +219,7 @@ export const COPILOT_TOOLS: CopilotTool[] = [
     async execute(args, orgId, svc) {
       const { data } = await svc.from("payments")
         .select("amount_inr")
-        .eq("org_id", orgId).eq("status", "paid")
+        .eq("org_id", orgId).eq("status", "paid").is("deleted_at", null)
         .gte("updated_at", isoDate(String(args.from)))
         .lte("updated_at", isoDate(String(args.to)));
       const payments = (data ?? []) as { amount_inr: number }[];
@@ -251,8 +251,8 @@ export const COPILOT_TOOLS: CopilotTool[] = [
       const prev = prevBounds(curr);
 
       const [currPay, prevPay, currBooks, prevBooks, currLeads, prevLeads] = await Promise.all([
-        svc.from("payments").select("amount_inr").eq("org_id", orgId).eq("status", "paid").gte("updated_at", curr.from).lte("updated_at", curr.to),
-        svc.from("payments").select("amount_inr").eq("org_id", orgId).eq("status", "paid").gte("updated_at", prev.from).lte("updated_at", prev.to),
+        svc.from("payments").select("amount_inr").eq("org_id", orgId).eq("status", "paid").is("deleted_at", null).gte("updated_at", curr.from).lte("updated_at", curr.to),
+        svc.from("payments").select("amount_inr").eq("org_id", orgId).eq("status", "paid").is("deleted_at", null).gte("updated_at", prev.from).lte("updated_at", prev.to),
         svc.from("bookings").select("id", { count: "exact", head: true }).eq("org_id", orgId).gte("created_at", curr.from).lte("created_at", curr.to),
         svc.from("bookings").select("id", { count: "exact", head: true }).eq("org_id", orgId).gte("created_at", prev.from).lte("created_at", prev.to),
         svc.from("leads").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("deleted_at", null).gte("created_at", curr.from).lte("created_at", curr.to),
@@ -294,7 +294,7 @@ export const COPILOT_TOOLS: CopilotTool[] = [
       const [msgs, books, pays, newLeads] = await Promise.all([
         svc.from("messages").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("direction", "outbound").gte("sent_at", from).lte("sent_at", to),
         svc.from("bookings").select("id", { count: "exact", head: true }).eq("org_id", orgId).gte("created_at", from).lte("created_at", to),
-        svc.from("payments").select("amount_inr").eq("org_id", orgId).eq("status", "paid").gte("updated_at", from).lte("updated_at", to),
+        svc.from("payments").select("amount_inr").eq("org_id", orgId).eq("status", "paid").is("deleted_at", null).gte("updated_at", from).lte("updated_at", to),
         svc.from("leads").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("deleted_at", null).gte("created_at", from).lte("created_at", to),
       ]);
       const revenue = ((pays.data ?? []) as { amount_inr: number }[]).reduce((s, r) => s + r.amount_inr, 0);
@@ -328,7 +328,7 @@ export const COPILOT_TOOLS: CopilotTool[] = [
           .eq("org_id", orgId).gte("starts_at", todayStart).lte("starts_at", todayEnd.toISOString())
           .order("starts_at", { ascending: true }),
         svc.from("payments").select("id, amount_inr, lead_id, created_at")
-          .eq("org_id", orgId).eq("status", "pending")
+          .eq("org_id", orgId).eq("status", "pending").is("deleted_at", null)
           .lte("created_at", sevenDaysAgo).order("created_at", { ascending: true }).limit(10),
         svc.from("leads").select("id, name, external_id, stage, score, last_seen_at")
           .eq("org_id", orgId).is("deleted_at", null)
@@ -359,7 +359,7 @@ export const COPILOT_TOOLS: CopilotTool[] = [
         svc.from("leads").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("deleted_at", null).eq("stage", "hot"),
         svc.from("leads").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("deleted_at", null).eq("stage", "warm"),
         svc.from("leads").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("deleted_at", null).eq("stage", "cold"),
-        svc.from("payments").select("amount_inr").eq("org_id", orgId).eq("status", "pending"),
+        svc.from("payments").select("amount_inr").eq("org_id", orgId).eq("status", "pending").is("deleted_at", null),
         svc.from("bookings").select("id", { count: "exact", head: true }).eq("org_id", orgId)
           .gte("starts_at", new Date().toISOString()).eq("status", "confirmed"),
         svc.from("leads").select("stage").eq("org_id", orgId).is("deleted_at", null),
@@ -401,7 +401,7 @@ export const COPILOT_TOOLS: CopilotTool[] = [
       const [leadRes, convRes, payRes, bookRes] = await Promise.all([
         svc.from("leads").select("id, name, stage, score, ltv_inr, last_seen_at, created_at").eq("id", leadId).eq("org_id", orgId).single(),
         svc.from("conversations").select("id, last_message_at").eq("lead_id", leadId).is("deleted_at", null).order("last_message_at", { ascending: false }).limit(1).single(),
-        svc.from("payments").select("amount_inr, status").eq("lead_id", leadId),
+        svc.from("payments").select("amount_inr, status").eq("lead_id", leadId).is("deleted_at", null),
         svc.from("bookings").select("id, status").eq("lead_id", leadId),
       ]);
 

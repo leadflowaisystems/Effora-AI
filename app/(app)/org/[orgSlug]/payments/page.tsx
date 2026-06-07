@@ -50,6 +50,7 @@ export default async function PaymentsPage({ params }: Props) {
         lead:leads(id, name, avatar_url, stage, channel)
       `)
       .eq("org_id", org.id)
+      .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(100),
     svc
