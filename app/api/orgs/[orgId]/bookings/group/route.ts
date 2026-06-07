@@ -58,7 +58,13 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   // Fetch the org's Cal.com booking link once — used as fallback when no meeting_url is supplied.
   // This makes the UI placeholder "Leave blank to use Cal.com link" actually true.
-  const orgCalLink = await getCalLink(params.orgId).catch(() => null);
+  let orgCalLink: string | null = null;
+  try {
+    orgCalLink = await getCalLink(params.orgId);
+    console.log(`[bookings/group] DIAG orgCalLink="${orgCalLink}" meeting_url_from_body="${parsed.data.meeting_url ?? "(none)"}"`);
+  } catch (calErr) {
+    console.error("[bookings/group] DIAG getCalLink threw:", calErr);
+  }
 
   const rows = (members as Array<{ lead_id: string; lead: { id: string; name: string | null } }>).map((m) => ({
     org_id:         params.orgId,
@@ -100,42 +106,59 @@ export async function POST(req: NextRequest, { params }: Params) {
   const bookingConvMap = new Map<string, string>(); // bookingId → convId
 
   await Promise.allSettled(insertedList.map(async (b) => {
+    console.log(`[bookings/group] DIAG START lead_id=${b.lead_id} booking_id=${b.id}`);
     try {
       const fullName  = memberMap.get(b.lead_id) ?? "there";
       const firstName = fullName.split(/\s+/)[0];
       let msg: string;
+      let linkUsed: string | null = null;
+
       if (parsed.data.custom_message?.trim()) {
+        const linkForCustom = parsed.data.meeting_url?.trim() || orgCalLink || "";
+        linkUsed = linkForCustom || null;
         msg = parsed.data.custom_message
           .replace(/\{\{name\}\}/gi,       fullName)
           .replace(/\{\{first_name\}\}/gi, firstName)
           .replace(/\{\{date\}\}/gi,       dateStr)
           .replace(/\{\{time\}\}/gi,       timeStr)
-          .replace(/\{\{link\}\}/gi,       parsed.data.meeting_url ?? "");
+          .replace(/\{\{link\}\}/gi,       linkForCustom);
+        console.log(`[bookings/group] DIAG lead=${b.lead_id} path=custom_message link_used="${linkUsed}"`);
       } else {
         // Use explicitly-provided meeting_url, falling back to the org's Cal.com booking link.
         const linkForMsg = parsed.data.meeting_url?.trim() || orgCalLink || null;
+        linkUsed = linkForMsg;
         msg = [
           `Hi ${firstName}! Your class booking is confirmed.`,
           `📅 ${groupName} — ${dateStr} at ${timeStr}`,
           linkForMsg ? `🔗 Join here: ${linkForMsg}` : "",
           `See you there! 🙌`,
         ].filter(Boolean).join("\n");
+        console.log(`[bookings/group] DIAG lead=${b.lead_id} path=default_template meeting_url="${parsed.data.meeting_url ?? "(none)"}" orgCalLink="${orgCalLink ?? "(none)"}" link_used="${linkUsed ?? "(none)"}"`);
       }
 
-      const { data: leadRow } = await svcForConv.from("leads").select("channel").eq("id", b.lead_id).single();
+      console.log(`[bookings/group] DIAG lead=${b.lead_id} msg_first80="${msg.slice(0, 80).replace(/\n/g, "\\n")}"`);
+
+      const { data: leadRow, error: leadErr } = await svcForConv.from("leads").select("channel").eq("id", b.lead_id).single();
       const leadChannel = (leadRow as { channel: string } | null)?.channel ?? "manual";
+      console.log(`[bookings/group] DIAG lead=${b.lead_id} leadRow_channel="${leadChannel}" leadErr=${leadErr?.message ?? "none"}`);
+
       const provider =
         leadChannel === "whatsapp" || leadChannel === "whatsapp_cloud" ? "whatsapp_cloud" :
         leadChannel === "instagram" ? "meta_instagram" : "manual_crm";
 
+      console.log(`[bookings/group] DIAG lead=${b.lead_id} provider="${provider}"`);
+
       const convId = await getOrCreateConversation(params.orgId, b.lead_id, provider);
+      console.log(`[bookings/group] DIAG lead=${b.lead_id} conv_id="${convId}"`);
+
       // deliverOutboundMessage sends to real WA/IG channel AND stores to DB
-      const { delivered } = await deliverOutboundMessage(convId, params.orgId, msg, "group_booking");
+      const deliverResult = await deliverOutboundMessage(convId, params.orgId, msg, "group_booking");
       bookingConvMap.set(b.id, convId);
-      console.log(`[bookings/group] booking=${b.id} lead=${b.lead_id} conv=${convId} delivered=${delivered}`);
+      console.log(`[bookings/group] DIAG lead=${b.lead_id} delivered=${deliverResult.delivered} provider_msg_id="${deliverResult.provider_message_id ?? "null"}"`);
     } catch (e) {
-      console.warn("[bookings/group] inbox message failed for", b.lead_id, e);
+      console.error(`[bookings/group] DIAG EXCEPTION lead=${b.lead_id} error="${e instanceof Error ? e.message : String(e)}" stack="${e instanceof Error ? e.stack?.split("\n")[1]?.trim() : ""}"`);
     }
+    console.log(`[bookings/group] DIAG END lead_id=${b.lead_id}`);
   }));
 
   // 2. Also fire booking-created Inngest events (for 24h/1h reminders + email).

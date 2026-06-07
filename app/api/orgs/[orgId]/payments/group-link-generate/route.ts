@@ -75,6 +75,8 @@ export async function POST(req: NextRequest, { params }: Params) {
   const useRazorpay = method === "razorpay" || (method === "auto" && hasRazorpay);
   const useUpi      = method === "upi" || (method === "auto" && !hasRazorpay && hasUpi);
 
+  console.log(`[payments/group-link-generate] DIAG org="${org?.name}" upi_id="${org?.upi_id ?? "(none)"}" hasRazorpay=${hasRazorpay} hasUpi=${hasUpi} method="${method}" useRazorpay=${useRazorpay} useUpi=${useUpi} custom_url="${custom_url ?? "(none)"}" members=${members.length}`);
+
   if (!custom_url?.trim() && !useRazorpay && !useUpi) {
     return NextResponse.json({ error: "No payment method configured. Connect Razorpay or add a UPI ID in Settings › Payments." }, { status: 400 });
   }
@@ -88,6 +90,8 @@ export async function POST(req: NextRequest, { params }: Params) {
     const lead      = m.lead;
     const firstName = getLeadFirstName({ name: lead.name, external_id: lead.external_id ?? null });
 
+    console.log(`[payments/group-link-generate] DIAG START lead_id=${lead.id} lead_name="${lead.name}" lead_channel="${lead.channel}" external_id="${lead.external_id ?? "(none)"}"`);
+
     try {
       let linkUrl    = "";
       let linkMethod = "upi";
@@ -96,6 +100,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       if (custom_url?.trim()) {
         linkUrl    = custom_url.trim();
         linkMethod = "custom";
+        console.log(`[payments/group-link-generate] DIAG lead=${lead.id} link_path=custom_url linkUrl="${linkUrl}"`);
       } else {
         if (useRazorpay && hasRazorpay) {
           try {
@@ -107,7 +112,10 @@ export async function POST(req: NextRequest, { params }: Params) {
             });
             linkUrl    = result?.shortUrl ?? "";
             linkMethod = "razorpay";
-          } catch { /* fall through to UPI */ }
+            console.log(`[payments/group-link-generate] DIAG lead=${lead.id} link_path=razorpay linkUrl="${linkUrl}"`);
+          } catch (rzpErr) {
+            console.warn(`[payments/group-link-generate] DIAG lead=${lead.id} razorpay_failed="${rzpErr instanceof Error ? rzpErr.message : String(rzpErr)}" falling_through_to_upi`);
+          }
         }
 
         if (!linkUrl && useUpi && hasUpi) {
@@ -117,12 +125,16 @@ export async function POST(req: NextRequest, { params }: Params) {
           const tn = encodeURIComponent(description);
           linkUrl    = `upi://pay?pa=${pa}&pn=${pn}&am=${am}&tn=${tn}&cu=INR`;
           linkMethod = "upi";
+          console.log(`[payments/group-link-generate] DIAG lead=${lead.id} link_path=upi linkUrl="${linkUrl}"`);
+        }
+
+        if (!linkUrl) {
+          console.warn(`[payments/group-link-generate] DIAG lead=${lead.id} link_path=NONE linkUrl="" useRazorpay=${useRazorpay} hasRazorpay=${hasRazorpay} useUpi=${useUpi} hasUpi=${hasUpi}`);
         }
       }
 
-      // Create payment row.
-      // NOTE: "description" is NOT a column in the payments table — use notes instead.
-      const { data: payment, error: payErr } = await svc.from("payments").insert({
+      // Build payment insert payload — log every field
+      const paymentInsertPayload = {
         org_id:           params.orgId,
         lead_id:          lead.id,
         amount_inr,
@@ -136,11 +148,17 @@ export async function POST(req: NextRequest, { params }: Params) {
         custom_message:   custom_message?.trim() || null,
         created_at:       now,
         updated_at:       now,
-      }).select("id").single();
+      };
+      console.log(`[payments/group-link-generate] DIAG lead=${lead.id} payment_insert_payload=${JSON.stringify(paymentInsertPayload)}`);
+
+      const { data: payment, error: payErr } = await svc.from("payments").insert(paymentInsertPayload).select("id").single();
+
+      console.log(`[payments/group-link-generate] DIAG lead=${lead.id} payment_insert_result: data=${JSON.stringify(payment)} error=${JSON.stringify(payErr)}`);
 
       if (payErr || !payment) {
-        console.error("[payments/group-link-generate] payment insert failed for lead", lead.id, payErr?.message);
-        results.push({ lead_id: lead.id, ok: false, error: payErr?.message ?? "payment insert failed" });
+        const errMsg = payErr?.message ?? payErr?.details ?? payErr?.hint ?? "payment insert returned null — no error details";
+        console.error(`[payments/group-link-generate] DIAG lead=${lead.id} PAYMENT_INSERT_FAILED: code="${payErr?.code}" msg="${errMsg}" details="${payErr?.details ?? ""}" hint="${payErr?.hint ?? ""}"`);
+        results.push({ lead_id: lead.id, ok: false, error: errMsg });
         continue;
       }
 
@@ -162,21 +180,30 @@ export async function POST(req: NextRequest, { params }: Params) {
         lead.channel === "whatsapp" || lead.channel === "whatsapp_cloud" ? "whatsapp_cloud" :
         lead.channel === "instagram" ? "meta_instagram" : "manual_crm";
 
+      console.log(`[payments/group-link-generate] DIAG lead=${lead.id} provider="${provider}" msg_first80="${msg.slice(0, 80).replace(/\n/g, "\\n")}"`);
+
       const convId = await getOrCreateConversation(params.orgId, lead.id, provider);
+      console.log(`[payments/group-link-generate] DIAG lead=${lead.id} conv_id="${convId}"`);
+
       // Update payment row with conversation_id (safe to fail — non-critical)
       await svc.from("payments").update({ conversation_id: convId })
         .eq("id", (payment as { id: string }).id).catch(() => null);
+
       // deliverOutboundMessage: sends to real WA/IG channel AND stores to DB
-      const { delivered } = await deliverOutboundMessage(convId, params.orgId, msg, "group_payment_request");
-      console.log(`[payments/group-link-generate] lead=${lead.id} conv=${convId} delivered=${delivered} provider=${provider}`);
+      const deliverResult = await deliverOutboundMessage(convId, params.orgId, msg, "group_payment_request");
+      console.log(`[payments/group-link-generate] DIAG lead=${lead.id} delivered=${deliverResult.delivered} provider_msg_id="${deliverResult.provider_message_id ?? "null"}"`);
 
       successCount++;
       results.push({ lead_id: lead.id, ok: true, msg });
+      console.log(`[payments/group-link-generate] DIAG SUCCESS lead=${lead.id} successCount=${successCount}`);
     } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      console.error("[payments/group-link-generate] failed for lead", lead.id, errMsg);
+      const errMsg  = err instanceof Error ? err.message : String(err);
+      const stack1  = err instanceof Error ? (err.stack?.split("\n")[1]?.trim() ?? "") : "";
+      const stack2  = err instanceof Error ? (err.stack?.split("\n")[2]?.trim() ?? "") : "";
+      console.error(`[payments/group-link-generate] DIAG EXCEPTION lead=${lead.id} error="${errMsg}" at="${stack1}" via="${stack2}"`);
       results.push({ lead_id: lead.id, ok: false, error: errMsg });
     }
+    console.log(`[payments/group-link-generate] DIAG END lead=${lead.id}`);
   }
 
   // ── Fire Inngest fan-out for actual IG/WA API delivery ─────────────────────
