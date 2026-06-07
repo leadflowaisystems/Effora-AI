@@ -1,6 +1,14 @@
 /**
  * GET  /api/orgs/[orgId]/bookings/recurring  — list recurring booking templates
- * POST /api/orgs/[orgId]/bookings/recurring  — create recurring booking template
+ * POST /api/orgs/[orgId]/bookings/recurring  — create recurring booking template(s)
+ *
+ * POST body:
+ *   lead_id OR group_id (mutually exclusive, one required)
+ *   template_name, notes, recurrence_frequency
+ *   first_run_at  — optional ISO datetime; defaults to now.
+ *                    This becomes next_run_at on each created template.
+ *
+ * When group_id is provided, one template is created per active group member.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
@@ -41,11 +49,14 @@ export async function GET(_req: NextRequest, { params }: Params) {
 }
 
 const Schema = z.object({
-  lead_id:               z.string().uuid(),
+  lead_id:               z.string().uuid().optional(),
+  group_id:              z.string().uuid().optional(),
   template_name:         z.string().min(1).max(200),
   notes:                 z.string().max(1000).optional(),
   recurrence_frequency:  z.enum(["daily", "weekly", "monthly", "yearly"]),
   first_run_at:          z.string().datetime({ offset: true }).optional(),
+}).refine((d) => d.lead_id || d.group_id, {
+  message: "Provide either lead_id or group_id",
 });
 
 export async function POST(req: NextRequest, { params }: Params) {
@@ -56,39 +67,89 @@ export async function POST(req: NextRequest, { params }: Params) {
   const parsed = Schema.safeParse(raw);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message }, { status: 400 });
 
-  const { lead_id, template_name, notes, recurrence_frequency, first_run_at } = parsed.data;
+  const { lead_id, group_id, template_name, notes, recurrence_frequency, first_run_at } = parsed.data;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const svc = createServiceClient() as any;
-  const now = new Date().toISOString();
+  const now       = new Date().toISOString();
   const nextRunAt = first_run_at ?? now;
 
-  const { data: booking, error } = await svc.from("bookings").insert({
+  // ── Single-lead path ─────────────────────────────────────────────────────
+  if (lead_id) {
+    const { data: booking, error } = await svc.from("bookings").insert({
+      org_id:               params.orgId,
+      lead_id,
+      status:               "confirmed",
+      notes:                notes ?? null,
+      booking_type:         "recurring",
+      recurrence_frequency,
+      next_run_at:          nextRunAt,
+      template_name,
+      template_active:      true,
+      created_at:           now,
+      updated_at:           now,
+    }).select("id").single();
+
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    const b = booking as { id: string };
+
+    void writeLeadEvent({
+      orgId:      params.orgId,
+      leadId:     lead_id,
+      eventType:  "booking_created",
+      entityType: "booking",
+      entityId:   b.id,
+      title:      `Recurring booking set up — ${template_name} (${recurrence_frequency})`,
+      metadata:   { recurrence_frequency, booking_type: "recurring", template_name },
+    });
+
+    return NextResponse.json({ ok: true, booking_id: b.id, created: 1 });
+  }
+
+  // ── Group path — create one template per active member ──────────────────
+  const { data: group } = await svc.from("lead_groups")
+    .select("id, name")
+    .eq("id", group_id!)
+    .eq("org_id", params.orgId)
+    .is("deleted_at", null)
+    .single();
+  if (!group) return NextResponse.json({ error: "Group not found" }, { status: 404 });
+
+  const { data: members } = await svc.from("lead_group_members")
+    .select("lead_id")
+    .eq("group_id", group_id!);
+
+  const memberLeadIds = ((members ?? []) as Array<{ lead_id: string }>).map((m) => m.lead_id);
+  if (memberLeadIds.length === 0) return NextResponse.json({ error: "Group has no members" }, { status: 400 });
+
+  const rows = memberLeadIds.map((lId) => ({
     org_id:               params.orgId,
-    lead_id,
+    lead_id:              lId,
     status:               "confirmed",
     notes:                notes ?? null,
     booking_type:         "recurring",
     recurrence_frequency,
     next_run_at:          nextRunAt,
-    template_name,
+    template_name:        `${template_name} (${(group as { name: string }).name})`,
     template_active:      true,
     created_at:           now,
     updated_at:           now,
-  }).select("id").single();
+  }));
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  const b = booking as { id: string };
+  const { data: inserted, error: insErr } = await svc.from("bookings").insert(rows).select("id, lead_id");
+  if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 });
 
-  void writeLeadEvent({
-    orgId:      params.orgId,
-    leadId:     lead_id,
-    eventType:  "booking_created",
-    entityType: "booking",
-    entityId:   b.id,
-    title:      `Recurring booking set up — ${template_name} (${recurrence_frequency})`,
-    metadata:   { recurrence_frequency, booking_type: "recurring", template_name },
-  });
+  for (const r of (inserted ?? []) as Array<{ id: string; lead_id: string }>) {
+    void writeLeadEvent({
+      orgId:      params.orgId,
+      leadId:     r.lead_id,
+      eventType:  "booking_created",
+      entityType: "booking",
+      entityId:   r.id,
+      title:      `Recurring booking set up — ${template_name} (${recurrence_frequency}, group)`,
+      metadata:   { recurrence_frequency, booking_type: "recurring", template_name, group_id },
+    });
+  }
 
-  return NextResponse.json({ ok: true, booking_id: b.id });
+  return NextResponse.json({ ok: true, created: (inserted ?? []).length });
 }

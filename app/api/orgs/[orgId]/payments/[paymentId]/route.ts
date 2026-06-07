@@ -80,6 +80,16 @@ export async function DELETE(req: NextRequest, { params }: Params) {
       console.error("[payments/hard-delete]", error.message);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+
+    // Remove all lead_events tied to this payment entity so they don't linger
+    // in the activity timeline after the payment is gone.
+    await svc
+      .from("lead_events")
+      .delete()
+      .eq("org_id", params.orgId)
+      .eq("entity_type", "payment")
+      .eq("entity_id", params.paymentId);
+
     if (leadId) {
       void writeLeadEvent({
         orgId: params.orgId, leadId,

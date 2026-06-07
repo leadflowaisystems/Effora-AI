@@ -79,8 +79,18 @@ export async function DELETE(req: NextRequest, { params }: Params) {
       console.error("[bookings/hard-delete]", error.message);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+
+    // Remove all lead_events tied to this booking entity so they don't linger
+    // in the activity timeline after the booking is gone.
+    await svc
+      .from("lead_events")
+      .delete()
+      .eq("org_id", params.orgId)
+      .eq("entity_type", "booking")
+      .eq("entity_id", params.bookingId);
+
     if (leadId) {
-      // entity_id preserved in event even though the booking row is gone
+      // Write a "deleted" event so admins still see it happened
       void writeLeadEvent({
         orgId: params.orgId, leadId,
         eventType: "booking_deleted", entityType: "booking", entityId: params.bookingId,
