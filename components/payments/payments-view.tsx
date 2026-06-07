@@ -120,11 +120,18 @@ export function PaymentsView({ initialPayments, orgId, orgSlug: _slug, isDev, le
   const [recurring, setRecurring]               = useState<RecurringPaymentRow[]>([]);
   const [recurringLoading, setRecurringLoading] = useState(false);
   const [showRecurringForm, setShowRecurringForm] = useState(false);
+  const [rTarget, setRTarget] = useState<"lead"|"group">("lead");
   const [rLead,   setRLead]   = useState("");
+  const [rGroup,  setRGroup]  = useState("");
   const [rAmount, setRAmount] = useState("");
   const [rFreq,   setRFreq]   = useState<"daily"|"weekly"|"monthly"|"yearly">("monthly");
   const [rName,   setRName]   = useState("");
   const [rDesc,   setRDesc]   = useState("");
+  const [rStartAt, setRStartAt] = useState<string>(() => {
+    // Default: now + 1 hour, formatted for datetime-local
+    const d = new Date(); d.setHours(d.getHours() + 1, 0, 0, 0);
+    return d.toISOString().slice(0, 16);
+  });
   const [rSaving, setRSaving] = useState(false);
 
   const loadRecurring = useCallback(async () => {
@@ -144,25 +151,33 @@ export function PaymentsView({ initialPayments, orgId, orgSlug: _slug, isDev, le
 
   async function createRecurring(e: React.FormEvent) {
     e.preventDefault();
-    if (!rLead || !rAmount || !rName) return;
+    const hasTarget = rTarget === "lead" ? !!rLead : !!rGroup;
+    if (!hasTarget || !rAmount || !rName) return;
     setRSaving(true);
     try {
+      // Convert datetime-local to a proper ISO string with offset
+      const firstRunAt = rStartAt ? new Date(rStartAt).toISOString() : undefined;
+      const body: Record<string, unknown> = {
+        amount_inr:           Number(rAmount),
+        description:          rDesc || rName,
+        template_name:        rName,
+        recurrence_frequency: rFreq,
+        first_run_at:         firstRunAt,
+      };
+      if (rTarget === "lead")  body.lead_id  = rLead;
+      else                     body.group_id = rGroup;
+
       const res = await fetch(`/api/orgs/${orgId}/payments/recurring`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({
-          lead_id:              rLead,
-          amount_inr:           Number(rAmount),
-          description:          rDesc || rName,
-          template_name:        rName,
-          recurrence_frequency: rFreq,
-        }),
+        body:    JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed");
-      toast({ title: "Recurring payment created", variant: "success" });
+      const created = (data as { created?: number }).created ?? 1;
+      toast({ title: created > 1 ? `${created} recurring payments created` : "Recurring payment created", variant: "success" });
       setShowRecurringForm(false);
-      setRLead(""); setRAmount(""); setRName(""); setRDesc("");
+      setRLead(""); setRGroup(""); setRAmount(""); setRName(""); setRDesc("");
       loadRecurring();
     } catch (err) {
       toast({ title: "Error", description: err instanceof Error ? err.message : "Failed", variant: "destructive" });
@@ -302,14 +317,47 @@ export function PaymentsView({ initialPayments, orgId, orgSlug: _slug, isDev, le
           {showRecurringForm && (
             <form onSubmit={createRecurring} className="rounded-[var(--radius-md)] border border-[var(--brand)]/20 bg-[var(--bg-2)] p-4 space-y-3">
               <p className="text-sm font-semibold text-[var(--text)]">New recurring payment</p>
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-[var(--text-2)]">Lead *</label>
-                <select value={rLead} onChange={(e) => setRLead(e.target.value)} required
-                  className="w-full rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-3)] px-2.5 py-1.5 text-xs text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--brand)]">
-                  <option value="">Select lead…</option>
-                  {leads.map((l) => <option key={l.id} value={l.id}>{(l as {name:string|null}).name ?? "Unnamed"} ({l.channel})</option>)}
-                </select>
+
+              {/* Individual / Group toggle */}
+              <div className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-3)] p-0.5 w-fit">
+                {(["lead","group"] as const).map((t) => (
+                  <button key={t} type="button" onClick={() => setRTarget(t)}
+                    className={cn(
+                      "px-3 py-1 text-xs font-medium rounded-[var(--radius-sm)] transition-colors",
+                      rTarget === t ? "bg-[var(--brand)] text-[#0A0A0C]" : "text-[var(--text-3)] hover:text-[var(--text-2)]"
+                    )}>
+                    {t === "lead" ? "Individual lead" : "Group"}
+                  </button>
+                ))}
               </div>
+
+              {/* Lead selector */}
+              {rTarget === "lead" && (
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-[var(--text-2)]">Lead *</label>
+                  <select value={rLead} onChange={(e) => setRLead(e.target.value)} required
+                    className="w-full rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-3)] px-2.5 py-1.5 text-xs text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--brand)]">
+                    <option value="">Select lead…</option>
+                    {leads.map((l) => <option key={l.id} value={l.id}>{(l as {name:string|null}).name ?? "Unnamed"} ({l.channel})</option>)}
+                  </select>
+                </div>
+              )}
+
+              {/* Group selector */}
+              {rTarget === "group" && (
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-[var(--text-2)]">Group *</label>
+                  <select value={rGroup} onChange={(e) => setRGroup(e.target.value)} required
+                    className="w-full rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-3)] px-2.5 py-1.5 text-xs text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--brand)]">
+                    <option value="">Select group…</option>
+                    {groups.map((g) => <option key={g.id} value={g.id}>{g.name} ({g.member_count ?? 0} members)</option>)}
+                  </select>
+                  {groups.length === 0 && (
+                    <p className="text-[11px] text-[var(--text-3)]">No groups yet — create one in the Groups section.</p>
+                  )}
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
                   <label className="text-xs font-medium text-[var(--text-2)]">Amount (₹) *</label>
@@ -327,6 +375,14 @@ export function PaymentsView({ initialPayments, orgId, orgSlug: _slug, isDev, le
                   </select>
                 </div>
               </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-[var(--text-2)]">Start date &amp; time *</label>
+                <input type="datetime-local" value={rStartAt} onChange={(e) => setRStartAt(e.target.value)} required
+                  className="w-full rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-3)] px-2.5 py-1.5 text-xs text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--brand)]" />
+                <p className="text-[11px] text-[var(--text-3)]">First payment will be sent at this time. Subsequent payments follow the frequency.</p>
+              </div>
+
               <div className="space-y-1">
                 <label className="text-xs font-medium text-[var(--text-2)]">Template name *</label>
                 <input value={rName} onChange={(e) => setRName(e.target.value)} required placeholder="Monthly Membership Collection"
@@ -345,7 +401,7 @@ export function PaymentsView({ initialPayments, orgId, orgSlug: _slug, isDev, le
                 <button type="submit" disabled={rSaving}
                   className="rounded-[var(--radius-sm)] bg-[var(--brand)] px-3 py-1.5 text-xs font-semibold text-[#0A0A0C] hover:opacity-90 disabled:opacity-50 flex items-center gap-1 transition-opacity">
                   {rSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                  {rSaving ? "Creating…" : "Create"}
+                  {rSaving ? "Creating…" : rTarget === "group" ? "Create for group" : "Create"}
                 </button>
               </div>
             </form>

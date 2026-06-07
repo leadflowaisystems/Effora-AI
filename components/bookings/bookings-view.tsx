@@ -169,10 +169,16 @@ export function BookingsView({ initialBookings, orgSlug, orgId, isDev, leads, gr
   const [recurring, setRecurring]               = useState<RecurringBookingRow[]>([]);
   const [recurringLoading, setRecurringLoading] = useState(false);
   const [showRecurringForm, setShowRecurringForm] = useState(false);
-  const [rLead,  setRLead]  = useState("");
-  const [rName,  setRName]  = useState("");
-  const [rNotes, setRNotes] = useState("");
-  const [rFreq,  setRFreq]  = useState<"daily"|"weekly"|"monthly"|"yearly">("weekly");
+  const [rTarget, setRTarget] = useState<"lead"|"group">("lead");
+  const [rLead,   setRLead]   = useState("");
+  const [rGroup,  setRGroup]  = useState("");
+  const [rName,   setRName]   = useState("");
+  const [rNotes,  setRNotes]  = useState("");
+  const [rFreq,   setRFreq]   = useState<"daily"|"weekly"|"monthly"|"yearly">("weekly");
+  const [rStartAt, setRStartAt] = useState<string>(() => {
+    const d = new Date(); d.setHours(d.getHours() + 1, 0, 0, 0);
+    return d.toISOString().slice(0, 16);
+  });
   const [rSaving, setRSaving] = useState(false);
 
   const loadRecurring = useCallback(async () => {
@@ -192,24 +198,31 @@ export function BookingsView({ initialBookings, orgSlug, orgId, isDev, leads, gr
 
   async function createRecurring(e: React.FormEvent) {
     e.preventDefault();
-    if (!rLead || !rName) return;
+    const hasTarget = rTarget === "lead" ? !!rLead : !!rGroup;
+    if (!hasTarget || !rName) return;
     setRSaving(true);
     try {
+      const firstRunAt = rStartAt ? new Date(rStartAt).toISOString() : undefined;
+      const body: Record<string, unknown> = {
+        template_name:        rName,
+        notes:                rNotes || undefined,
+        recurrence_frequency: rFreq,
+        first_run_at:         firstRunAt,
+      };
+      if (rTarget === "lead")  body.lead_id  = rLead;
+      else                     body.group_id = rGroup;
+
       const res = await fetch(`/api/orgs/${orgId}/bookings/recurring`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({
-          lead_id:              rLead,
-          template_name:        rName,
-          notes:                rNotes || undefined,
-          recurrence_frequency: rFreq,
-        }),
+        body:    JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed");
-      toast({ title: "Recurring booking created", variant: "success" });
+      const created = (data as { created?: number }).created ?? 1;
+      toast({ title: created > 1 ? `${created} recurring bookings created` : "Recurring booking created", variant: "success" });
       setShowRecurringForm(false);
-      setRLead(""); setRName(""); setRNotes("");
+      setRLead(""); setRGroup(""); setRName(""); setRNotes("");
       loadRecurring();
     } catch (err) {
       toast({ title: "Error", description: err instanceof Error ? err.message : "Failed", variant: "destructive" });
@@ -355,14 +368,45 @@ export function BookingsView({ initialBookings, orgSlug, orgId, isDev, leads, gr
           {showRecurringForm && (
             <form onSubmit={createRecurring} className="rounded-[var(--radius-md)] border border-emerald-500/20 bg-[var(--bg-2)] p-4 space-y-3">
               <p className="text-sm font-semibold text-[var(--text)]">New recurring booking</p>
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-[var(--text-2)]">Lead *</label>
-                <select value={rLead} onChange={(e) => setRLead(e.target.value)} required
-                  className="w-full rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-3)] px-2.5 py-1.5 text-xs text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--brand)]">
-                  <option value="">Select lead…</option>
-                  {leads.map((l) => <option key={l.id} value={l.id}>{l.name ?? "Unnamed"}</option>)}
-                </select>
+
+              {/* Individual / Group toggle */}
+              <div className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-3)] p-0.5 w-fit">
+                {(["lead","group"] as const).map((t) => (
+                  <button key={t} type="button" onClick={() => setRTarget(t)}
+                    className={cn(
+                      "px-3 py-1 text-xs font-medium rounded-[var(--radius-sm)] transition-colors",
+                      rTarget === t ? "bg-[var(--brand)] text-[#0A0A0C]" : "text-[var(--text-3)] hover:text-[var(--text-2)]"
+                    )}>
+                    {t === "lead" ? "Individual lead" : "Group"}
+                  </button>
+                ))}
               </div>
+
+              {rTarget === "lead" && (
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-[var(--text-2)]">Lead *</label>
+                  <select value={rLead} onChange={(e) => setRLead(e.target.value)} required
+                    className="w-full rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-3)] px-2.5 py-1.5 text-xs text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--brand)]">
+                    <option value="">Select lead…</option>
+                    {leads.map((l) => <option key={l.id} value={l.id}>{l.name ?? "Unnamed"}</option>)}
+                  </select>
+                </div>
+              )}
+
+              {rTarget === "group" && (
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-[var(--text-2)]">Group *</label>
+                  <select value={rGroup} onChange={(e) => setRGroup(e.target.value)} required
+                    className="w-full rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-3)] px-2.5 py-1.5 text-xs text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--brand)]">
+                    <option value="">Select group…</option>
+                    {groups.map((g) => <option key={g.id} value={g.id}>{g.name} ({g.member_count ?? 0} members)</option>)}
+                  </select>
+                  {groups.length === 0 && (
+                    <p className="text-[11px] text-[var(--text-3)]">No groups yet — create one in the Groups section.</p>
+                  )}
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
                   <label className="text-xs font-medium text-[var(--text-2)]">Session name *</label>
@@ -380,6 +424,14 @@ export function BookingsView({ initialBookings, orgSlug, orgId, isDev, leads, gr
                   </select>
                 </div>
               </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-[var(--text-2)]">Start date &amp; time *</label>
+                <input type="datetime-local" value={rStartAt} onChange={(e) => setRStartAt(e.target.value)} required
+                  className="w-full rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-3)] px-2.5 py-1.5 text-xs text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--brand)]" />
+                <p className="text-[11px] text-[var(--text-3)]">First session scheduled at this time. Subsequent sessions follow the frequency.</p>
+              </div>
+
               <div className="space-y-1">
                 <label className="text-xs font-medium text-[var(--text-2)]">Notes</label>
                 <input value={rNotes} onChange={(e) => setRNotes(e.target.value)} placeholder="e.g. 1-on-1 strategy session"
@@ -393,7 +445,7 @@ export function BookingsView({ initialBookings, orgSlug, orgId, isDev, leads, gr
                 <button type="submit" disabled={rSaving}
                   className="rounded-[var(--radius-sm)] bg-[var(--brand)] px-3 py-1.5 text-xs font-semibold text-[#0A0A0C] hover:opacity-90 disabled:opacity-50 flex items-center gap-1 transition-opacity">
                   {rSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                  {rSaving ? "Creating…" : "Create"}
+                  {rSaving ? "Creating…" : rTarget === "group" ? "Create for group" : "Create"}
                 </button>
               </div>
             </form>

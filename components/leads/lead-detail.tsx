@@ -6,8 +6,8 @@
  * Sections:
  *   1. Header   — identity, stage, score, contact, LTV, quick actions
  *   2. Activity timeline — messages + bookings + payments merged chronologically
- *   3. Bookings — all bookings with status
- *   4. Payments — all payments with totals
+ *   3. Bookings — all bookings with status + permanent delete
+ *   4. Payments — all payments with totals + permanent delete
  *   5. Notes    — inline notes editing
  *   6. Conversations — chat thread links
  */
@@ -20,7 +20,7 @@ import {
   Calendar, CreditCard, MessageSquare, StickyNote,
   CheckCircle2, Clock, AlertTriangle, XCircle,
   ChevronDown, ChevronRight, ExternalLink, Edit2, Save, X,
-  UserCircle, Trash2,
+  UserCircle, Trash2, Loader2,
 } from "lucide-react";
 import { LeadSearchSelector } from "./lead-search-selector";
 import { cn } from "@/lib/utils";
@@ -115,6 +115,64 @@ function Section({ title, icon: Icon, children, defaultOpen = true }: {
   );
 }
 
+/* ── Confirm Delete Modal ────────────────────────────────────────────────────── */
+
+interface ConfirmDeleteProps {
+  title:       string;
+  description: string;
+  onConfirm:   () => void;
+  onCancel:    () => void;
+  loading:     boolean;
+}
+
+function ConfirmDeleteModal({ title, description, onConfirm, onCancel, loading }: ConfirmDeleteProps) {
+  // Close on Escape
+  React.useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape" && !loading) onCancel(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [loading, onCancel]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      {/* Backdrop */}
+      <div
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        onClick={() => { if (!loading) onCancel(); }}
+      />
+      {/* Dialog */}
+      <div className="relative z-10 w-full max-w-sm mx-4 rounded-[var(--radius-lg)] border border-red-500/30 bg-[var(--bg-1)] shadow-2xl p-6 space-y-4">
+        <div className="flex items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-500/15">
+            <Trash2 className="h-4 w-4 text-red-400" />
+          </div>
+          <div>
+            <p className="font-display text-sm font-semibold text-[var(--text)]">{title}</p>
+            <p className="text-xs text-[var(--text-3)] mt-1 leading-relaxed">{description}</p>
+          </div>
+        </div>
+        <div className="flex gap-2 justify-end">
+          <button
+            onClick={onCancel}
+            disabled={loading}
+            className="rounded-[var(--radius-sm)] border border-[var(--border)] px-4 py-2 text-xs font-medium text-[var(--text-2)] hover:bg-[var(--bg-3)] transition-colors disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={loading}
+            className="rounded-[var(--radius-sm)] bg-red-500 px-4 py-2 text-xs font-semibold text-white hover:bg-red-600 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+          >
+            {loading && <Loader2 className="h-3 w-3 animate-spin" />}
+            Delete permanently
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── Activity timeline helpers ───────────────────────────────────── */
 
 type TimelineItem =
@@ -199,13 +257,22 @@ function TimelineRow({ item, orgSlug, onDeleteEvent, deletingId }: {
 
 /* ── Main component ─────────────────────────────────────────────────────────── */
 
-export function LeadDetail({ lead, conversations, bookings, payments, leadEvents, orgId, orgSlug }: Props) {
+export function LeadDetail({ lead, conversations, bookings: initialBookings, payments: initialPayments, leadEvents, orgId, orgSlug }: Props) {
   const router = useRouter();
   const [notes, setNotes]       = React.useState(lead.notes ?? "");
   const [editNotes, setEditNotes] = React.useState(false);
   const [savingNotes, setSavingNotes] = React.useState(false);
   const [events, setEvents] = React.useState<LeadEvent[]>(leadEvents);
   const [deletingEvent, setDeletingEvent] = React.useState<string | null>(null);
+
+  // Local state for bookings + payments so UI updates instantly on delete
+  const [bookings, setBookings]   = React.useState<Booking[]>(initialBookings);
+  const [payments, setPayments]   = React.useState<Payment[]>(initialPayments);
+
+  // Confirm-delete modal state
+  type DeleteTarget = { kind: "booking"; id: string; label: string } | { kind: "payment"; id: string; label: string } | null;
+  const [deleteTarget,  setDeleteTarget]  = React.useState<DeleteTarget>(null);
+  const [deleteLoading, setDeleteLoading] = React.useState(false);
 
   async function deleteEvent(eventId: string) {
     if (!confirm("Delete this history event permanently?")) return;
@@ -216,6 +283,38 @@ export function LeadDetail({ lead, conversations, bookings, payments, leadEvents
       else toast({ title: "Failed to delete event", variant: "destructive" });
     } finally {
       setDeletingEvent(null);
+    }
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleteLoading(true);
+    try {
+      const url = deleteTarget.kind === "booking"
+        ? `/api/orgs/${orgId}/bookings/${deleteTarget.id}?mode=hard`
+        : `/api/orgs/${orgId}/payments/${deleteTarget.id}?mode=hard`;
+
+      const res = await fetch(url, { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        toast({ title: "Delete failed", description: (body as { error?: string }).error ?? "Unknown error", variant: "destructive" });
+        return;
+      }
+
+      if (deleteTarget.kind === "booking") {
+        setBookings((prev) => prev.filter((b) => b.id !== deleteTarget.id));
+        // Remove timeline events tied to this booking
+        setEvents((prev) => prev.filter((e) => !(e.entity_type === "booking" && e.entity_id === deleteTarget.id)));
+      } else {
+        setPayments((prev) => prev.filter((p) => p.id !== deleteTarget.id));
+        // Remove timeline events tied to this payment
+        setEvents((prev) => prev.filter((e) => !(e.entity_type === "payment" && e.entity_id === deleteTarget.id)));
+      }
+
+      toast({ title: `${deleteTarget.kind === "booking" ? "Booking" : "Payment"} permanently deleted`, variant: "success" });
+      setDeleteTarget(null);
+    } finally {
+      setDeleteLoading(false);
     }
   }
 
@@ -249,8 +348,22 @@ export function LeadDetail({ lead, conversations, bookings, payments, leadEvents
     window.open(`/api/orgs/${orgId}/leads/${lead.id}/export?format=csv`, "_blank");
   }
 
+  // Suppress unused import lint warning
+  void ArrowLeft;
+
   return (
     <div className="space-y-6 max-w-3xl pb-16">
+      {/* Confirm-delete modal */}
+      {deleteTarget && (
+        <ConfirmDeleteModal
+          title={`Delete this ${deleteTarget.kind}?`}
+          description={`"${deleteTarget.label}" will be permanently removed — this cannot be undone. Associated history events will also be cleared.`}
+          onConfirm={confirmDelete}
+          onCancel={() => { if (!deleteLoading) setDeleteTarget(null); }}
+          loading={deleteLoading}
+        />
+      )}
+
       {/* ── Persistent lead selector — switch leads without going back ── */}
       <div className="space-y-3">
         <div className="flex items-center gap-2">
@@ -397,7 +510,7 @@ export function LeadDetail({ lead, conversations, bookings, payments, leadEvents
             }[b.status] ?? { color: "text-[var(--text-3)]", bg: "bg-[var(--bg-3)]", icon: Clock };
             const Icon = cfg.icon;
             return (
-              <div key={b.id} className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-3)] p-4 flex items-start gap-3">
+              <div key={b.id} className="group rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-3)] p-4 flex items-start gap-3">
                 <div className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-full", cfg.bg)}>
                   <Icon className={cn("h-4 w-4", cfg.color)} />
                 </div>
@@ -409,11 +522,20 @@ export function LeadDetail({ lead, conversations, bookings, payments, leadEvents
                   <p className="text-xs text-[var(--text-3)]">{fmtDate(b.starts_at)}</p>
                   {b.attendee_email && <p className="text-xs text-[var(--text-3)]">{b.attendee_email}</p>}
                 </div>
-                {b.meeting_url && (
-                  <a href={b.meeting_url} target="_blank" rel="noopener noreferrer" className="shrink-0 text-xs text-[var(--brand)] hover:underline flex items-center gap-1">
-                    <ExternalLink className="h-3 w-3" /> Join
-                  </a>
-                )}
+                <div className="flex items-center gap-2 shrink-0">
+                  {b.meeting_url && (
+                    <a href={b.meeting_url} target="_blank" rel="noopener noreferrer" className="text-xs text-[var(--brand)] hover:underline flex items-center gap-1">
+                      <ExternalLink className="h-3 w-3" /> Join
+                    </a>
+                  )}
+                  <button
+                    onClick={() => setDeleteTarget({ kind: "booking", id: b.id, label: b.attendee_name ?? fmtDate(b.starts_at) ?? "this booking" })}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity text-[var(--text-3)] hover:text-red-400 p-1"
+                    title="Delete this booking permanently"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
               </div>
             );
           })}
@@ -440,7 +562,7 @@ export function LeadDetail({ lead, conversations, bookings, payments, leadEvents
             </div>
           )}
           {payments.map((p) => (
-            <div key={p.id} className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-3)] p-4 flex items-start gap-3">
+            <div key={p.id} className="group rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-3)] p-4 flex items-start gap-3">
               <div className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-full", p.status === "paid" ? "bg-[var(--brand)]/15" : "bg-amber-500/10")}>
                 <CreditCard className={cn("h-4 w-4", p.status === "paid" ? "text-[var(--brand)]" : "text-amber-400")} />
               </div>
@@ -453,11 +575,20 @@ export function LeadDetail({ lead, conversations, bookings, payments, leadEvents
                 <p className="text-xs text-[var(--text-3)]">{fmtDate(p.created_at)}</p>
                 {p.notes && <p className="text-xs text-[var(--text-3)] mt-0.5">{p.notes}</p>}
               </div>
-              {p.payment_link_url && (
-                <a href={p.payment_link_url} target="_blank" rel="noopener noreferrer" className="shrink-0 text-xs text-[var(--brand)] hover:underline flex items-center gap-1">
-                  <ExternalLink className="h-3 w-3" /> Link
-                </a>
-              )}
+              <div className="flex items-center gap-2 shrink-0">
+                {p.payment_link_url && (
+                  <a href={p.payment_link_url} target="_blank" rel="noopener noreferrer" className="text-xs text-[var(--brand)] hover:underline flex items-center gap-1">
+                    <ExternalLink className="h-3 w-3" /> Link
+                  </a>
+                )}
+                <button
+                  onClick={() => setDeleteTarget({ kind: "payment", id: p.id, label: `₹${p.amount_inr.toLocaleString("en-IN")} — ${p.notes ?? p.status}` })}
+                  className="opacity-0 group-hover:opacity-100 transition-opacity text-[var(--text-3)] hover:text-red-400 p-1"
+                  title="Delete this payment permanently"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </div>
           ))}
         </div>
