@@ -66,7 +66,9 @@ export async function POST(req: NextRequest, { params }: Params) {
   const { bookingId, action } = body as { bookingId?: string; action?: string };
 
   if (!bookingId) return NextResponse.json({ error: "bookingId required" }, { status: 400 });
-  if (action !== "no_show") return NextResponse.json({ error: "action must be 'no_show'" }, { status: 400 });
+  if (action !== "no_show" && action !== "completed") {
+    return NextResponse.json({ error: "action must be 'no_show' or 'completed'" }, { status: 400 });
+  }
 
   const svc = createServiceClient();
   const { data: booking, error } = await svc
@@ -85,6 +87,15 @@ export async function POST(req: NextRequest, { params }: Params) {
   };
 
   const now = new Date().toISOString();
+
+  if (action === "completed") {
+    await svc.from("bookings").update({
+      status: "completed", updated_at: now,
+    }).eq("id", bookingId);
+    return NextResponse.json({ ok: true });
+  }
+
+  // action === "no_show"
   await svc.from("bookings").update({
     status: "no_show", updated_at: now,
   }).eq("id", bookingId);

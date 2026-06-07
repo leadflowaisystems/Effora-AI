@@ -1,7 +1,12 @@
 /**
  * DELETE /api/orgs/[orgId]/payments/[paymentId]
- * Soft-deletes a payment by setting deleted_at = NOW().
- * The GET /api/orgs/[orgId]/payments list query filters .is("deleted_at", null).
+ *
+ * Without query params:  soft-delete — sets deleted_at = NOW().
+ *   Payment is hidden from the list but preserved for reports + lead history.
+ *
+ * ?mode=hard:            hard delete — permanently removes the payment row.
+ *   Disappears from lists, revenue totals, and lead history.
+ *   Requires client-side confirmation before calling.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -19,21 +24,38 @@ async function assertMember(orgId: string) {
   return data ? user : null;
 }
 
-export async function DELETE(_req: NextRequest, { params }: Params) {
+export async function DELETE(req: NextRequest, { params }: Params) {
   const user = await assertMember(params.orgId);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const svc = createServiceClient();
+  const mode = req.nextUrl.searchParams.get("mode");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error } = await (svc as any)
-    .from("payments")
-    .update({ deleted_at: new Date().toISOString() })
-    .eq("id", params.paymentId)
-    .eq("org_id", params.orgId);
+  const svc  = createServiceClient() as any;
 
-  if (error) {
-    console.error("[payments/delete]", error.message);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  if (mode === "hard") {
+    // Permanent deletion — remove the row entirely.
+    const { error } = await svc
+      .from("payments")
+      .delete()
+      .eq("id", params.paymentId)
+      .eq("org_id", params.orgId);
+
+    if (error) {
+      console.error("[payments/hard-delete]", error.message);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+  } else {
+    // Soft delete — hide from list, preserve for reports + lead history.
+    const { error } = await svc
+      .from("payments")
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("id", params.paymentId)
+      .eq("org_id", params.orgId);
+
+    if (error) {
+      console.error("[payments/soft-delete]", error.message);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
   }
 
   return NextResponse.json({ ok: true });

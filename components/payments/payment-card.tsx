@@ -4,7 +4,7 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import {
   ExternalLink, User, CheckCircle2,
-  Clock, XCircle, AlertTriangle, Copy, Check, Trash2, Loader2,
+  Clock, XCircle, AlertTriangle, Copy, Check, Trash2, Loader2, Archive,
 } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
@@ -53,9 +53,49 @@ function formatDate(iso: string): string {
   } catch { return iso; }
 }
 
+// ── Inline confirmation modal ─────────────────────────────────
+function ConfirmModal({
+  title, body, confirmLabel, onConfirm, onCancel,
+}: {
+  title:        string;
+  body:         string;
+  confirmLabel: string;
+  onConfirm:    () => void;
+  onCancel:     () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" onClick={onCancel}>
+      <div className="absolute inset-0 bg-black/60" />
+      <div
+        className="relative z-10 w-full max-w-sm rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-1)] p-5 space-y-4 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="space-y-1">
+          <p className="font-display text-sm font-semibold text-[var(--text)]">{title}</p>
+          <p className="text-xs text-[var(--text-3)] leading-relaxed whitespace-pre-line">{body}</p>
+        </div>
+        <div className="flex gap-2 justify-end">
+          <button
+            onClick={onCancel}
+            className="rounded-[var(--radius-sm)] border border-[var(--border)] px-3 py-1.5 text-xs text-[var(--text-2)] hover:bg-[var(--bg-3)] transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="rounded-[var(--radius-sm)] bg-red-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-600 transition-colors"
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface Props {
   payment:  PaymentRow;
-  /** Called after a dev action so the list can refresh. */
+  /** Called after a status-change action so the list can refresh. */
   onUpdate?: () => void;
   /** Called with the deleted payment id to remove it from local state. */
   onDelete?: (id: string) => void;
@@ -65,19 +105,35 @@ interface Props {
 }
 
 export function PaymentCard({ payment, onUpdate, onDelete, isDev, orgId }: Props) {
-  const [acting,   setActing]   = useState<"capture" | "unpaid" | "markpaid" | null>(null);
-  const [copied,   setCopied]   = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [acting,      setActing]      = useState<"capture" | "unpaid" | "markpaid" | null>(null);
+  const [copied,      setCopied]      = useState(false);
+  const [deleting,    setDeleting]    = useState<"soft" | "hard" | null>(null);
+  const [hardConfirm, setHardConfirm] = useState(false);
 
-  async function handleDelete() {
-    if (!orgId || deleting) return;
-    if (!window.confirm("Delete this payment? It will be hidden from your list.")) return;
-    setDeleting(true);
+  const isBusy = !!acting || !!deleting;
+
+  // ── Soft delete: hides from list, preserved for reports + lead history ──
+  async function archivePayment() {
+    if (!orgId || isBusy) return;
+    setDeleting("soft");
     try {
       await fetch(`/api/orgs/${orgId}/payments/${payment.id}`, { method: "DELETE" });
       onDelete?.(payment.id);
     } finally {
-      setDeleting(false);
+      setDeleting(null);
+    }
+  }
+
+  // ── Hard delete: permanently removes the payment row ────────────────────
+  async function hardDeletePayment() {
+    if (!orgId || isBusy) return;
+    setDeleting("hard");
+    setHardConfirm(false);
+    try {
+      await fetch(`/api/orgs/${orgId}/payments/${payment.id}?mode=hard`, { method: "DELETE" });
+      onDelete?.(payment.id);
+    } finally {
+      setDeleting(null);
     }
   }
 
@@ -89,7 +145,7 @@ export function PaymentCard({ payment, onUpdate, onDelete, isDev, orgId }: Props
   }
 
   async function markPaid() {
-    if (!orgId) return;
+    if (!orgId || isBusy) return;
     setActing("markpaid");
     try {
       const res = await fetch(`/api/orgs/${orgId}/payments/mark-paid`, {
@@ -118,7 +174,7 @@ export function PaymentCard({ payment, onUpdate, onDelete, isDev, orgId }: Props
     .map((w) => w[0]?.toUpperCase() ?? "").join("");
 
   async function devAction(action: "capture" | "unpaid") {
-    if (!orgId || acting) return;
+    if (!orgId || isBusy) return;
     setActing(action);
     try {
       await fetch(`/api/orgs/${orgId}/payments/simulate`, {
@@ -133,120 +189,152 @@ export function PaymentCard({ payment, onUpdate, onDelete, isDev, orgId }: Props
   }
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 5 }}
-      animate={{ opacity: 1, y: 0 }}
-      className={cn(
-        "rounded-[var(--radius-md)] border bg-[var(--bg-2)] p-4 space-y-3 transition-colors",
-        payment.status === "paid"    ? "border-[var(--brand)]/20" :
-        payment.status === "failed"  ? "border-red-500/20"        : "border-[var(--border)]"
-      )}
-    >
-      {/* ── Row 1: lead + amount + status ── */}
-      <div className="flex items-start gap-3">
-        {/* Avatar */}
-        <div className={cn(
-          "flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold",
-          payment.status === "paid"
-            ? "bg-[var(--brand)]/15 text-[var(--brand)]"
-            : "bg-[var(--bg-3)] text-[var(--text-2)]"
-        )}>
-          {lead?.avatar_url ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={lead.avatar_url} alt={displayName} className="h-full w-full rounded-full object-cover" />
-          ) : (
-            initials || <User className="h-4 w-4" />
-          )}
-        </div>
-
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-medium text-[var(--text)] truncate">{displayName}</span>
-            <span className={cn(
-              "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium",
-              cfg.color
-            )}>
-              <Icon className="h-3 w-3" />
-              {cfg.label}
-            </span>
-          </div>
-          <p className="text-xs text-[var(--text-3)] mt-0.5">{formatDate(payment.created_at)}</p>
-        </div>
-
-        {/* Amount — monospaced, prominent */}
-        <div className={cn(
-          "shrink-0 font-mono text-base font-semibold tabular-nums",
-          payment.status === "paid" ? "text-[var(--brand)]" : "text-[var(--text)]"
-        )}>
-          {formatInr(payment.amount_inr)}
-        </div>
-      </div>
-
-      {/* ── Notes (e.g. dunning flagged) ── */}
-      {payment.notes && (
-        <p className="text-xs text-amber-400 bg-amber-500/10 rounded-[var(--radius-sm)] px-2.5 py-1.5">
-          ⚑ {payment.notes}
-        </p>
+    <>
+      {hardConfirm && (
+        <ConfirmModal
+          title="Delete payment permanently?"
+          body={`This will remove:\n• The payment record\n• Payment history references\n• Revenue from analytics\n\nThis action cannot be undone.`}
+          confirmLabel="Delete permanently"
+          onConfirm={hardDeletePayment}
+          onCancel={() => setHardConfirm(false)}
+        />
       )}
 
-      {/* ── Actions row ── */}
-      <div className="flex items-center gap-2">
-        {payment.payment_link_url && payment.status === "pending" && (
-          <div className="flex items-center gap-2 flex-wrap">
-            <a href={payment.payment_link_url} target="_blank" rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-xs text-[var(--brand)] hover:underline">
-              <ExternalLink className="h-3 w-3" /> Open link
-            </a>
-            <button onClick={copyLink}
-              className="inline-flex items-center gap-1 text-xs text-[var(--text-3)] hover:text-[var(--text-2)] transition-colors">
-              {copied ? <Check className="h-3 w-3 text-[var(--brand)]" /> : <Copy className="h-3 w-3" />}
-              {copied ? "Copied" : "Copy"}
-            </button>
-            {orgId && (
-              <button onClick={markPaid} disabled={acting === "markpaid"}
-                className="inline-flex items-center gap-1 text-xs text-[var(--text-3)] hover:text-[var(--brand)] transition-colors disabled:opacity-50">
-                <CheckCircle2 className="h-3 w-3" />
-                {acting === "markpaid" ? "Saving…" : "Mark as paid"}
-              </button>
+      <motion.div
+        initial={{ opacity: 0, y: 5 }}
+        animate={{ opacity: 1, y: 0 }}
+        className={cn(
+          "rounded-[var(--radius-md)] border bg-[var(--bg-2)] p-4 space-y-3 transition-colors",
+          payment.status === "paid"    ? "border-[var(--brand)]/20" :
+          payment.status === "failed"  ? "border-red-500/20"        : "border-[var(--border)]"
+        )}
+      >
+        {/* ── Row 1: lead + amount + status ── */}
+        <div className="flex items-start gap-3">
+          {/* Avatar */}
+          <div className={cn(
+            "flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold",
+            payment.status === "paid"
+              ? "bg-[var(--brand)]/15 text-[var(--brand)]"
+              : "bg-[var(--bg-3)] text-[var(--text-2)]"
+          )}>
+            {lead?.avatar_url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={lead.avatar_url} alt={displayName} className="h-full w-full rounded-full object-cover" />
+            ) : (
+              initials || <User className="h-4 w-4" />
             )}
           </div>
-        )}
 
-        {/* Delete */}
-        {orgId && (
-          <button
-            type="button"
-            onClick={handleDelete}
-            disabled={deleting || !!acting}
-            className="ml-auto inline-flex items-center gap-1 text-xs text-[var(--text-3)] hover:text-red-400 transition-colors disabled:opacity-50"
-          >
-            {deleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-            {deleting ? "Deleting…" : "Delete"}
-          </button>
-        )}
-
-        {/* Dev-only inline actions */}
-        {isDev && payment.status === "pending" && (
-          <div className="ml-auto flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => devAction("capture")}
-              disabled={!!acting}
-              className="rounded-[var(--radius-sm)] bg-[var(--brand)]/10 border border-[var(--brand)]/20 px-2 py-0.5 text-[11px] font-medium text-[var(--brand)] hover:bg-[var(--brand)]/20 disabled:opacity-50 transition-colors"
-            >
-              {acting === "capture" ? "…" : "✓ Mark paid"}
-            </button>
-            <button
-              type="button"
-              onClick={() => devAction("unpaid")}
-              disabled={!!acting}
-              className="rounded-[var(--radius-sm)] bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 text-[11px] font-medium text-amber-400 hover:bg-amber-500/20 disabled:opacity-50 transition-colors"
-            >
-              {acting === "unpaid" ? "…" : "⚑ Start dunning"}
-            </button>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-medium text-[var(--text)] truncate">{displayName}</span>
+              <span className={cn(
+                "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                cfg.color
+              )}>
+                <Icon className="h-3 w-3" />
+                {cfg.label}
+              </span>
+            </div>
+            <p className="text-xs text-[var(--text-3)] mt-0.5">{formatDate(payment.created_at)}</p>
           </div>
+
+          {/* Amount */}
+          <div className={cn(
+            "shrink-0 font-mono text-base font-semibold tabular-nums",
+            payment.status === "paid" ? "text-[var(--brand)]" : "text-[var(--text)]"
+          )}>
+            {formatInr(payment.amount_inr)}
+          </div>
+        </div>
+
+        {/* ── Notes ── */}
+        {payment.notes && (
+          <p className="text-xs text-amber-400 bg-amber-500/10 rounded-[var(--radius-sm)] px-2.5 py-1.5">
+            ⚑ {payment.notes}
+          </p>
         )}
-      </div>
-    </motion.div>
+
+        {/* ── Actions row ── */}
+        <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-[var(--border)]">
+
+          {/* PENDING: link actions + Mark Paid */}
+          {payment.status === "pending" && (
+            <div className="flex items-center gap-2 flex-wrap">
+              {payment.payment_link_url && (
+                <>
+                  <a href={payment.payment_link_url} target="_blank" rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-xs text-[var(--brand)] hover:underline">
+                    <ExternalLink className="h-3 w-3" /> Open link
+                  </a>
+                  <button onClick={copyLink}
+                    className="inline-flex items-center gap-1 text-xs text-[var(--text-3)] hover:text-[var(--text-2)] transition-colors">
+                    {copied ? <Check className="h-3 w-3 text-[var(--brand)]" /> : <Copy className="h-3 w-3" />}
+                    {copied ? "Copied" : "Copy"}
+                  </button>
+                </>
+              )}
+              {orgId && (
+                <button onClick={markPaid} disabled={isBusy}
+                  className="inline-flex items-center gap-1 text-xs text-[var(--text-3)] hover:text-[var(--brand)] transition-colors disabled:opacity-50">
+                  {acting === "markpaid"
+                    ? <Loader2 className="h-3 w-3 animate-spin" />
+                    : <CheckCircle2 className="h-3 w-3" />
+                  }
+                  {acting === "markpaid" ? "Saving…" : "Mark as paid"}
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Delete From List (soft) + Delete Payment (hard) — for ALL statuses */}
+          {orgId && (
+            <div className="ml-auto flex items-center gap-2">
+              <button
+                type="button"
+                onClick={archivePayment}
+                disabled={isBusy}
+                className="inline-flex items-center gap-1 text-xs text-[var(--text-3)] hover:text-[var(--text-2)] transition-colors disabled:opacity-50"
+              >
+                {deleting === "soft" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Archive className="h-3 w-3" />}
+                {deleting === "soft" ? "Archiving…" : "Delete from list"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setHardConfirm(true)}
+                disabled={isBusy}
+                className="inline-flex items-center gap-1 text-xs text-[var(--text-3)] hover:text-red-400 transition-colors disabled:opacity-50"
+              >
+                {deleting === "hard" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                {deleting === "hard" ? "Deleting…" : "Delete payment"}
+              </button>
+            </div>
+          )}
+
+          {/* Dev-only inline actions */}
+          {isDev && payment.status === "pending" && (
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => devAction("capture")}
+                disabled={isBusy}
+                className="rounded-[var(--radius-sm)] bg-[var(--brand)]/10 border border-[var(--brand)]/20 px-2 py-0.5 text-[11px] font-medium text-[var(--brand)] hover:bg-[var(--brand)]/20 disabled:opacity-50 transition-colors"
+              >
+                {acting === "capture" ? "…" : "✓ Mark paid"}
+              </button>
+              <button
+                type="button"
+                onClick={() => devAction("unpaid")}
+                disabled={isBusy}
+                className="rounded-[var(--radius-sm)] bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 text-[11px] font-medium text-amber-400 hover:bg-amber-500/20 disabled:opacity-50 transition-colors"
+              >
+                {acting === "unpaid" ? "…" : "⚑ Start dunning"}
+              </button>
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </>
   );
 }

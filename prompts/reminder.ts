@@ -32,33 +32,31 @@ export interface ReminderParams {
 }
 
 export function build24hReminder(p: ReminderParams): string {
-  const name   = firstName(p.leadName);
-  const when   = formatStart(p.startsAt);
-  const offer  = p.coachOffer || "how I can help";
+  const name  = firstName(p.leadName);
 
   const lines = [
-    `Hey${name}! Just a quick reminder — we have a discovery call booked for tomorrow at ${when}.`,
+    `Hey${name}! Just a quick heads-up — we have a call coming up soon.`,
     ``,
-    `I'm really looking forward to chatting about ${offer}.`,
+    `Really looking forward to chatting and figuring out how I can help you move things forward.`,
   ];
 
   if (p.meetingUrl) {
-    lines.push(``, `Here's your meeting link: ${p.meetingUrl}`);
+    lines.push(``, `Here's your meeting link whenever you're ready: ${p.meetingUrl}`);
   }
 
-  lines.push(``, `See you tomorrow!`);
+  lines.push(``, `See you soon! 🙌`);
   return lines.join("\n");
 }
 
 export function build1hReminder(p: ReminderParams): string {
   const name = firstName(p.leadName);
 
-  const lines = [`Hey${name}! Our call starts in 1 hour ⏰`];
+  const lines = [`Hey${name}! Our call is coming up — just a quick heads-up ⏰`];
 
   if (p.meetingUrl) {
     lines.push(``, `Click here to join when you're ready: ${p.meetingUrl}`);
   } else {
-    lines.push(``, `Get ready — looking forward to our chat!`);
+    lines.push(``, `Looking forward to our chat!`);
   }
 
   return lines.join("\n");

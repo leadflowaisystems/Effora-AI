@@ -37,7 +37,7 @@ interface Lead {
   metadata?: Record<string, unknown> | null;
 }
 interface Conversation { id: string; channel_provider: string; last_message_at: string | null; last_message_preview: string | null; created_at: string }
-interface Booking { id: string; status: string; starts_at: string | null; ends_at: string | null; meeting_url: string | null; attendee_name: string | null; attendee_email: string | null; recovery_attempt: number; created_at: string }
+interface Booking { id: string; status: string; starts_at: string | null; ends_at: string | null; meeting_url: string | null; attendee_name: string | null; attendee_email: string | null; recovery_attempt: number; created_at: string; deleted_at?: string | null }
 interface Payment { id: string; amount_inr: number; status: string; payment_link_url: string | null; notes: string | null; created_at: string; updated_at: string }
 
 interface Props {
@@ -132,6 +132,7 @@ function buildTimeline(bookings: Booking[], payments: Payment[], convs: Conversa
 function TimelineRow({ item, orgSlug }: { item: ActivityItem; orgSlug: string }) {
   if (item.kind === "booking") {
     const b = item.data;
+    const isArchived = !!b.deleted_at;
     const cfg = {
       completed: { color: "text-[var(--brand)]", icon: CheckCircle2 },
       confirmed: { color: "text-emerald-400",    icon: Calendar },
@@ -141,11 +142,12 @@ function TimelineRow({ item, orgSlug }: { item: ActivityItem; orgSlug: string })
     const Icon = cfg.icon;
     return (
       <div className="flex gap-3 py-2.5 border-b border-[var(--border)] last:border-0">
-        <div className={cn("mt-0.5 shrink-0", cfg.color)}><Icon className="h-4 w-4" /></div>
+        <div className={cn("mt-0.5 shrink-0", isArchived ? "text-[var(--text-3)]" : cfg.color)}><Icon className="h-4 w-4" /></div>
         <div className="flex-1 min-w-0">
           <p className="text-sm text-[var(--text)]">
             Booking <span className="font-medium">{b.status.replace("_", " ")}</span>
             {b.attendee_name && ` · ${b.attendee_name}`}
+            {isArchived && <span className="ml-1.5 text-[11px] text-[var(--text-3)] italic">(archived)</span>}
           </p>
           <p className="text-xs text-[var(--text-3)]">{fmtDate(b.starts_at)}</p>
         </div>

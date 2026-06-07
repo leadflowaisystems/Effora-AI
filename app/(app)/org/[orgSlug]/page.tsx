@@ -211,7 +211,15 @@ export default async function OrgHomePage({ params }: Props) {
   const hasCalcom   = integrations.some((i) => i.provider === "calcom"   && i.active);
   const hasRazorpay = integrations.some((i) => i.provider === "razorpay" && i.active);
   const hasChannel  = integrations.some((i) =>
-    (i.provider === "instagram" || i.provider === "manychat") && i.active
+    // meta_instagram = Instagram connected via Meta App (new flow)
+    // whatsapp_cloud = WhatsApp Cloud API connected
+    // instagram / manychat = legacy provider names
+    (
+      i.provider === "instagram"      ||
+      i.provider === "meta_instagram" ||
+      i.provider === "manychat"       ||
+      i.provider === "whatsapp_cloud"
+    ) && i.active
   );
   const hasVoice    = !!voiceRes.data;
 

@@ -39,9 +39,11 @@ export default async function LeadDetailPage({ params }: Props) {
        .eq("org_id", org.id).eq("lead_id", params.leadId)
        .order("last_message_at", { ascending: false }),
     svc.from("bookings")
-       .select("id,status,starts_at,ends_at,meeting_url,attendee_name,attendee_email,recovery_attempt,created_at")
+       .select("id,status,starts_at,ends_at,meeting_url,attendee_name,attendee_email,recovery_attempt,created_at,deleted_at")
        .eq("org_id", org.id).eq("lead_id", params.leadId)
-       .is("deleted_at", null)
+       // Note: intentionally NOT filtering by deleted_at here so that
+       // soft-deleted (archived) bookings still appear in the lead history timeline.
+       // Hard-deleted bookings are gone from the DB entirely (correct behaviour).
        .order("starts_at", { ascending: false }),
     svc.from("payments")
        .select("id,amount_inr,status,payment_link_url,notes,created_at,updated_at")
