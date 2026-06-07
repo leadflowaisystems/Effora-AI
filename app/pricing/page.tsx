@@ -1,4 +1,5 @@
 ﻿import { PricingCards } from "@/components/marketing/pricing-cards";
+import { FeatureMatrix } from "@/components/marketing/feature-matrix";
 import Link from "next/link";
 import { Zap } from "lucide-react";
 
@@ -32,13 +33,21 @@ export default function PricingPage() {
           Simple, transparent pricing
         </h1>
         <p className="mt-4 text-lg text-[var(--text-3)]">
-          Start free for 14 days. No card required. Upgrade when you&apos;re ready.
+          Start free for 15 days. No card required. Upgrade when you&apos;re ready.
         </p>
       </div>
 
-      {/* Cards */}
-      <div className="mx-auto max-w-5xl px-6 pb-24">
+      {/* Pricing cards */}
+      <div className="mx-auto max-w-5xl px-6 pb-16">
         <PricingCards />
+      </div>
+
+      {/* Feature matrix */}
+      <div className="mx-auto max-w-5xl px-6 pb-24">
+        <h2 className="font-display text-2xl font-bold text-center text-[var(--text)] mb-8">
+          Compare all features
+        </h2>
+        <FeatureMatrix />
       </div>
 
       {/* FAQ teaser */}

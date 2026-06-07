@@ -18,9 +18,9 @@ export const PLAN_IDS: Record<string, string> = {
 };
 
 export const PLAN_PRICES: Record<string, number> = {
-  starter: 2999,
-  growth:  7999,
-  pro:     19999,
+  starter: 999,
+  growth:  2999,
+  pro:     5999,
 };
 
 export const PLAN_NAMES: Record<string, string> = {

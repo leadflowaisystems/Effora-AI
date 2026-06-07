@@ -93,6 +93,7 @@ export default async function OrgLayout({ children, params }: Props) {
       orgName={org.name}
       orgs={orgs}
       user={{ email: user.email ?? undefined }}
+      plan={org.plan}
     >
       {/* Trial expired modal — client component, renders nothing if not expired */}
       <TrialExpiredModal
