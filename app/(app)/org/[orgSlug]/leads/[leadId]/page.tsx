@@ -52,6 +52,7 @@ export default async function LeadDetailPage({ params }: Props) {
     svc.from("lead_events")
        .select("id,event_type,entity_type,entity_id,title,metadata,created_at")
        .eq("org_id", org.id).eq("lead_id", params.leadId)
+       .is("deleted_at", null)
        .order("created_at", { ascending: false })
        .limit(100),
   ]);

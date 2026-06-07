@@ -25,6 +25,31 @@ async function assertMember(orgId: string) {
   return data ? user : null;
 }
 
+export async function PATCH(req: NextRequest, { params }: Params) {
+  const user = await assertMember(params.orgId);
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const body = await req.json().catch(() => ({}));
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const svc  = createServiceClient() as any;
+
+  const allowed = ["template_active", "next_run_at", "template_name"];
+  const update: Record<string, unknown> = {};
+  for (const k of allowed) {
+    if (k in body) update[k] = (body as Record<string, unknown>)[k];
+  }
+  update.updated_at = new Date().toISOString();
+
+  const { error } = await svc
+    .from("bookings")
+    .update(update)
+    .eq("id", params.bookingId)
+    .eq("org_id", params.orgId);
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ ok: true });
+}
+
 export async function DELETE(req: NextRequest, { params }: Params) {
   const user = await assertMember(params.orgId);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

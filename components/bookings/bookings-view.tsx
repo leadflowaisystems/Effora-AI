@@ -1,28 +1,33 @@
 "use client";
 
+import * as React from "react";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import {
   CalendarDays, CheckCircle2, AlertTriangle, Clock, ChevronDown, ChevronRight,
+  RefreshCw, Loader2, PlusCircle,
 } from "lucide-react";
 import { BookingCard, type BookingRow } from "./booking-card";
+import { RecurringBookingCard, type RecurringBookingRow } from "./recurring-booking-card";
 import { SimulateBookingSheet, type SimulateLead } from "./simulate-booking-sheet";
 import { ManualBookingSheet, type ManualBookingGroup } from "./manual-booking-sheet";
 import { TimeRangeFilter, readStoredFilter } from "@/components/filters/time-range-filter";
 import { SubCategoryTabs } from "@/components/filters/sub-category-tabs";
 import { parseRange, getRangeBounds, getFutureBounds, isInRange, isInFutureRange, type Range } from "@/lib/range";
 import { cn } from "@/lib/utils";
+import { toast } from "@/components/ui/use-toast";
 
 const STORAGE_KEY = "effora-bookings-filter";
 
-type Category = "all" | "upcoming" | "completed" | "no_show";
+type Category = "all" | "upcoming" | "completed" | "no_show" | "recurring";
 
 const CATEGORY_TABS = [
   { value: "all"       as Category, label: "All"       },
   { value: "upcoming"  as Category, label: "Upcoming"  },
   { value: "completed" as Category, label: "Completed" },
   { value: "no_show"   as Category, label: "No Show"   },
+  { value: "recurring" as Category, label: "Recurring" },
 ];
 
 interface Props {
@@ -145,7 +150,7 @@ export function BookingsView({ initialBookings, orgSlug, orgId, isDev, leads, gr
 
   const [category, setCategory] = useState<Category>(() => {
     const u = (searchParams.get("cat") ?? "") as Category;
-    return ["upcoming", "completed", "no_show"].includes(u) ? u : "all";
+    return ["upcoming", "completed", "no_show", "recurring"].includes(u) ? u : "all";
   });
   const [range, setRange]           = useState<Range>(() => {
     const stored = readStoredFilter(STORAGE_KEY);
@@ -159,6 +164,57 @@ export function BookingsView({ initialBookings, orgSlug, orgId, isDev, leads, gr
   const [stats, setStats]               = useState<BookingStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
+
+  // Recurring state
+  const [recurring, setRecurring]               = useState<RecurringBookingRow[]>([]);
+  const [recurringLoading, setRecurringLoading] = useState(false);
+  const [showRecurringForm, setShowRecurringForm] = useState(false);
+  const [rLead,  setRLead]  = useState("");
+  const [rName,  setRName]  = useState("");
+  const [rNotes, setRNotes] = useState("");
+  const [rFreq,  setRFreq]  = useState<"daily"|"weekly"|"monthly"|"yearly">("weekly");
+  const [rSaving, setRSaving] = useState(false);
+
+  const loadRecurring = useCallback(async () => {
+    setRecurringLoading(true);
+    try {
+      const res = await fetch(`/api/orgs/${orgId}/bookings/recurring`);
+      if (res.ok) {
+        const json = await res.json();
+        setRecurring(json.recurring ?? []);
+      }
+    } finally { setRecurringLoading(false); }
+  }, [orgId]);
+
+  useEffect(() => {
+    if (category === "recurring") loadRecurring();
+  }, [category, loadRecurring]);
+
+  async function createRecurring(e: React.FormEvent) {
+    e.preventDefault();
+    if (!rLead || !rName) return;
+    setRSaving(true);
+    try {
+      const res = await fetch(`/api/orgs/${orgId}/bookings/recurring`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({
+          lead_id:              rLead,
+          template_name:        rName,
+          notes:                rNotes || undefined,
+          recurrence_frequency: rFreq,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed");
+      toast({ title: "Recurring booking created", variant: "success" });
+      setShowRecurringForm(false);
+      setRLead(""); setRName(""); setRNotes("");
+      loadRecurring();
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed", variant: "destructive" });
+    } finally { setRSaving(false); }
+  }
 
   const fetchStats = useCallback(async (r: Range, cat: Category, cf?: string | null, ct?: string | null) => {
     abortRef.current?.abort();
@@ -217,6 +273,7 @@ export function BookingsView({ initialBookings, orgSlug, orgId, isDev, leads, gr
   const { from: futureFrom, to: futureTo } = getFutureBounds(range, customTo);
 
   const visibleBookings = bookings.filter((b) => {
+    if (category === "recurring") return false; // handled separately
     if (category === "upcoming") {
       return b.status === "confirmed" && isInFutureRange(b.starts_at, range, futureTo);
     }
@@ -263,8 +320,8 @@ export function BookingsView({ initialBookings, orgSlug, orgId, isDev, leads, gr
         <StatTile label="Completion %" value={`${stats?.completion_rate ?? 0}%`} color="text-blue-400" loading={statsLoading} />
       </div>
 
-      {/* ── Empty state ──────────────────────────────────── */}
-      {visibleBookings.length === 0 && (
+      {/* ── Empty state (non-recurring) ──────────────────── */}
+      {category !== "recurring" && visibleBookings.length === 0 && (
         <div className="flex flex-col items-center justify-center gap-4 py-16 text-center">
           <div className="flex h-14 w-14 items-center justify-center rounded-[var(--radius-lg)] bg-[var(--bg-3)]">
             <CalendarDays className="h-7 w-7 text-[var(--text-3)]" />
@@ -275,6 +332,90 @@ export function BookingsView({ initialBookings, orgSlug, orgId, isDev, leads, gr
               {isDev ? "Use Simulate above to create a test booking." : "Try a wider time range or check other categories."}
             </p>
           </div>
+        </div>
+      )}
+
+      {/* ── Recurring tab ────────────────────────────────── */}
+      {category === "recurring" && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowRecurringForm((v) => !v)}
+              className="inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] border border-emerald-500/30 bg-emerald-500/8 px-3 py-1.5 text-xs font-medium text-emerald-400 hover:bg-emerald-500/15 transition-colors"
+            >
+              <PlusCircle className="h-3.5 w-3.5" /> New recurring booking
+            </button>
+            <button onClick={loadRecurring} disabled={recurringLoading}
+              className="inline-flex items-center gap-1 text-xs text-[var(--text-3)] hover:text-[var(--text-2)] transition-colors">
+              <RefreshCw className={cn("h-3 w-3", recurringLoading && "animate-spin")} /> Refresh
+            </button>
+          </div>
+
+          {/* Create recurring form */}
+          {showRecurringForm && (
+            <form onSubmit={createRecurring} className="rounded-[var(--radius-md)] border border-emerald-500/20 bg-[var(--bg-2)] p-4 space-y-3">
+              <p className="text-sm font-semibold text-[var(--text)]">New recurring booking</p>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-[var(--text-2)]">Lead *</label>
+                <select value={rLead} onChange={(e) => setRLead(e.target.value)} required
+                  className="w-full rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-3)] px-2.5 py-1.5 text-xs text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--brand)]">
+                  <option value="">Select lead…</option>
+                  {leads.map((l) => <option key={l.id} value={l.id}>{l.name ?? "Unnamed"}</option>)}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-[var(--text-2)]">Session name *</label>
+                  <input value={rName} onChange={(e) => setRName(e.target.value)} required placeholder="Weekly Coaching Call"
+                    className="w-full rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-3)] px-2.5 py-1.5 text-xs text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--brand)]" />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-[var(--text-2)]">Frequency *</label>
+                  <select value={rFreq} onChange={(e) => setRFreq(e.target.value as typeof rFreq)}
+                    className="w-full rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-3)] px-2.5 py-1.5 text-xs text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--brand)]">
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly</option>
+                    <option value="yearly">Yearly</option>
+                  </select>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-[var(--text-2)]">Notes</label>
+                <input value={rNotes} onChange={(e) => setRNotes(e.target.value)} placeholder="e.g. 1-on-1 strategy session"
+                  className="w-full rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-3)] px-2.5 py-1.5 text-xs text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--brand)]" />
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button type="button" onClick={() => setShowRecurringForm(false)}
+                  className="rounded-[var(--radius-sm)] border border-[var(--border)] px-3 py-1.5 text-xs text-[var(--text-2)] hover:bg-[var(--bg-3)] transition-colors">
+                  Cancel
+                </button>
+                <button type="submit" disabled={rSaving}
+                  className="rounded-[var(--radius-sm)] bg-[var(--brand)] px-3 py-1.5 text-xs font-semibold text-[#0A0A0C] hover:opacity-90 disabled:opacity-50 flex items-center gap-1 transition-opacity">
+                  {rSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                  {rSaving ? "Creating…" : "Create"}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {recurringLoading && (
+            <div className="space-y-2">
+              {[1,2,3].map((i) => <div key={i} className="h-24 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-2)] animate-pulse" />)}
+            </div>
+          )}
+          {!recurringLoading && recurring.length === 0 && !showRecurringForm && (
+            <div className="text-center py-10 text-sm text-[var(--text-3)]">No recurring bookings set up yet.</div>
+          )}
+          {!recurringLoading && recurring.map((r) => (
+            <RecurringBookingCard
+              key={r.id}
+              booking={r}
+              orgId={orgId}
+              onUpdate={loadRecurring}
+              onDelete={(id) => setRecurring((prev) => prev.filter((b) => b.id !== id))}
+            />
+          ))}
         </div>
       )}
 

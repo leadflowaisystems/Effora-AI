@@ -20,7 +20,7 @@ import {
   Calendar, CreditCard, MessageSquare, StickyNote,
   CheckCircle2, Clock, AlertTriangle, XCircle,
   ChevronDown, ChevronRight, ExternalLink, Edit2, Save, X,
-  UserCircle,
+  UserCircle, Trash2,
 } from "lucide-react";
 import { LeadSearchSelector } from "./lead-search-selector";
 import { cn } from "@/lib/utils";
@@ -144,14 +144,20 @@ function eventIcon(eventType: string): { Icon: React.ElementType; color: string 
   }
 }
 
-function TimelineRow({ item, orgSlug }: { item: TimelineItem; orgSlug: string }) {
+function TimelineRow({ item, orgSlug, onDeleteEvent, deletingId }: {
+  item: TimelineItem;
+  orgSlug: string;
+  onDeleteEvent: (id: string) => void;
+  deletingId: string | null;
+}) {
   if (item.kind === "event") {
     const e = item.data;
     const { Icon, color } = eventIcon(e.event_type);
     const isArchived = e.event_type.endsWith("_archived");
     const isDeleted  = e.event_type.endsWith("_deleted");
+    const isDeleting = deletingId === e.id;
     return (
-      <div className="flex gap-3 py-2.5 border-b border-[var(--border)] last:border-0">
+      <div className="flex gap-3 py-2.5 border-b border-[var(--border)] last:border-0 group">
         <div className={cn("mt-0.5 shrink-0", color)}><Icon className="h-4 w-4" /></div>
         <div className="flex-1 min-w-0">
           <p className="text-sm text-[var(--text)]">
@@ -161,6 +167,16 @@ function TimelineRow({ item, orgSlug }: { item: TimelineItem; orgSlug: string })
           </p>
           <p className="text-xs text-[var(--text-3)]">{relTime(e.created_at)}</p>
         </div>
+        <button
+          onClick={() => onDeleteEvent(e.id)}
+          disabled={isDeleting}
+          className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-[var(--text-3)] hover:text-red-400 disabled:opacity-50"
+          title="Delete this history event"
+        >
+          {isDeleting
+            ? <span className="text-[10px] text-[var(--text-3)]">…</span>
+            : <Trash2 className="h-3.5 w-3.5" />}
+        </button>
       </div>
     );
   }
@@ -188,6 +204,20 @@ export function LeadDetail({ lead, conversations, bookings, payments, leadEvents
   const [notes, setNotes]       = React.useState(lead.notes ?? "");
   const [editNotes, setEditNotes] = React.useState(false);
   const [savingNotes, setSavingNotes] = React.useState(false);
+  const [events, setEvents] = React.useState<LeadEvent[]>(leadEvents);
+  const [deletingEvent, setDeletingEvent] = React.useState<string | null>(null);
+
+  async function deleteEvent(eventId: string) {
+    if (!confirm("Delete this history event permanently?")) return;
+    setDeletingEvent(eventId);
+    try {
+      const res = await fetch(`/api/orgs/${orgId}/leads/${lead.id}/events/${eventId}`, { method: "DELETE" });
+      if (res.ok) setEvents((prev) => prev.filter((e) => e.id !== eventId));
+      else toast({ title: "Failed to delete event", variant: "destructive" });
+    } finally {
+      setDeletingEvent(null);
+    }
+  }
 
   const phone     = (lead.metadata?.phone as string | null) ?? null;
   const igHandle  = (lead.metadata?.instagram_handle as string | null) ??
@@ -195,7 +225,7 @@ export function LeadDetail({ lead, conversations, bookings, payments, leadEvents
   const email     = (lead.metadata?.email as string | null) ?? null;
 
   const totalLtv  = payments.filter((p) => p.status === "paid").reduce((s, p) => s + p.amount_inr, 0);
-  const timeline  = buildTimeline(leadEvents, conversations);
+  const timeline  = buildTimeline(events, conversations);
 
   async function saveNotes() {
     setSavingNotes(true);
@@ -341,7 +371,13 @@ export function LeadDetail({ lead, conversations, bookings, payments, leadEvents
           ) : (
             <div>
               {timeline.map((item, i) => (
-                <TimelineRow key={`${item.kind}-${i}`} item={item} orgSlug={orgSlug} />
+                <TimelineRow
+                  key={`${item.kind}-${i}`}
+                  item={item}
+                  orgSlug={orgSlug}
+                  onDeleteEvent={deleteEvent}
+                  deletingId={deletingEvent}
+                />
               ))}
             </div>
           )}

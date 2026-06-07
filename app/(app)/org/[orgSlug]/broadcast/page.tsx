@@ -32,11 +32,11 @@ export default async function BroadcastPage({ params }: Props) {
     .eq("org_id", org.id).eq("approval_status", "approved").order("name");
   const templates = (tplRows ?? []) as Array<{ id: string; name: string; body: string; variables: string[]; approval_status: string }>;
 
-  // Load tags (from leads metadata) for recipient filtering — get distinct tags
+  // Load leads for recipient filtering — include all channels, no phone filter (IG leads have no phone)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: tagLeads } = await (svc as any).from("leads").select("id, name, phone, stage, tags")
-    .eq("org_id", org.id).is("deleted_at", null).not("phone", "is", null).limit(500);
-  const leads = (tagLeads ?? []) as Array<{ id: string; name: string | null; phone: string | null; stage: string; tags?: string[] }>;
+  const { data: tagLeads } = await (svc as any).from("leads").select("id, name, phone, channel, stage, tags")
+    .eq("org_id", org.id).is("deleted_at", null).limit(500);
+  const leads = (tagLeads ?? []) as Array<{ id: string; name: string | null; phone: string | null; channel: string; stage: string; tags?: string[] }>;
 
   // Collect distinct tags
   const allTags = Array.from(new Set(leads.flatMap((l) => l.tags ?? []))).sort();
