@@ -261,12 +261,12 @@ export const onBroadcastProcess = inngest.createFunction(
       });
     }
 
-    // ── 3. Mark broadcast completed ──────────────────────────────────────────
+    // ── 3. Mark broadcast with correct terminal status ───────────────────────
     await step.run("complete-broadcast", async () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const svcInner = createServiceClient() as any;
 
-      // Re-count from DB for accuracy
+      // Re-count from DB for accuracy (skipped deliveries don't affect status)
       const [sentRes, failedRes] = await Promise.all([
         svcInner.from("broadcast_deliveries").select("id", { count: "exact", head: true })
           .eq("broadcast_id", broadcast_id).eq("status", "sent"),
@@ -274,11 +274,21 @@ export const onBroadcastProcess = inngest.createFunction(
           .eq("broadcast_id", broadcast_id).eq("status", "failed"),
       ]);
 
+      const dbSent   = sentRes.count   ?? sentCount;
+      const dbFailed = failedRes.count ?? failedCount;
+
+      // completed = all sent (no failures)
+      // partial   = at least one sent AND at least one failed
+      // failed    = none sent (all failed or all skipped-as-failure)
+      const finalStatus =
+        dbSent > 0 && dbFailed === 0 ? "completed" :
+        dbSent > 0 && dbFailed  > 0  ? "partial"   : "failed";
+
       await svcInner.from("broadcasts").update({
-        status:       "completed",
+        status:       finalStatus,
         completed_at: new Date().toISOString(),
-        sent_count:   sentRes.count ?? sentCount,
-        failed_count: failedRes.count ?? failedCount,
+        sent_count:   dbSent,
+        failed_count: dbFailed,
       }).eq("id", broadcast_id);
     });
 

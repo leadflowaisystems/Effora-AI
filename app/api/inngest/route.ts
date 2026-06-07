@@ -20,6 +20,9 @@ import { onMetaTokenRefresh }           from "@/lib/inngest/functions/on-meta-to
 import { onWhatsAppMessageReceived }    from "@/lib/inngest/functions/on-whatsapp-message-received";
 import { onBroadcastProcess }           from "@/lib/inngest/functions/on-broadcast-process";
 import { onBroadcastCron }             from "@/lib/inngest/functions/on-broadcast-cron";
+import { onRecurringPaymentCron }      from "@/lib/inngest/functions/on-recurring-payment-cron";
+import { onScheduledPaymentCron }      from "@/lib/inngest/functions/on-scheduled-payment-cron";
+import { onRecurringBookingCron }      from "@/lib/inngest/functions/on-recurring-booking-cron";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -44,5 +47,8 @@ export const { GET, POST, PUT } = serve({
     onWhatsAppMessageReceived,
     onBroadcastProcess,
     onBroadcastCron,
+    onRecurringPaymentCron,
+    onScheduledPaymentCron,
+    onRecurringBookingCron,
   ],
 });
