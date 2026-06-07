@@ -68,7 +68,8 @@ const mainNav = [
   { href: "bookings",  label: "Bookings",   icon: CalendarDays    },
   { href: "payments",  label: "Payments",   icon: CreditCard      },
   { href: "sequences", label: "Sequences",  icon: GitBranch       },
-  { href: "coach",     label: "Coach",      icon: Target          },
+  { href: "coach",      label: "Coach",      icon: Target          },
+  { href: "manychats", label: "ManyChats",  icon: Zap             },
   { href: "dashboard", label: "Dashboard",  icon: LayoutDashboard },
 ] as const;
 
