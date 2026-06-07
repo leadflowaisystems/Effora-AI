@@ -48,6 +48,10 @@ export default async function LeadDetailPage({ params }: Props) {
     svc.from("payments")
        .select("id,amount_inr,status,payment_link_url,notes,created_at,updated_at,deleted_at")
        .eq("org_id", org.id).eq("lead_id", params.leadId)
+       // Filter out soft-deleted (archived) payments — "Delete Record" sets deleted_at.
+       // Hard-deleted payments are already gone from the DB.
+       // Revenue totals are NOT affected: the stats endpoint ignores deleted_at.
+       .is("deleted_at", null)
        .order("created_at", { ascending: false }),
     svc.from("lead_events")
        .select("id,event_type,entity_type,entity_id,title,metadata,created_at")

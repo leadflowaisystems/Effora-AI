@@ -1,12 +1,32 @@
 /**
+ * PATCH /api/orgs/[orgId]/payments/[paymentId]
+ *   Update template_active / next_run_at / template_name on a recurring template.
+ *
  * DELETE /api/orgs/[orgId]/payments/[paymentId]
  *
- * Without query params:  soft-delete — sets deleted_at = NOW().
- *   Payment is hidden from the list but preserved for reports + lead history.
+ * Two distinct modes, selected by ?mode=
  *
- * ?mode=hard:            hard delete — permanently removes the payment row.
- *   Disappears from lists, revenue totals, and lead history.
- *   Requires client-side confirmation before calling.
+ * ── ?mode=archive  (default when no mode is supplied) ────────────────────────
+ *   "Delete Record" — CRM / lead-history cleanup only.
+ *
+ *   • Sets deleted_at on the payment row  →  hidden from lead detail & CRM lists.
+ *   • Soft-deletes all lead_events tied to this payment  →  hidden from timeline.
+ *   • Payment row is NOT removed from the database.
+ *   • Stats endpoint deliberately ignores deleted_at (Refinement-1 rule), so:
+ *       - Collected revenue totals  UNCHANGED
+ *       - Pending totals            UNCHANGED
+ *       - Dashboard metrics         UNCHANGED
+ *       - Historical reports        UNCHANGED
+ *
+ * ── ?mode=hard ───────────────────────────────────────────────────────────────
+ *   "Delete Payment" — permanent financial deletion.
+ *
+ *   • Hard-deletes the payment row from the database.
+ *   • Hard-deletes all associated lead_events.
+ *   • Because the row is gone, the stats endpoint will NO LONGER count it:
+ *       - Paid payment   → collected revenue DECREASES by amount_inr
+ *       - Pending payment → pending total    DECREASES by amount_inr
+ *   • Irreversible. Requires client-side confirmation before calling.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -54,35 +74,69 @@ export async function DELETE(req: NextRequest, { params }: Params) {
   const user = await assertMember(params.orgId);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const mode = req.nextUrl.searchParams.get("mode");
+  const mode = req.nextUrl.searchParams.get("mode") ?? "archive";
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const svc  = createServiceClient() as any;
+  const now  = new Date().toISOString();
 
-  // Fetch lead_id before deleting so we can write the event
+  // Load payment before any mutation so we have lead_id + amount for the audit event
   const { data: pay } = await svc
     .from("payments")
-    .select("lead_id, amount_inr")
+    .select("lead_id, amount_inr, status")
     .eq("id", params.paymentId)
     .eq("org_id", params.orgId)
     .single();
-  const leadId   = (pay as { lead_id: string; amount_inr: number } | null)?.lead_id ?? null;
-  const amountInr = (pay as { lead_id: string; amount_inr: number } | null)?.amount_inr ?? 0;
 
+  const leadId    = (pay as { lead_id: string; amount_inr: number; status: string } | null)?.lead_id  ?? null;
+  const amountInr = (pay as { lead_id: string; amount_inr: number; status: string } | null)?.amount_inr ?? 0;
+  const status    = (pay as { lead_id: string; amount_inr: number; status: string } | null)?.status    ?? "unknown";
+
+  // ── ARCHIVE ("Delete Record") ─────────────────────────────────────────────
+  // CRM visibility only. Revenue + dashboard metrics are UNAFFECTED because
+  // the stats endpoint excludes deleted_at from its filter (Refinement-1 rule).
+  if (mode === "archive") {
+    const { error: payErr } = await svc
+      .from("payments")
+      .update({ deleted_at: now, updated_at: now })
+      .eq("id", params.paymentId)
+      .eq("org_id", params.orgId);
+
+    if (payErr) {
+      console.error("[payments/archive]", payErr.message);
+      return NextResponse.json({ error: payErr.message }, { status: 500 });
+    }
+
+    // Soft-delete every lead_event tied to this payment so the timeline stays clean.
+    // This does NOT delete accounting data — just hides the CRM annotation.
+    await svc
+      .from("lead_events")
+      .update({ deleted_at: now })
+      .eq("org_id", params.orgId)
+      .eq("entity_type", "payment")
+      .eq("entity_id", params.paymentId);
+
+    // No new event written — the record is simply hidden, not destroyed.
+    return NextResponse.json({ ok: true, mode: "archive" });
+  }
+
+  // ── HARD DELETE ("Delete Payment") ───────────────────────────────────────
+  // Permanently removes the payment row and all associated audit entries.
+  // The stats endpoint will no longer see this row, so financial totals change:
+  //   paid    → collected revenue decreases by amount_inr
+  //   pending → pending total decreases by amount_inr
   if (mode === "hard") {
-    // Permanent deletion — remove the row entirely.
-    const { error } = await svc
+    const { error: delErr } = await svc
       .from("payments")
       .delete()
       .eq("id", params.paymentId)
       .eq("org_id", params.orgId);
 
-    if (error) {
-      console.error("[payments/hard-delete]", error.message);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    if (delErr) {
+      console.error("[payments/hard-delete]", delErr.message);
+      return NextResponse.json({ error: delErr.message }, { status: 500 });
     }
 
-    // Remove all lead_events tied to this payment entity so they don't linger
-    // in the activity timeline after the payment is gone.
+    // Hard-delete every lead_event tied to this payment.
     await svc
       .from("lead_events")
       .delete()
@@ -90,35 +144,21 @@ export async function DELETE(req: NextRequest, { params }: Params) {
       .eq("entity_type", "payment")
       .eq("entity_id", params.paymentId);
 
+    // Write a brief audit trail noting the permanent deletion.
     if (leadId) {
       void writeLeadEvent({
-        orgId: params.orgId, leadId,
-        eventType: "payment_deleted", entityType: "payment", entityId: params.paymentId,
-        title: `Payment permanently deleted — ₹${amountInr.toLocaleString("en-IN")}`,
-        metadata: { amount_inr: amountInr },
+        orgId:      params.orgId,
+        leadId,
+        eventType:  "payment_deleted",
+        entityType: "payment",
+        entityId:   params.paymentId,
+        title:      `Payment permanently deleted — ₹${amountInr.toLocaleString("en-IN")} (${status})`,
+        metadata:   { amount_inr: amountInr, status },
       });
     }
-  } else {
-    // Soft delete — hide from list, preserve for reports + lead history.
-    const { error } = await svc
-      .from("payments")
-      .update({ deleted_at: new Date().toISOString() })
-      .eq("id", params.paymentId)
-      .eq("org_id", params.orgId);
 
-    if (error) {
-      console.error("[payments/soft-delete]", error.message);
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-    if (leadId) {
-      void writeLeadEvent({
-        orgId: params.orgId, leadId,
-        eventType: "payment_archived", entityType: "payment", entityId: params.paymentId,
-        title: `Payment removed from list — ₹${amountInr.toLocaleString("en-IN")}`,
-        metadata: { amount_inr: amountInr },
-      });
-    }
+    return NextResponse.json({ ok: true, mode: "hard" });
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ error: `Unknown mode: ${mode}` }, { status: 400 });
 }
