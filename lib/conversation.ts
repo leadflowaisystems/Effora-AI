@@ -34,14 +34,21 @@ export async function getOrCreateConversation(
   // Use maybeSingle() so "no rows" returns null rather than a PGRST116 error.
   const { data: existing } = await svc
     .from("conversations")
-    .select("id")
+    .select("id, channel_provider")
     .eq("org_id", orgId)
     .eq("lead_id", leadId)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
-  if (existing?.id) return (existing as { id: string }).id;
+  if (existing?.id) {
+    // DIAG — log what channel_provider the existing conversation actually has
+    // This is critical: if it's "whatsapp" (legacy) instead of "whatsapp_cloud",
+    // WA delivery will be silently skipped in deliverOutboundMessage.
+    const existingProvider = (existing as { id: string; channel_provider?: string }).channel_provider ?? "(null)";
+    console.log(`[getOrCreateConv] DIAG FOUND existing conv=${existing.id} stored_channel_provider="${existingProvider}" requested_channel_provider="${channelProvider}" lead_id="${leadId}" match=${existingProvider === channelProvider}`);
+    return (existing as { id: string }).id;
+  }
 
   // Create a new one.
   // NOTE: do NOT include `status` here — that column was never added to the
@@ -130,6 +137,9 @@ export async function deliverOutboundMessage(
   const channelProvider = (conv as { channel_provider?: string; lead_id?: string } | null)?.channel_provider ?? "";
   const leadId          = (conv as { channel_provider?: string; lead_id?: string } | null)?.lead_id ?? "";
 
+  // DIAG — log every resolve so we can see exactly what provider was found
+  console.log(`[deliverOutbound] DIAG conv=${conversationId} channel_provider="${channelProvider}" lead_id="${leadId}" source="${source}" wa_match=${WA_PROVIDERS.has(channelProvider)} ig_match=${IG_PROVIDERS.has(channelProvider)}`);
+
   let providerMessageId: string | null = null;
   let delivered = false;
   const deliveryMeta: Record<string, string> = {};
@@ -202,6 +212,9 @@ export async function deliverOutboundMessage(
     const waPhone    = rawExtId.replace(/^wa_/, "");
     const hasPhone   = !!waPhone;
 
+    // DIAG — log external_id and resolved phone before attempting delivery
+    console.log(`[wa-send] DIAG conv=${conversationId} lead_id="${leadId}" raw_external_id="${rawExtId}" wa_phone="${waPhone}" has_phone=${hasPhone} source="${source}"`);
+
     if (!hasPhone) {
       console.log(`[wa-send] automation skipping — external_id="${rawExtId}" has no phone conv=${conversationId}`);
     } else {
@@ -225,6 +238,9 @@ export async function deliverOutboundMessage(
         }
       }
     }
+  } else if (!WA_PROVIDERS.has(channelProvider) && !IG_PROVIDERS.has(channelProvider)) {
+    // DIAG — channel_provider is neither WA nor IG — delivery silently skipped
+    console.log(`[deliverOutbound] DIAG NO_DELIVERY_ATTEMPTED conv=${conversationId} channel_provider="${channelProvider}" source="${source}" — not in WA_PROVIDERS or IG_PROVIDERS`);
   }
 
   // ── 3. Store message (always — even on delivery failure) ──────────────────
