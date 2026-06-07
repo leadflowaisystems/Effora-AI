@@ -186,8 +186,12 @@ export async function POST(req: NextRequest, { params }: Params) {
       console.log(`[payments/group-link-generate] DIAG lead=${lead.id} conv_id="${convId}"`);
 
       // Update payment row with conversation_id (safe to fail — non-critical)
-      await svc.from("payments").update({ conversation_id: convId })
-        .eq("id", (payment as { id: string }).id).catch(() => null);
+      const { error: convLinkErr } = await svc.from("payments")
+        .update({ conversation_id: convId })
+        .eq("id", (payment as { id: string }).id);
+      if (convLinkErr) {
+        console.warn(`[payments/group-link-generate] DIAG conv_link_update failed lead=${lead.id} err="${convLinkErr.message}"`);
+      }
 
       // deliverOutboundMessage: sends to real WA/IG channel AND stores to DB
       const deliverResult = await deliverOutboundMessage(convId, params.orgId, msg, "group_payment_request");
