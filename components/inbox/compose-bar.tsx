@@ -146,8 +146,8 @@ export function ComposeBar({ orgId, convId, onSent, disabled, channelProvider }:
         const reason = json.delivery_error ?? "unknown";
         if (reason === "meta_permission_development_mode") {
           toast({
-            title:       "Instagram blocked — App Review required",
-            description: "Your Meta app is in Development Mode. Only App testers can receive messages.",
+            title:       "Message saved",
+            description: "This contact can't receive Instagram messages right now. Contact support if this persists.",
             variant:     "destructive",
           });
         } else if (reason === "outside_24h_window") {

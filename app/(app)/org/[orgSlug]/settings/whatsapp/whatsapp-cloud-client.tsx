@@ -42,7 +42,6 @@ export function WhatsAppCloudClient({ orgId, isConnected, displayPhone }: Props)
     }
   }
 
-  const appUrl   = typeof window !== "undefined" ? window.location.origin : "";
   const inputCls = "w-full rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-3)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-3)] focus:outline-none focus:ring-1 focus:ring-[var(--brand)] font-mono";
   const labelCls = "block text-xs font-medium text-[var(--text-2)] mb-1";
 
@@ -72,18 +71,18 @@ export function WhatsAppCloudClient({ orgId, isConnected, displayPhone }: Props)
       ) : (
         <div className="space-y-3">
           <div>
-            <label className={labelCls}>WABA ID (WhatsApp Business Account ID) *</label>
+            <label className={labelCls}>Business Account ID *</label>
             <input value={wabaId} onChange={(e) => setWabaId(e.target.value)}
               className={inputCls} placeholder="123456789012345" />
           </div>
           <div>
-            <label className={labelCls}>Phone Number ID *</label>
+            <label className={labelCls}>WhatsApp Phone Number *</label>
             <input value={phoneNumId} onChange={(e) => setPhoneNumId(e.target.value)}
               className={inputCls} placeholder="987654321098765" />
           </div>
           <div>
             <label className={labelCls}>
-              Permanent Access Token *{" "}
+              API Token *{" "}
               {isConnected && <span className="text-[var(--text-3)] font-normal">(leave blank to keep existing)</span>}
             </label>
             <div className="relative">
@@ -99,18 +98,15 @@ export function WhatsAppCloudClient({ orgId, isConnected, displayPhone }: Props)
             <p className="text-[11px] text-[var(--text-3)] mt-1">
               <a href="https://docs.effora.ai/whatsapp-setup" target="_blank" rel="noopener"
                 className="text-[var(--brand)] hover:underline inline-flex items-center gap-0.5">
-                Setup guide: get tokens from Meta Business Suite <ExternalLink className="h-3 w-3" />
+                Setup guide: get your connection credentials <ExternalLink className="h-3 w-3" />
               </a>
             </p>
           </div>
 
           <div className="rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-2)] p-3 space-y-1.5 text-xs text-[var(--text-3)]">
-            <p className="font-medium text-[var(--text-2)]">Webhook config for Meta Business Suite:</p>
-            <p>Callback URL: <code className="text-[var(--brand)]">{appUrl}/api/webhooks/whatsapp</code></p>
-            <p>Subscribe to: <code className="text-[var(--text-2)]">messages</code></p>
             <p className="flex items-center gap-1">
               <AlertCircle className="h-3 w-3 shrink-0 text-amber-400" />
-              <span className="text-amber-400/80">After 24h window, only approved templates can be sent (WhatsApp policy)</span>
+              <span className="text-amber-400/80">After 24 hours, only pre-approved message templates can be sent (WhatsApp policy).</span>
             </p>
           </div>
 

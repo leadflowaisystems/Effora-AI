@@ -70,7 +70,6 @@ export default async function InstagramSettingsPage({ params, searchParams }: Pr
     verified: boolean; created_at: string;
   }[];
 
-  const appUrl   = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai-qh35.vercel.app";
   const connectUrl = `/api/auth/meta/connect?orgSlug=${params.orgSlug}`;
 
   return (
@@ -124,13 +123,6 @@ export default async function InstagramSettingsPage({ params, searchParams }: Pr
           </div>
         ) : (
           <div className="space-y-3">
-            <div className="rounded-[var(--radius)] border border-amber-500/20 bg-amber-500/5 p-3">
-              <p className="text-xs text-amber-400/90 leading-relaxed">
-                <strong>Before you connect:</strong> Your Meta App must be submitted for review and
-                approved by Meta (1–3 weeks). Until then you can connect your own Instagram account
-                for testing in development mode.
-              </p>
-            </div>
             <ConnectComplianceButton
               orgId={org.id}
               channel="instagram"
@@ -153,50 +145,47 @@ export default async function InstagramSettingsPage({ params, searchParams }: Pr
         )}
       </div>
 
-      {/* ── Section 2: Token auto-refresh ── */}
+      {/* ── Section 2: Connection maintenance ── */}
       <div className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--bg-1)] p-5 space-y-3">
         <div className="flex items-center gap-2">
           <RefreshCw className="h-4 w-4 text-[var(--text-3)]" />
-          <p className="text-sm font-medium text-[var(--text)]">Auto-refresh tokens</p>
+          <p className="text-sm font-medium text-[var(--text)]">Connection maintenance</p>
         </div>
         <p className="text-xs text-[var(--text-3)] leading-relaxed">
-          Meta access tokens expire after 60 days. Effora AI automatically refreshes them
-          daily at 4 AM when they&apos;re within 7 days of expiry.
+          Your Instagram connection is maintained automatically. No action needed.
         </p>
 
-        {isConnected && tokenDaysLeft !== null && (
-          <div className={`flex items-center gap-2 rounded-[var(--radius)] border px-3 py-2 ${tokenDaysLeft <= 7 ? "border-amber-500/30 bg-amber-500/5" : "border-[var(--border)] bg-[var(--bg-2)]"}`}>
-            {tokenDaysLeft <= 7
-              ? <AlertCircle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
-              : <CheckCircle2 className="h-3.5 w-3.5 text-[var(--brand)] shrink-0" />}
-            <p className={`text-xs ${tokenDaysLeft <= 7 ? "text-amber-400" : "text-[var(--text-3)]"}`}>
-              {tokenDaysLeft <= 7
-                ? `Token expires in ${tokenDaysLeft} days — will auto-refresh tonight.`
-                : `Token valid for ${tokenDaysLeft} more days.`}
+        {isConnected && tokenDaysLeft !== null && tokenDaysLeft <= 7 && (
+          <div className="flex items-center gap-2 rounded-[var(--radius)] border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+            <AlertCircle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+            <p className="text-xs text-amber-400">
+              Connection will refresh automatically soon.
             </p>
           </div>
         )}
 
+        {isConnected && (tokenDaysLeft === null || tokenDaysLeft > 7) && (
+          <div className="flex items-center gap-2 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-2">
+            <CheckCircle2 className="h-3.5 w-3.5 text-[var(--brand)] shrink-0" />
+            <p className="text-xs text-[var(--text-3)]">Connection healthy.</p>
+          </div>
+        )}
+
         {!isConnected && (
-          <p className="text-xs text-[var(--text-3)] italic">Connect an account to see token status.</p>
+          <p className="text-xs text-[var(--text-3)] italic">Connect an account to see connection status.</p>
         )}
       </div>
 
-      {/* ── Section 3: Webhook debug ── */}
+      {/* ── Section 3: Recent activity ── */}
       <div className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--bg-1)] p-5 space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Activity className="h-4 w-4 text-[var(--text-3)]" />
-            <p className="text-sm font-medium text-[var(--text)]">Webhook status</p>
-          </div>
-          <span className="text-[10px] text-[var(--text-3)] font-mono">
-            {appUrl}/api/webhooks/meta/instagram
-          </span>
+        <div className="flex items-center gap-2">
+          <Activity className="h-4 w-4 text-[var(--text-3)]" />
+          <p className="text-sm font-medium text-[var(--text)]">Recent activity</p>
         </div>
 
         {webhookEvents.length === 0 ? (
           <p className="text-xs text-[var(--text-3)] italic">
-            No webhook events received yet. Events appear here once Meta starts delivering messages.
+            No messages received yet. Activity will appear here once your account starts receiving DMs.
           </p>
         ) : (
           <div className="space-y-1.5">
@@ -208,11 +197,6 @@ export default async function InstagramSettingsPage({ params, searchParams }: Pr
                 <div className="flex items-center gap-2 min-w-0">
                   <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${ev.verified ? "bg-[var(--brand)]" : "bg-amber-400"}`} />
                   <span className="text-xs text-[var(--text-2)] truncate">{ev.event_type}</span>
-                  {ev.sender_id && (
-                    <span className="text-[10px] text-[var(--text-3)] truncate font-mono">
-                      from {ev.sender_id}
-                    </span>
-                  )}
                 </div>
                 <span className="text-[10px] text-[var(--text-3)] shrink-0 ml-2">
                   {new Date(ev.created_at).toLocaleTimeString()}
@@ -221,12 +205,6 @@ export default async function InstagramSettingsPage({ params, searchParams }: Pr
             ))}
           </div>
         )}
-
-        <p className="text-[10px] text-[var(--text-3)] leading-relaxed">
-          Green dot = signature verified. Configure webhook in Meta Developer Console:
-          Callback URL above, Verify Token from META_WEBHOOK_VERIFY_TOKEN env var.
-          Subscribe to: <span className="font-mono">messages, messaging_postbacks, message_reads</span>
-        </p>
       </div>
     </div>
   );

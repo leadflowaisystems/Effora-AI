@@ -185,7 +185,7 @@ export function TemplatesClient({ orgId, initialTemplates }: Props) {
 
           <div className="flex items-center gap-1 rounded-[var(--radius-sm)] bg-amber-500/5 border border-amber-500/20 px-2.5 py-2">
             <AlertTriangle className="h-3 w-3 text-amber-400 shrink-0" />
-            <p className="text-[10px] text-amber-400/80">Templates must be submitted to Meta for approval before use. Approval takes 24–72 hours.</p>
+            <p className="text-[10px] text-amber-400/80">Templates are reviewed before use. Approval typically takes 24–72 hours.</p>
           </div>
 
           <div className="flex items-center gap-2">

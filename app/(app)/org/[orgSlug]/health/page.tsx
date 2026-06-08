@@ -5,7 +5,6 @@ import { redirect, notFound } from "next/navigation";
 import {
   Calendar, CreditCard, Mic, ArrowRight,
   CheckCircle2, Activity, Instagram, Zap, Phone,
-  AlertTriangle,
 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -54,11 +53,7 @@ export default async function HealthPage({ params }: { params: { orgSlug: string
   const igRow    = intMap["meta_instagram"];
   const igActive = !!(igRow?.active);
   const igUser   = (igRow?.config as Record<string, string> | undefined)?.ig_username ?? "";
-  const igExpiry = (igRow?.config as Record<string, string> | undefined)?.token_expires_at;
-  const igDaysLeft = igExpiry
-    ? Math.max(0, Math.floor((new Date(igExpiry).getTime() - Date.now()) / 86400000))
-    : null;
-  const metaAppMode = process.env.META_APP_MODE ?? "dev";
+
 
   // Quota
   const today = new Date().toISOString().slice(0, 10);
@@ -108,15 +103,6 @@ export default async function HealthPage({ params }: { params: { orgSlug: string
 
         {/* Instagram — full OAuth card */}
         <div className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--bg-1)] p-4 space-y-3">
-          {metaAppMode !== "live" && (
-            <div className="flex items-start gap-2 rounded-[var(--radius)] border border-amber-500/30 bg-amber-500/5 px-3 py-2">
-              <AlertTriangle className="h-3.5 w-3.5 text-amber-400 shrink-0 mt-0.5" />
-              <p className="text-xs text-amber-400/90 leading-relaxed">
-                Real-time Instagram sync is awaiting Meta App approval (typical wait: 1–3 weeks).
-                Connect button works only for test accounts until then.
-              </p>
-            </div>
-          )}
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3 min-w-0">
               <div className={cn(
@@ -139,8 +125,8 @@ export default async function HealthPage({ params }: { params: { orgSlug: string
                 </div>
                 <p className="text-xs text-[var(--text-3)] mt-0.5 truncate">
                   {igActive
-                    ? `@${igUser}${igDaysLeft !== null ? ` · token expires in ${igDaysLeft}d` : ""}`
-                    : "Connect your Instagram Business account via Effora AI OAuth"}
+                    ? `@${igUser}`
+                    : "Connect your Instagram Business account to receive DMs"}
                 </p>
               </div>
             </div>
@@ -259,7 +245,7 @@ export default async function HealthPage({ params }: { params: { orgSlug: string
                     <p className="text-xs text-[var(--text-3)] mt-0.5 truncate">
                       {waActive
                         ? `Cloud API active · ${waPhone}`
-                        : "Paste your WABA credentials for real-time WhatsApp inbox"}
+                        : "Connect your WhatsApp Business account for real-time messaging"}
                     </p>
                     {waCloud && <p className="text-[10px] text-[var(--text-3)]/60 mt-0.5">Connected {fmtDate(waCloud.updated_at)}</p>}
                   </div>

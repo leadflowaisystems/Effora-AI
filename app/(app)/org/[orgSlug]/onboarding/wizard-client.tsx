@@ -453,7 +453,7 @@ const CHANNELS: {
   {
     id: "meta",
     name: "Meta (Instagram API)",
-    desc: "Official Instagram Business API. Requires Meta App review and a Business account.",
+    desc: "Official Instagram Business API. Requires an Instagram Business account.",
     initials: "IG",
     live: false,
   },

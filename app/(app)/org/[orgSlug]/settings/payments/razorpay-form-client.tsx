@@ -67,7 +67,7 @@ export function RazorpaySettingsForm({ orgId, orgSlug, initialKeyId, isConnected
       )}
 
       <div className="space-y-1.5">
-        <Label htmlFor="rz-key-id">Razorpay Key ID <span className="text-[var(--brand)] font-medium">*</span></Label>
+        <Label htmlFor="rz-key-id">API Key <span className="text-[var(--brand)] font-medium">*</span></Label>
         <Input
           id="rz-key-id"
           placeholder="rzp_live_..."
@@ -77,7 +77,7 @@ export function RazorpaySettingsForm({ orgId, orgSlug, initialKeyId, isConnected
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="rz-key-secret">Razorpay Key Secret <span className="text-[var(--brand)] font-medium">*</span></Label>
+        <Label htmlFor="rz-key-secret">Secret Key <span className="text-[var(--brand)] font-medium">*</span></Label>
         <div className="relative flex items-center">
           <Input
             id="rz-key-secret"
