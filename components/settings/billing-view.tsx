@@ -71,14 +71,31 @@ export function BillingView({
   }
 
   async function handleCancel() {
-    if (!confirm("Cancel your subscription? You'll keep access until the end of the billing period.")) return;
+    if (!confirm(
+      "Cancel your Effora AI subscription?\n\n" +
+      "• Your plan stays active until the current billing period ends.\n" +
+      "• After that, AI replies, broadcasts, and automations will pause.\n" +
+      "• Your data (leads, bookings, payments) is never deleted.\n\n" +
+      "You can re-subscribe at any time."
+    )) return;
     setCancelLoading(true);
-    await fetch("/api/billing/cancel", {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ orgId }),
-    });
-    setCancelLoading(false);
+    try {
+      const res = await fetch("/api/billing/cancel", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ orgId }),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        alert(json.error ?? "Failed to cancel subscription. Please try again or contact support.");
+        return;
+      }
+    } catch {
+      alert("Network error. Please try again.");
+      return;
+    } finally {
+      setCancelLoading(false);
+    }
     window.location.reload();
   }
 

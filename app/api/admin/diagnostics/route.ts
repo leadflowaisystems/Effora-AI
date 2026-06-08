@@ -7,11 +7,15 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { isAdminEmail } from "@/lib/admin";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(req: NextRequest) {
+export async function GET(_req: NextRequest) {
   // ── Admin gate ────────────────────────────────────────────────
+  // Use isAdminEmail() for consistent, case-insensitive comparison.
+  // The previous inline check used adminEmails.includes(userEmail) without
+  // .toLowerCase() on the user email — isAdminEmail() normalises both sides.
   let userEmail: string | null = null;
   try {
     const supabase = createClient();
@@ -22,8 +26,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Auth failed" }, { status: 401 });
   }
 
-  const adminEmails = (process.env.ADMIN_EMAILS ?? "").split(",").map((e) => e.trim()).filter(Boolean);
-  if (!userEmail || !adminEmails.includes(userEmail)) {
+  if (!isAdminEmail(userEmail)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -52,7 +55,7 @@ export async function GET(req: NextRequest) {
       meta_webhook_verify:    !!process.env.META_WEBHOOK_VERIFY_TOKEN,
       razorpay_key_id:        !!process.env.RAZORPAY_KEY_ID,
       razorpay_key_secret:    !!process.env.RAZORPAY_KEY_SECRET,
-      admin_emails:           adminEmails.length,
+      admin_emails:           (process.env.ADMIN_EMAILS ?? "").split(",").filter(Boolean).length,
     },
     runtime:   process.env.VERCEL ? "vercel" : "local",
     node_env:  process.env.NODE_ENV,

@@ -9,6 +9,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export function GET() {
+  // NOTE: Never expose any credential values, usernames, or length hints here.
+  // This endpoint is public (used by uptime monitors) — only booleans allowed.
   const smtpUser = process.env.SMTP_USER ?? process.env.BREVO_SMTP_USER ?? "";
   const smtpPass = process.env.SMTP_PASS ?? process.env.BREVO_SMTP_PASS ?? "";
 
@@ -17,8 +19,6 @@ export function GET() {
     time: new Date().toISOString(),
     email: {
       configured: !!(smtpUser && smtpPass),
-      user:       smtpUser ? `${smtpUser.slice(0, 6)}…` : "MISSING — set SMTP_USER or BREVO_SMTP_USER",
-      pass:       smtpPass ? `set (length ${smtpPass.length})` : "MISSING — set SMTP_PASS or BREVO_SMTP_PASS",
     },
   });
 }

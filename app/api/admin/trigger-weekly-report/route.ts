@@ -5,6 +5,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { isAdminEmail } from "@/lib/admin";
 import { inngest } from "@/lib/inngest/client";
 
 export async function POST(_req: NextRequest) {
@@ -12,8 +13,8 @@ export async function POST(_req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const adminEmails = (process.env.ADMIN_EMAILS ?? "").split(",").map((e) => e.trim());
-  if (!adminEmails.includes(user.email ?? "")) {
+  // Use isAdminEmail for case-insensitive, consistent admin gate
+  if (!isAdminEmail(user.email)) {
     return NextResponse.json({ error: "Admin only" }, { status: 403 });
   }
 

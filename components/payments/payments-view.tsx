@@ -12,6 +12,7 @@ import { PaymentActionsSheet, type PaymentActionGroup } from "./payment-actions-
 import { ManualPaymentSheet, type ManualPaymentGroup } from "./manual-payment-sheet";
 import { TimeRangeFilter, readStoredFilter } from "@/components/filters/time-range-filter";
 import { SubCategoryTabs } from "@/components/filters/sub-category-tabs";
+import { EmptyState } from "@/components/ui/empty-state";
 import { parseRange, getRangeBounds, isInRange, type Range } from "@/lib/range";
 import { cn } from "@/lib/utils";
 import { toast } from "@/components/ui/use-toast";
@@ -413,7 +414,19 @@ export function PaymentsView({ initialPayments, orgId, orgSlug: _slug, isDev, le
             </div>
           )}
           {!recurringLoading && recurring.length === 0 && !showRecurringForm && (
-            <div className="text-center py-10 text-sm text-[var(--text-3)]">No recurring payments set up yet.</div>
+            <EmptyState
+              icon={<RefreshCw className="h-5 w-5" />}
+              title="No recurring payments yet"
+              description="Set up a recurring payment template to automatically send payment links to a lead or group on a schedule."
+              action={
+                <button
+                  onClick={() => setShowRecurringForm(true)}
+                  className="inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] bg-[var(--brand)] px-3 py-1.5 text-xs font-semibold text-[#0A0A0C] hover:opacity-90 transition-opacity"
+                >
+                  <PlusCircle className="h-3.5 w-3.5" /> Create first recurring payment
+                </button>
+              }
+            />
           )}
           {!recurringLoading && recurring.map((r) => (
             <RecurringPaymentCard

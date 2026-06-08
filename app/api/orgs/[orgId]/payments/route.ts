@@ -8,6 +8,7 @@ import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { createPaymentLink } from "@/lib/razorpay";
 import { sendChannelMessage } from "@/lib/booking";
 import { inngest } from "@/lib/inngest/client";
+import { withErrorHandler } from "@/lib/api-handler";
 
 interface Params { params: { orgId: string } }
 
@@ -21,7 +22,7 @@ async function assertMember(orgId: string) {
   return data ? user : null;
 }
 
-export async function GET(req: NextRequest, { params }: Params) {
+async function getHandler(req: NextRequest, { params }: Params) {
   const user = await assertMember(params.orgId);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -44,7 +45,10 @@ export async function GET(req: NextRequest, { params }: Params) {
   if (cursor) query = query.lt("created_at", cursor);
 
   const { data, error } = await query;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    console.error("[payments GET] db error:", error.message);
+    return NextResponse.json({ error: "Failed to load payments" }, { status: 500 });
+  }
 
   const rows       = (data ?? []);
   const hasMore    = rows.length > limit;
@@ -54,7 +58,7 @@ export async function GET(req: NextRequest, { params }: Params) {
   return NextResponse.json({ payments: items, next_cursor: nextCursor });
 }
 
-export async function POST(req: NextRequest, { params }: Params) {
+async function postHandler(req: NextRequest, { params }: Params) {
   const user = await assertMember(params.orgId);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -69,14 +73,19 @@ export async function POST(req: NextRequest, { params }: Params) {
   if (!leadId)   return NextResponse.json({ error: "leadId required" },   { status: 400 });
   if (!amountInr || amountInr <= 0)
     return NextResponse.json({ error: "amountInr must be > 0" }, { status: 400 });
+  // Cap at ₹50,00,000 (50 lakh) — prevents metric inflation from invalid inputs
+  if (amountInr > 5_000_000)
+    return NextResponse.json({ error: "amountInr cannot exceed ₹50,00,000" }, { status: 400 });
 
   const svc  = createServiceClient();
   const now  = new Date().toISOString();
   const orgId = params.orgId;
 
-  // Get lead info for customer details
+  // Get lead info — MUST belong to this org (prevents cross-org ID injection)
   const { data: lead } = await svc
-    .from("leads").select("name").eq("id", leadId).single();
+    .from("leads").select("name").eq("id", leadId).eq("org_id", orgId).single();
+
+  if (!lead) return NextResponse.json({ error: "Lead not found" }, { status: 404 });
   const leadName = (lead as { name: string | null } | null)?.name ?? undefined;
 
   // Try to create a real Razorpay payment link
@@ -104,7 +113,8 @@ export async function POST(req: NextRequest, { params }: Params) {
   }).select("id").single();
 
   if (error || !payment) {
-    return NextResponse.json({ error: error?.message ?? "Failed to create payment" }, { status: 500 });
+    console.error("[payments POST] insert error:", error?.message);
+    return NextResponse.json({ error: "Failed to create payment" }, { status: 500 });
   }
 
   const paymentId = (payment as { id: string }).id;
@@ -128,3 +138,6 @@ export async function POST(req: NextRequest, { params }: Params) {
     razorpayConfigured: !!linkResult,
   });
 }
+
+export const GET  = withErrorHandler("payments",      getHandler);
+export const POST = withErrorHandler("payments/post", postHandler);

@@ -1,14 +1,19 @@
 /**
  * POST /api/billing/cancel
  * Body: { orgId: string }
+ *
+ * Security: requires the authenticated user to be an OWNER of the org.
+ * Previously only checked authentication — any logged-in user who knew
+ * another org's UUID could cancel its subscription.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { cancelPlatformSubscription } from "@/lib/platform-billing";
 import { logAudit } from "@/lib/audit";
+import { withErrorHandler } from "@/lib/api-handler";
 
-export async function POST(req: NextRequest) {
+async function handler(req: NextRequest) {
   try {
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
@@ -16,6 +21,21 @@ export async function POST(req: NextRequest) {
 
     const { orgId } = await req.json().catch(() => ({}));
     if (!orgId) return NextResponse.json({ error: "Missing orgId" }, { status: 400 });
+
+    // ── Ownership gate ────────────────────────────────────────────────────────
+    // Verify the caller is an owner of this specific org — not just any
+    // authenticated user. Without this, anyone knowing an org UUID could
+    // cancel another org's subscription.
+    const { data: membership } = await supabase
+      .from("org_members")
+      .select("role")
+      .eq("org_id", orgId)
+      .eq("user_id", user.id)
+      .single();
+
+    if (!membership || membership.role !== "owner") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
 
     const svc = createServiceClient();
     const { data: orgRow } = await svc.from("orgs")
@@ -42,3 +62,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
+
+export const POST = withErrorHandler("billing/cancel", handler);

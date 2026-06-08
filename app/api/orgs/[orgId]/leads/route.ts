@@ -55,7 +55,10 @@ export async function GET(req: NextRequest, { params }: Params) {
   if (rangeTo)   query = query.lte(dateField, rangeTo);
 
   const { data, error } = await query;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    console.error("[leads GET] db error:", error.message);
+    return NextResponse.json({ error: "Failed to load leads" }, { status: 500 });
+  }
 
   const rows       = data ?? [];
   const hasMore    = rows.length > limit;
@@ -179,9 +182,6 @@ export async function POST(req: NextRequest, { params }: Params) {
   return NextResponse.json({ lead: newLead, conversation_id: conversationId });
   } catch (err) {
     console.error("[leads POST] unhandled error:", err);
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Unknown error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

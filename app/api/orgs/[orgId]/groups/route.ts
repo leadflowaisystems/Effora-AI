@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { z } from "zod";
 import { getPlanLimits, isAtLimit } from "@/lib/plan";
+import { withErrorHandler, sanitizeDbError } from "@/lib/api-handler";
 
 interface Params { params: { orgId: string } }
 
@@ -18,7 +19,7 @@ async function assertMember(orgId: string) {
   return data ? user : null;
 }
 
-export async function GET(_req: NextRequest, { params }: Params) {
+async function getHandler(_req: NextRequest, { params }: Params) {
   const user = await assertMember(params.orgId);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -35,7 +36,11 @@ export async function GET(_req: NextRequest, { params }: Params) {
     .is("deleted_at", null)
     .order("created_at", { ascending: false });
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    const { message, status } = sanitizeDbError(error, "Failed to load groups");
+    console.error("[groups GET] db error:", error.message);
+    return NextResponse.json({ error: message }, { status });
+  }
 
   // Flatten member counts
   const groups = (data ?? []).map((g: Record<string, unknown>) => ({
@@ -66,7 +71,7 @@ function autoTag(name: string): string {
     .slice(0, 40) || "group";
 }
 
-export async function POST(req: NextRequest, { params }: Params) {
+async function postHandler(req: NextRequest, { params }: Params) {
   const user = await assertMember(params.orgId);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -106,8 +111,13 @@ export async function POST(req: NextRequest, { params }: Params) {
     if ((error as { code?: string }).code === "23505") {
       return NextResponse.json({ error: `Tag "${tag}" already used. Try a different name.` }, { status: 409 });
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    const { message, status } = sanitizeDbError(error, "Failed to create group");
+    console.error("[groups POST] db error:", error.message);
+    return NextResponse.json({ error: message }, { status });
   }
 
   return NextResponse.json({ group: data }, { status: 201 });
 }
+
+export const GET  = withErrorHandler("groups",      getHandler);
+export const POST = withErrorHandler("groups/post", postHandler);

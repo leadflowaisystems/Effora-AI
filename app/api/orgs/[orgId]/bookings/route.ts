@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { inngest } from "@/lib/inngest/client";
 import { writeLeadEvent } from "@/lib/lead-events";
+import { withErrorHandler, sanitizeDbError } from "@/lib/api-handler";
 
 interface Params { params: { orgId: string } }
 
@@ -24,7 +25,7 @@ async function assertMember(orgId: string) {
   return data ? user : null;
 }
 
-export async function GET(req: NextRequest, { params }: Params) {
+async function getHandler(req: NextRequest, { params }: Params) {
   const user = await assertMember(params.orgId);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -49,7 +50,11 @@ export async function GET(req: NextRequest, { params }: Params) {
   if (cursor) query = query.lt("starts_at", cursor);
 
   const { data, error } = await query;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    const { message, status } = sanitizeDbError(error, "Failed to load bookings");
+    console.error("[bookings GET] db error:", error.message);
+    return NextResponse.json({ error: message }, { status });
+  }
 
   const rows       = (data ?? []);
   const hasMore    = rows.length > limit;
@@ -59,7 +64,7 @@ export async function GET(req: NextRequest, { params }: Params) {
   return NextResponse.json({ bookings: items, next_cursor: nextCursor });
 }
 
-export async function POST(req: NextRequest, { params }: Params) {
+async function postHandler(req: NextRequest, { params }: Params) {
   const user = await assertMember(params.orgId);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -123,3 +128,6 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   return NextResponse.json({ ok: true });
 }
+
+export const GET  = withErrorHandler("bookings",      getHandler);
+export const POST = withErrorHandler("bookings/post", postHandler);

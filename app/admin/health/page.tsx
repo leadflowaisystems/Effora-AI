@@ -1,19 +1,22 @@
 ﻿/**
  * /admin/health — production smoke-test dashboard.
  *
- * Runs 7 live checks in parallel server-side and displays a traffic-light
+ * Runs live checks in parallel server-side and displays a traffic-light
  * result table. Protected by the admin layout (isAdminEmail guard).
  *
  * Checks:
- *  1. Supabase DB        — SELECT 1 via service role client
- *  2. LLM / AI           — tiny chat completion (max_tokens: 1)
- *  3. Inngest            — INNGEST_EVENT_KEY env var + mode check
- *  4. Razorpay API       — GET /v1/orders with org key (expects 200 or 401, not network error)
- *  5. Migration 008      — verify idx_messages_conv_sent exists in pg_indexes
- *  6. isAiBlocked()      — assert known inputs produce expected outputs
- *  7. Audit log (24 h)   — count rows where event_type contains "error"
- *  8. Error log (24 h)   — count rows in error_log from last 24 h
- *  9. Hardening indexes  — verify idx_leads_org_active exists (migration 030)
+ *  1. Supabase DB              — SELECT 1 via service role client
+ *  2. LLM / AI                 — tiny chat completion (max_tokens: 1)
+ *  3. Inngest                  — INNGEST_EVENT_KEY env var + mode check
+ *  4. Razorpay API             — GET /v1/orders with org key (expects 200 or 401)
+ *  5. Migration 008            — verify idx_messages_conv_sent exists in pg_indexes
+ *  6. isAiBlocked() logic      — assert known inputs produce expected outputs
+ *  7. Audit log (24 h)         — count rows where event_type contains "error"
+ *  8. Error log (24 h)         — count rows in error_log from last 24 h
+ *  9. Hardening indexes (030)  — verify idx_leads_org_active exists
+ * 10. Job runs (24 h failures) — count failed job_runs in last 24 h
+ * 11. Stuck broadcasts         — count broadcasts stuck in "sending" >30 min
+ * 12. Platform billing env     — PLATFORM_RAZORPAY_WEBHOOK_SECRET configured
  */
 
 import { createServiceClient } from "@/lib/supabase/server";
@@ -279,6 +282,90 @@ async function checkHardeningIndexes(): Promise<CheckResult> {
   }
 }
 
+async function checkJobRuns(): Promise<CheckResult> {
+  try {
+    const { ms, result } = await timed(async () => {
+      const svc   = createServiceClient();
+      const since = new Date(Date.now() - 86_400_000).toISOString();
+      return await (svc as ReturnType<typeof createServiceClient>)
+        .from("job_runs" as never)
+        .select("id", { count: "exact", head: true } as never)
+        .eq("status" as never, "failed" as never)
+        .gte("started_at" as never, since as never);
+    });
+    const count = (result as { count?: number | null }).count ?? 0;
+    return {
+      label:      "Job runs (24 h failures)",
+      ok:         count < 10,
+      warn:       count > 0 && count < 10,
+      latency_ms: ms,
+      detail:     count === 0
+        ? "No failed background jobs in last 24 h"
+        : `${count} failed job${count === 1 ? "" : "s"} in last 24 h — check job_runs table`,
+    };
+  } catch (e) {
+    // job_runs table may not exist yet if migration 031 hasn't run
+    return { label: "Job runs (24 h failures)", ok: true, warn: true, latency_ms: 0, detail: `Skipped — ${String(e).slice(0, 80)}` };
+  }
+}
+
+async function checkStuckBroadcasts(): Promise<CheckResult> {
+  try {
+    const { ms, result } = await timed(async () => {
+      const svc      = createServiceClient();
+      const stuckSince = new Date(Date.now() - 30 * 60_000).toISOString(); // 30 min ago
+      return await (svc as ReturnType<typeof createServiceClient>)
+        .from("broadcasts" as never)
+        .select("id", { count: "exact", head: true } as never)
+        .eq("status" as never, "sending" as never)
+        .lt("updated_at" as never, stuckSince as never);
+    });
+    const count = (result as { count?: number | null }).count ?? 0;
+    return {
+      label:      "Stuck broadcasts",
+      ok:         count === 0,
+      warn:       count > 0,
+      latency_ms: ms,
+      detail:     count === 0
+        ? "No broadcasts stuck in sending state"
+        : `${count} broadcast${count === 1 ? "" : "s"} stuck in "sending" >30 min — may need manual intervention`,
+    };
+  } catch (e) {
+    return { label: "Stuck broadcasts", ok: false, latency_ms: 0, detail: String(e) };
+  }
+}
+
+async function checkPlatformBillingEnv(): Promise<CheckResult> {
+  const keyId     = process.env.PLATFORM_RAZORPAY_KEY_ID;
+  const keySecret = process.env.PLATFORM_RAZORPAY_KEY_SECRET;
+  const webhookSecret = process.env.PLATFORM_RAZORPAY_WEBHOOK_SECRET;
+
+  const missing: string[] = [];
+  if (!keyId)         missing.push("PLATFORM_RAZORPAY_KEY_ID");
+  if (!keySecret)     missing.push("PLATFORM_RAZORPAY_KEY_SECRET");
+  if (!webhookSecret) missing.push("PLATFORM_RAZORPAY_WEBHOOK_SECRET");
+
+  if (missing.length === 0) {
+    return {
+      label:      "Platform billing env",
+      ok:         true,
+      latency_ms: 0,
+      detail:     "All 3 PLATFORM_RAZORPAY_* vars set (webhook secret included)",
+    };
+  }
+
+  // Missing webhook secret is a CRITICAL security gap — anyone who knows
+  // the webhook URL can send fake subscription.charged events
+  const isCritical = !webhookSecret;
+  return {
+    label:      "Platform billing env",
+    ok:         !isCritical,
+    warn:       !isCritical,
+    latency_ms: 0,
+    detail:     `Missing: ${missing.join(", ")}${isCritical ? " — webhook unauthenticated!" : ""}`,
+  };
+}
+
 /* ── Page ──────────────────────────────────────────────────────────────── */
 
 export default async function AdminHealthPage() {
@@ -292,6 +379,9 @@ export default async function AdminHealthPage() {
     checkAuditLog(),
     checkErrorLog(),
     checkHardeningIndexes(),
+    checkJobRuns(),
+    checkStuckBroadcasts(),
+    checkPlatformBillingEnv(),
   ]);
 
   const results: CheckResult[] = checks.map((c, i) => {
@@ -299,6 +389,7 @@ export default async function AdminHealthPage() {
       "Supabase DB", "LLM / AI", "Inngest", "Razorpay",
       "Migration 008 indexes", "isAiBlocked() logic", "Audit log (24 h errors)",
       "Error log (24 h)", "Hardening indexes (030)",
+      "Job runs (24 h failures)", "Stuck broadcasts", "Platform billing env",
     ];
     if (c.status === "fulfilled") return c.value;
     return { label: fallbackLabels[i], ok: false, latency_ms: 0, detail: String(c.reason) };
@@ -317,7 +408,7 @@ export default async function AdminHealthPage() {
         <div>
           <h1 className="font-display text-2xl font-bold">Production Health</h1>
           <p className="text-sm text-[var(--text-3)] mt-1">
-            {results.length} checks · ran at {runAt}
+            {results.length} checks · ran at {runAt} · <a href="" className="underline underline-offset-2 hover:text-[var(--text-2)]">refresh</a>
           </p>
         </div>
         <div className={cn(
