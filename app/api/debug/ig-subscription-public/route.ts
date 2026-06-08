@@ -18,6 +18,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  // Production guard — this diagnostic is dev-only
+  if (process.env.NODE_ENV === "production") {
+    return Response.json({ error: "Not found" }, { status: 404 });
+  }
+
   const svc = createServiceClient();
 
   // Fetch ALL meta_instagram rows regardless of active status

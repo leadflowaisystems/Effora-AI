@@ -29,6 +29,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  // Production guard — this diagnostic is dev-only
+  if (process.env.NODE_ENV === "production") {
+    return Response.json({ error: "Not found" }, { status: 404 });
+  }
+
   const appSecret = process.env.META_APP_SECRET ?? null;
   const appId     = process.env.META_APP_ID     ?? null;
 

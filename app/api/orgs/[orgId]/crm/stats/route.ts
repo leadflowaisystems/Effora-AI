@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { parseRange, getRangeBounds } from "@/lib/range";
+import { withErrorHandler } from "@/lib/api-handler";
 
 interface Params { params: { orgId: string } }
 
@@ -24,7 +25,7 @@ async function assertMember(orgId: string) {
   return data ? user : null;
 }
 
-export async function GET(req: NextRequest, { params }: Params) {
+async function handler(req: NextRequest, { params }: Params) {
   const user = await assertMember(params.orgId);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -57,3 +58,5 @@ export async function GET(req: NextRequest, { params }: Params) {
 
   return NextResponse.json({ range, dateField, total, hot, booked, won, conversion_rate: conversionRate });
 }
+
+export const GET = withErrorHandler("crm/stats", handler);

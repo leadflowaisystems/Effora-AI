@@ -5,13 +5,15 @@
  * result table. Protected by the admin layout (isAdminEmail guard).
  *
  * Checks:
- *  1. Supabase DB      — SELECT 1 via service role client
- *  2. LLM / AI         — tiny chat completion (max_tokens: 1)
- *  3. Inngest          — INNGEST_EVENT_KEY env var + mode check
- *  4. Razorpay API     — GET /v1/orders with org key (expects 200 or 401, not network error)
- *  5. Migration 008    — verify idx_messages_conv_sent exists in pg_indexes
- *  6. isAiBlocked()    — assert known inputs produce expected outputs
- *  7. Audit log (24 h) — count rows where event_type contains "error"
+ *  1. Supabase DB        — SELECT 1 via service role client
+ *  2. LLM / AI           — tiny chat completion (max_tokens: 1)
+ *  3. Inngest            — INNGEST_EVENT_KEY env var + mode check
+ *  4. Razorpay API       — GET /v1/orders with org key (expects 200 or 401, not network error)
+ *  5. Migration 008      — verify idx_messages_conv_sent exists in pg_indexes
+ *  6. isAiBlocked()      — assert known inputs produce expected outputs
+ *  7. Audit log (24 h)   — count rows where event_type contains "error"
+ *  8. Error log (24 h)   — count rows in error_log from last 24 h
+ *  9. Hardening indexes  — verify idx_leads_org_active exists (migration 030)
  */
 
 import { createServiceClient } from "@/lib/supabase/server";
@@ -233,6 +235,50 @@ async function checkAuditLog(): Promise<CheckResult> {
   }
 }
 
+async function checkErrorLog(): Promise<CheckResult> {
+  try {
+    const { ms, result } = await timed(async () => {
+      const svc   = createServiceClient();
+      const since = new Date(Date.now() - 86400000).toISOString();
+      return await svc
+        .from("error_log")
+        .select("id", { count: "exact", head: true })
+        .gte("created_at", since);
+    });
+    const count = (result as { count?: number | null }).count ?? 0;
+    return {
+      label:      "Error log (24 h)",
+      ok:         count < 50,
+      warn:       count >= 10 && count < 50,
+      latency_ms: ms,
+      detail:     count === 0
+        ? "No server errors in last 24 h"
+        : `${count} server error${count === 1 ? "" : "s"} in last 24 h — check /admin/errors`,
+    };
+  } catch (e) {
+    return { label: "Error log (24 h)", ok: false, latency_ms: 0, detail: String(e) };
+  }
+}
+
+async function checkHardeningIndexes(): Promise<CheckResult> {
+  try {
+    const { ms, result } = await timed(async () => {
+      const svc = createServiceClient();
+      return await (svc as ReturnType<typeof createServiceClient>)
+        .from("pg_indexes" as never)
+        .select("indexname")
+        .eq("indexname" as never, "idx_leads_org_active" as never)
+        .limit(1);
+    });
+    const rows = (result as { data?: unknown[] }).data ?? [];
+    return rows.length > 0
+      ? { label: "Hardening indexes (030)", ok: true,  latency_ms: ms, detail: "idx_leads_org_active found" }
+      : { label: "Hardening indexes (030)", ok: false, latency_ms: ms, detail: "idx_leads_org_active NOT found — run migration 030" };
+  } catch (e) {
+    return { label: "Hardening indexes (030)", ok: false, latency_ms: 0, detail: String(e) };
+  }
+}
+
 /* ── Page ──────────────────────────────────────────────────────────────── */
 
 export default async function AdminHealthPage() {
@@ -244,10 +290,16 @@ export default async function AdminHealthPage() {
     checkMigration008(),
     checkAiBlockLogic(),
     checkAuditLog(),
+    checkErrorLog(),
+    checkHardeningIndexes(),
   ]);
 
   const results: CheckResult[] = checks.map((c, i) => {
-    const fallbackLabels = ["Supabase DB", "LLM / AI", "Inngest", "Razorpay", "Migration 008 indexes", "isAiBlocked() logic", "Audit log (24 h errors)"];
+    const fallbackLabels = [
+      "Supabase DB", "LLM / AI", "Inngest", "Razorpay",
+      "Migration 008 indexes", "isAiBlocked() logic", "Audit log (24 h errors)",
+      "Error log (24 h)", "Hardening indexes (030)",
+    ];
     if (c.status === "fulfilled") return c.value;
     return { label: fallbackLabels[i], ok: false, latency_ms: 0, detail: String(c.reason) };
   });

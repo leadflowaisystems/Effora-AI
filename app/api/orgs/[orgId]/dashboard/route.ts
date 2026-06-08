@@ -9,10 +9,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { cache } from "@/lib/cache";
+import { withErrorHandler } from "@/lib/api-handler";
 
 interface Params { params: { orgId: string } }
 
-export async function GET(req: NextRequest, { params }: Params) {
+async function handler(req: NextRequest, { params }: Params) {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -169,6 +170,8 @@ export async function GET(req: NextRequest, { params }: Params) {
 
   return NextResponse.json(responseData);
 }
+
+export const GET = withErrorHandler("dashboard", handler);
 
 // ── Types ────────────────────────────────────────────────────
 

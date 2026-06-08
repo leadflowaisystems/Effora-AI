@@ -38,6 +38,11 @@ async function graphGet(url: URL, label: string) {
 }
 
 export async function GET() {
+  // Production guard — this diagnostic is dev-only
+  if (process.env.NODE_ENV === "production") {
+    return Response.json({ error: "Not found" }, { status: 404 });
+  }
+
   const svc = createServiceClient();
 
   // Load active meta_instagram rows
