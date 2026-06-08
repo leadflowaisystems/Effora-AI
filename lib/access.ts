@@ -19,7 +19,7 @@ export interface AccessState {
   trialDaysLeft:             number | null;
   canSendAi:                 boolean;
   canUseAgency:              boolean;
-  canProcessScreenshot:      boolean;   // All paid plans + trial; false only on expired/cancelled
+  canProcessScreenshot:      boolean;   // Growth+ and trial; false on starter/expired/cancelled
   canCreateFunnelPages:      number;    // 1 / 3 / -1 unlimited
   canUseWhatsApp:            boolean;   // Free feature on all plans
   canConnectChannels:        number;    // -1 = unlimited
@@ -28,10 +28,15 @@ export interface AccessState {
   canUseManualBookingPayment: boolean;
   canUseUpiPayments:         boolean;
   canUseEmail:               boolean;
-  canUseRevival:             boolean;
-  canUseCopilot:             boolean;
+  canUseRevival:             boolean;   // Growth+ only
+  canUseBroadcasts:          boolean;   // Growth+ only
+  canUseRecurring:           boolean;   // Growth+ only
+  canUseScheduled:           boolean;   // Growth+ only
+  canUseCopilot:             boolean;   // Pro only
+  canUseAutoSend:            boolean;   // Pro only (hands-free AI replies)
+  canUseWeeklyScorecards:    boolean;   // Pro only
   canUseAccountability:      boolean;
-  canUseTrends:              boolean;
+  canUseTrends:              boolean;   // Growth+ only
   canUseDeepContext:         boolean;
   canUseRewards:             boolean;
   copilotDailyLimit:         number;  // -1 = unlimited
@@ -82,7 +87,12 @@ function buildState(org: OrgRow): AccessState {
   let canUseUpiPayments          = false;
   let canUseEmail                = false;
   let canUseRevival              = false;
+  let canUseBroadcasts           = false;
+  let canUseRecurring            = false;
+  let canUseScheduled            = false;
   let canUseCopilot              = false;
+  let canUseAutoSend             = false;
+  let canUseWeeklyScorecards     = false;
   let canUseAccountability       = false;
   let canUseTrends               = false;
   let canUseDeepContext          = false;
@@ -93,44 +103,34 @@ function buildState(org: OrgRow): AccessState {
 
   switch (status) {
     case "trial_active":
+      // 15-day full-feature trial — everything on
       canSendAi                  = org.monthly_ai_msg_count < 2000;
       canUseAgency               = false;
       canConnectChannels         = 2;
       canProcessScreenshot       = true;
       canCreateFunnelPages       = 3;
       canUseAssistant3Reply      = true;
-      canUseCRM                  = 2000;
+      canUseCRM                  = 5000;
       canUseManualBookingPayment = true;
       canUseUpiPayments          = true;
       canUseEmail                = true;
       canUseRevival              = true;
+      canUseBroadcasts           = true;
+      canUseRecurring            = true;
+      canUseScheduled            = true;
       canUseCopilot              = true;
+      canUseAutoSend             = true;
+      canUseWeeklyScorecards     = true;
       copilotDailyLimit          = 60;
       canUseAccountability       = true;
-      canUseTrends               = false;
+      canUseTrends               = true;
       canUseDeepContext          = true;
       canUseRewards              = true;
       if (!canSendAi) reason = "limit_reached";
       break;
 
     case "trial_expired":
-      canSendAi                  = false;
-      canConnectChannels         = 0;
-      canProcessScreenshot       = false;
-      canCreateFunnelPages       = 0;
-      canUseAssistant3Reply      = false;
-      canUseCRM                  = 0;
-      canUseManualBookingPayment = false;
-      canUseUpiPayments          = false;
-      canUseEmail                = false;
-      canUseRevival              = false;
-      canUseCopilot              = false;
-      copilotDailyLimit          = 0;
-      canUseAccountability       = false;
-      canUseTrends               = false;
-      canUseDeepContext          = false;
-      canUseRewards              = false;
-      reason                     = "trial_expired";
+      reason = "trial_expired";
       break;
 
     case "subscribed":
@@ -144,79 +144,60 @@ function buildState(org: OrgRow): AccessState {
       canUseManualBookingPayment = true;
       canUseUpiPayments          = true;
       canUseEmail                = true;
+      canUseDeepContext          = true;
+      canUseRewards              = true;
+
       if (plan === "starter") {
-        canCreateFunnelPages = 1;
-        canUseCRM            = 200;
-        canUseRevival        = false;
-        canUseCopilot        = true;
-        copilotDailyLimit    = 60;
-        canUseAccountability = false;
-        canUseTrends         = false;
-        canUseDeepContext    = true;
-        canUseRewards        = true;
+        canCreateFunnelPages   = 1;
+        canUseCRM              = 2000;
+        canUseRevival          = false;
+        canUseBroadcasts       = false;
+        canUseRecurring        = false;
+        canUseScheduled        = false;
+        canUseCopilot          = false;
+        canUseAutoSend         = false;
+        canUseWeeklyScorecards = false;
+        copilotDailyLimit      = 0;
+        canUseAccountability   = false;
+        canUseTrends           = false;
+        canProcessScreenshot   = false;  // OCR is Growth+ only
       } else if (plan === "growth") {
-        canCreateFunnelPages = 3;
-        canUseCRM            = 2000;
-        canUseRevival        = true;
-        canUseCopilot        = true;
-        copilotDailyLimit    = 300;
-        canUseAccountability = true;
-        canUseTrends         = false;
-        canUseDeepContext    = true;
-        canUseRewards        = true;
+        canCreateFunnelPages   = 3;
+        canUseCRM              = 10000;
+        canUseRevival          = true;
+        canUseBroadcasts       = true;
+        canUseRecurring        = true;
+        canUseScheduled        = true;
+        canUseCopilot          = false;
+        canUseAutoSend         = false;
+        canUseWeeklyScorecards = false;
+        copilotDailyLimit      = 0;
+        canUseAccountability   = true;
+        canUseTrends           = true;
       } else {
         // pro
-        canCreateFunnelPages = -1;
-        canUseCRM            = -1;
-        canUseRevival        = true;
-        canUseCopilot        = true;
-        copilotDailyLimit    = -1;
-        canUseAccountability = true;
-        canUseTrends         = true;
-        canUseDeepContext    = true;
-        canUseRewards        = true;
+        canCreateFunnelPages   = -1;
+        canUseCRM              = 50000;
+        canUseRevival          = true;
+        canUseBroadcasts       = true;
+        canUseRecurring        = true;
+        canUseScheduled        = true;
+        canUseCopilot          = true;
+        canUseAutoSend         = true;
+        canUseWeeklyScorecards = true;
+        copilotDailyLimit      = -1;
+        canUseAccountability   = true;
+        canUseTrends           = true;
       }
       if (!canSendAi) reason = "limit_reached";
       break;
 
     case "cancelled":
-      canSendAi                  = false;
-      canConnectChannels         = 1;
-      canProcessScreenshot       = false;
-      canCreateFunnelPages       = 0;
-      canUseAssistant3Reply      = false;
-      canUseCRM                  = 0;
-      canUseManualBookingPayment = false;
-      canUseUpiPayments          = false;
-      canUseEmail                = false;
-      canUseRevival              = false;
-      canUseCopilot              = false;
-      copilotDailyLimit          = 0;
-      canUseAccountability       = false;
-      canUseTrends               = false;
-      canUseDeepContext          = false;
-      canUseRewards              = false;
-      reason                     = "cancelled";
+      reason = "cancelled";
       break;
 
     case "past_due":
-      canSendAi                  = false;
-      canConnectChannels         = limits.channelsAllowed;
-      canProcessScreenshot       = false;
-      canCreateFunnelPages       = 0;
-      canUseAssistant3Reply      = false;
-      canUseCRM                  = 0;
-      canUseManualBookingPayment = false;
-      canUseUpiPayments          = false;
-      canUseEmail                = false;
-      canUseRevival              = false;
-      canUseCopilot              = false;
-      copilotDailyLimit          = 0;
-      canUseAccountability       = false;
-      canUseTrends               = false;
-      canUseDeepContext          = false;
-      canUseRewards              = false;
-      reason                     = "past_due";
+      reason = "past_due";
       break;
   }
 
@@ -236,7 +217,12 @@ function buildState(org: OrgRow): AccessState {
     canUseUpiPayments,
     canUseEmail,
     canUseRevival,
+    canUseBroadcasts,
+    canUseRecurring,
+    canUseScheduled,
     canUseCopilot,
+    canUseAutoSend,
+    canUseWeeklyScorecards,
     canUseAccountability,
     canUseTrends,
     canUseDeepContext,
@@ -277,7 +263,12 @@ export async function getAccessState(orgId: string): Promise<AccessState> {
       canUseUpiPayments:         false,
       canUseEmail:               false,
       canUseRevival:             false,
+      canUseBroadcasts:          false,
+      canUseRecurring:           false,
+      canUseScheduled:           false,
       canUseCopilot:             false,
+      canUseAutoSend:            false,
+      canUseWeeklyScorecards:    false,
       canUseAccountability:      false,
       canUseTrends:              false,
       canUseDeepContext:         false,

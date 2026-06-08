@@ -37,7 +37,7 @@ export function TrialExpiredModal({ plan, trialEndsAt, orgSlug, subStatus }: Pro
     : "Your subscription is cancelled";
 
   const body = expired
-    ? "AI replies, lead scoring, and automations are paused. Pick a plan to keep your pipeline moving."
+    ? "Your 15-day trial has ended. AI replies, lead scoring, and automations are paused. Pick a plan to keep your pipeline moving."
     : isPastDue
     ? "We couldn't charge your card. Update your payment method to restore full access."
     : "Your subscription was cancelled. Reactivate to resume AI replies and automations.";

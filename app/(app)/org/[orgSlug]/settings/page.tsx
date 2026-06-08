@@ -12,7 +12,9 @@ import { motion } from "framer-motion";
 import {
   Instagram, CalendarDays, CreditCard, Mic, Receipt, Users,
   Shield, UserX, ChevronRight, CheckCircle2, Circle, Lock, Phone,
+  Zap,
 } from "lucide-react";
+import { PLAN_NAMES, PLAN_PRICES, isTrialExpired } from "@/lib/plan";
 
 interface Props { params: { orgSlug: string } }
 
@@ -25,12 +27,18 @@ export default async function SettingsIndexPage({ params }: Props) {
 
   const { data: orgRow } = await supabase
     .from("orgs")
-    .select("id, name, plan")
+    .select("id, name, plan, trial_ends_at, current_period_end")
     .eq("slug", params.orgSlug)
     .single();
 
   if (!orgRow) notFound();
-  const org = orgRow as { id: string; name: string; plan: string };
+  const org = orgRow as {
+    id: string;
+    name: string;
+    plan: string;
+    trial_ends_at: string | null;
+    current_period_end: string | null;
+  };
 
   const svc = createServiceClient();
 
@@ -170,6 +178,19 @@ export default async function SettingsIndexPage({ params }: Props) {
     coming_soon:   <Lock className="h-3 w-3 opacity-40" />,
   };
 
+  // ── Plan status helpers ────────────────────────────────────────────────────
+  const trialExpired = isTrialExpired(org.plan, org.trial_ends_at);
+  const trialActive  = org.plan === "trial" && !trialExpired;
+  const trialDaysLeft = trialActive && org.trial_ends_at
+    ? Math.max(0, Math.ceil((new Date(org.trial_ends_at).getTime() - Date.now()) / 86400000))
+    : null;
+  const renewalDate = org.current_period_end
+    ? new Date(org.current_period_end).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+    : null;
+  const showUpgrade = org.plan === "trial" || org.plan === "starter" || org.plan === "growth";
+  const planLabel   = PLAN_NAMES[org.plan] ?? org.plan;
+  const planPrice   = PLAN_PRICES[org.plan];
+
   return (
     <div className="space-y-7">
       {/* Header */}
@@ -178,6 +199,44 @@ export default async function SettingsIndexPage({ params }: Props) {
         <p className="mt-1 text-sm text-[var(--text-3)]">
           Configure channels, integrations, and preferences for {org.name}.
         </p>
+      </div>
+
+      {/* Plan status card */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--bg-1)] px-5 py-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius-sm)] bg-[var(--brand)]/10">
+            <Zap className="h-4 w-4 text-[var(--brand)]" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-[var(--text)]">
+              {planLabel} plan
+              {planPrice && (
+                <span className="ml-2 font-normal text-[var(--text-3)]">
+                  ₹{planPrice.toLocaleString("en-IN")}/mo
+                </span>
+              )}
+            </p>
+            <p className="text-xs text-[var(--text-3)]">
+              {trialActive
+                ? `${trialDaysLeft} day${trialDaysLeft === 1 ? "" : "s"} left in your free trial`
+                : trialExpired
+                ? "Trial ended — upgrade to restore access"
+                : renewalDate
+                ? `Renews on ${renewalDate}`
+                : org.plan === "cancelled"
+                ? "Subscription cancelled"
+                : "Active subscription"}
+            </p>
+          </div>
+        </div>
+        {showUpgrade && (
+          <Link
+            href={`/org/${params.orgSlug}/settings/billing`}
+            className="shrink-0 rounded-[var(--radius-sm)] bg-[var(--brand)] px-4 py-2 text-xs font-semibold text-[#0A0A0C] hover:opacity-90 transition-opacity"
+          >
+            {trialExpired ? "Subscribe now" : "Upgrade plan"}
+          </Link>
+        )}
       </div>
 
       {/* 2-column grid */}

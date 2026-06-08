@@ -1,17 +1,16 @@
 /**
  * Plan limits for Effora AI subscription tiers.
  *
- * LAUNCH DECISION: All features enabled on all paid plans.
- * Differentiation is usage limits only.
- * Trial mirrors Growth limits.
+ * Plans: Starter ₹999/mo · Growth ₹2,999/mo · Pro ₹5,999/mo
+ * 15-day full-feature free trial.
  */
 
 export type PlanTier = "trial" | "starter" | "growth" | "pro" | "cancelled";
 
 export const PLAN_PRICES: Record<string, number> = {
-  starter: 2999,
-  growth:  7999,
-  pro:     19999,
+  starter: 999,
+  growth:  2999,
+  pro:     5999,
 };
 
 export const PLAN_NAMES: Record<string, string> = {
@@ -32,8 +31,6 @@ export interface PlanLimits {
   broadcastsPerMonth: number;  // -1 = unlimited
 }
 
-// NOTE: All features are unlocked for all plans at launch.
-// FUTURE feature gates are marked with comments in access.ts.
 const LIMITS: Record<PlanTier, PlanLimits> = {
   trial: {
     aiMsgsPerMonth:     2000,
@@ -47,26 +44,26 @@ const LIMITS: Record<PlanTier, PlanLimits> = {
   starter: {
     aiMsgsPerMonth:     500,
     seatsAllowed:       1,
-    channelsAllowed:    2,   // FUTURE: restrict to 1 channel on Starter
-    leadsAllowed:       1000,
-    groupsAllowed:      5,
+    channelsAllowed:    2,
+    leadsAllowed:       2000,
+    groupsAllowed:      10,
     groupMembersTotal:  500,
-    broadcastsPerMonth: 10,
+    broadcastsPerMonth: 0,   // broadcasts blocked by feature gate on starter
   },
   growth: {
-    aiMsgsPerMonth:     2000,
-    seatsAllowed:       3,
+    aiMsgsPerMonth:     5000,
+    seatsAllowed:       2,
     channelsAllowed:    2,
-    leadsAllowed:       5000,
-    groupsAllowed:      20,
-    groupMembersTotal:  2000,
-    broadcastsPerMonth: 50,
+    leadsAllowed:       10000,
+    groupsAllowed:      -1,
+    groupMembersTotal:  -1,
+    broadcastsPerMonth: -1,
   },
   pro: {
-    aiMsgsPerMonth:     8000,
-    seatsAllowed:       -1,
+    aiMsgsPerMonth:     20000,
+    seatsAllowed:       5,
     channelsAllowed:    -1,
-    leadsAllowed:       -1,
+    leadsAllowed:       50000,
     groupsAllowed:      -1,
     groupMembersTotal:  -1,
     broadcastsPerMonth: -1,
@@ -107,42 +104,40 @@ export function isAiBlocked(
 export const PLAN_FEATURES: Record<string, string[]> = {
   starter: [
     "AI Reply Assistant — paste any DM, get 3 smart replies",
-    "Full CRM — 1,000 leads",
+    "Full CRM — 2,000 leads",
     "Instagram + WhatsApp channels",
-    "Groups — 5 groups, up to 500 members",
-    "10 broadcasts/month",
+    "Groups — 10 groups",
     "Manual booking + payment recording",
     "UPI or Razorpay payment links",
     "Cal.com integration + automated reminders",
     "Public funnel page",
-    "WhatsApp Business templates",
-    "Automated email confirmations + weekly report",
+    "Email confirmations + weekly report",
     "500 AI replies/month",
   ],
   growth: [
     "Everything in Starter",
-    "Full CRM — 5,000 leads",
-    "Groups — 20 groups, 2,000 members",
-    "50 broadcasts/month",
-    "2,000 AI replies/month",
+    "Full CRM — 10,000 leads",
+    "Unlimited groups + members",
+    "Broadcasts (mass messaging)",
     "Ghost revival sequences",
-    "ManyChat + Instagram integration",
-    "3 seats",
+    "Recurring payments",
+    "Scheduled messages",
+    "Trends & insights",
+    "Screenshot / OCR parsing",
+    "2 seats",
+    "5,000 AI replies/month",
     "Priority support",
   ],
   pro: [
     "Everything in Growth",
-    "Unlimited CRM leads",
-    "Unlimited groups + members",
-    "Unlimited broadcasts",
-    "8,000 AI replies/month",
-    "Unlimited channels",
+    "Full CRM — 50,000 leads",
+    "Auto AI replies (hands-free)",
+    "Copilot — AI command center",
+    "Weekly scorecards",
     "Agency mode (manage client orgs)",
-    "Unlimited seats",
+    "5 seats",
+    "20,000 AI replies/month",
     "Dedicated support + onboarding",
-    // FUTURE: White-label branding (Pro tier)
-    // FUTURE: Custom workflows (Pro tier)
-    // FUTURE: Multi-team accounts (Pro tier)
   ],
 };
 

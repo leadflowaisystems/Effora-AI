@@ -50,12 +50,14 @@ interface OrgOption {
 }
 
 interface AppShellProps {
-  children:  React.ReactNode;
-  orgSlug:   string;
-  orgName?:  string;
-  orgs?:     OrgOption[];
-  user?:     { name?: string; email?: string; avatarUrl?: string } | null;
+  children:   React.ReactNode;
+  orgSlug:    string;
+  orgName?:   string;
+  orgs?:      OrgOption[];
+  user?:      { name?: string; email?: string; avatarUrl?: string } | null;
   pageTitle?: string;
+  /** Current org plan — used to show upgrade CTA in sidebar */
+  plan?:      string;
 }
 
 /* ── Nav items — exactly per spec ── */
@@ -92,7 +94,9 @@ export function AppShell({
   orgs = [],
   user,
   pageTitle,
+  plan,
 }: AppShellProps) {
+  const showUpgradeCta = plan === "trial" || plan === "starter" || plan === "growth";
   const [collapsed, setCollapsed]             = React.useState(false);
   const [mobileSidebarOpen, setMobileOpen]    = React.useState(false);
   const pathname = usePathname();
@@ -209,6 +213,26 @@ export function AppShell({
               />
             );
           })}
+
+          {/* Upgrade CTA — shown for trial / starter / growth */}
+          {showUpgradeCta && !collapsed && (
+            <Link
+              href={`/org/${orgSlug}/settings/billing`}
+              className="flex items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--brand)]/40 bg-[var(--brand)]/8 px-3 py-2 text-xs font-semibold text-[var(--brand)] hover:bg-[var(--brand)]/15 transition-colors mb-1"
+            >
+              <Zap className="h-3.5 w-3.5 shrink-0" />
+              {plan === "trial" ? "Upgrade — trial active" : "Upgrade plan"}
+            </Link>
+          )}
+          {showUpgradeCta && collapsed && (
+            <Link
+              href={`/org/${orgSlug}/settings/billing`}
+              title="Upgrade plan"
+              className="flex items-center justify-center rounded-[var(--radius-sm)] border border-[var(--brand)]/40 bg-[var(--brand)]/8 py-2 text-[var(--brand)] hover:bg-[var(--brand)]/15 transition-colors mb-1"
+            >
+              <Zap className="h-3.5 w-3.5" />
+            </Link>
+          )}
 
           {/* Support + bug report links */}
           {!collapsed && (
