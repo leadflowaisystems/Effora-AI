@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { redirect, notFound } from "next/navigation";
 import { BillingView } from "@/components/settings/billing-view";
+import { isFounder } from "@/lib/founder";
 
 interface Props { params: { orgSlug: string } }
 
@@ -50,6 +51,7 @@ export default async function BillingPage({ params }: Props) {
       subscriptionStatus={org.subscription_status}
       currentPeriodEnd={org.current_period_end}
       monthlyAiMsgCount={org.monthly_ai_msg_count}
+      isFounder={isFounder(user.email)}
       usageCounts={{
         leads:      leadsCountRes.count      ?? 0,
         groups:     groupsCountRes.count     ?? 0,

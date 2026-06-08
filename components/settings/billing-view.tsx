@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import * as React from "react";
-import { CreditCard, Zap, AlertTriangle, Users, MessageSquare, UsersRound } from "lucide-react";
+import { CreditCard, Zap, AlertTriangle, Users, MessageSquare, UsersRound, Sparkles } from "lucide-react";
 import { PricingCards } from "@/components/marketing/pricing-cards";
 import { getPlanLimits, isTrialExpired, PLAN_NAMES, usagePct } from "@/lib/plan";
 import { cn } from "@/lib/utils";
@@ -21,6 +21,7 @@ interface Props {
   subscriptionStatus:  string;
   currentPeriodEnd:    string | null;
   monthlyAiMsgCount:   number;
+  isFounder?:          boolean;
   usageCounts?:        UsageCounts;
 }
 
@@ -31,6 +32,7 @@ export function BillingView({
   subscriptionStatus,
   currentPeriodEnd,
   monthlyAiMsgCount,
+  isFounder,
   usageCounts,
 }: Props) {
   // Track loading per-plan so only the clicked button shows a spinner
@@ -97,6 +99,37 @@ export function BillingView({
       setCancelLoading(false);
     }
     window.location.reload();
+  }
+
+  // ── Founder early-return ────────────────────────────────────────────────────
+  if (isFounder) {
+    return (
+      <div className="space-y-8 max-w-3xl">
+        <div>
+          <h1 className="font-display text-2xl font-bold text-[var(--text)]">Billing</h1>
+          <p className="mt-1 text-sm text-[var(--text-3)]">
+            Manage your Effora AI subscription and plan.
+          </p>
+        </div>
+        <div className="rounded-[var(--radius-lg)] border border-[var(--brand)]/30 bg-[var(--brand)]/5 p-6 flex items-start gap-4">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-sm)] bg-[var(--brand)]/15">
+            <Sparkles className="h-5 w-5 text-[var(--brand)]" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <p className="font-semibold text-[var(--text)]">Founder Account</p>
+              <span className="rounded-full bg-[var(--brand)] px-2 py-0.5 text-[10px] font-bold text-[#0A0A0C] uppercase tracking-wide">
+                Founder
+              </span>
+            </div>
+            <p className="text-sm text-[var(--text-3)] leading-relaxed">
+              You have unrestricted access to all features — Pro plan, unlimited AI replies,
+              and no expiry. No billing required.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (

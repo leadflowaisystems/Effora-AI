@@ -130,7 +130,7 @@ export async function POST(req: NextRequest, { params }: Params) {
   }
 
   // ── Plan gate ─────────────────────────────────────────────
-  const access = await getAccessState(orgId);
+  const access = await getAccessState(orgId, user.email ?? undefined);
   if (!access.canProcessScreenshot) {
     return NextResponse.json({
       error: `Screenshot processing requires an active plan (current: ${access.status})`,

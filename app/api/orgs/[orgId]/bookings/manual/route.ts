@@ -44,7 +44,7 @@ async function handler(req: NextRequest, { params }: Params) {
   const user = await assertMember(params.orgId);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const access = await getAccessState(params.orgId);
+  const access = await getAccessState(params.orgId, user.email ?? undefined);
   if (!access.canUseManualBookingPayment) {
     return NextResponse.json({ error: "Manual booking requires Starter plan or above." }, { status: 403 });
   }

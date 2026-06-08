@@ -12,6 +12,7 @@
 import { createServiceClient } from "@/lib/supabase/server";
 import { getPlanLimits }       from "@/lib/plan";
 import { cache }               from "@/lib/cache";
+import { isFounder }           from "@/lib/founder";
 
 export interface AccessState {
   status:                    "trial_active" | "trial_expired" | "subscribed" | "cancelled" | "past_due";
@@ -44,6 +45,41 @@ export interface AccessState {
   aiMsgsLimit:               number;    // -1 = unlimited
   reason?:                   "trial_expired" | "limit_reached" | "cancelled" | "past_due";
 }
+
+// ── Founder access state ─────────────────────────────────────────────────────
+// Returned immediately for any email listed in FOUNDER_EMAILS.
+// All features unlocked, no expiry, unlimited quotas.
+const FOUNDER_ACCESS_STATE: AccessState = {
+  status:                     "subscribed",
+  plan:                       "pro",
+  trialDaysLeft:              null,
+  canSendAi:                  true,
+  canUseAgency:               true,
+  canProcessScreenshot:       true,
+  canCreateFunnelPages:       -1,
+  canUseWhatsApp:             true,
+  canConnectChannels:         -1,
+  canUseAssistant3Reply:      true,
+  canUseCRM:                  -1,
+  canUseManualBookingPayment: true,
+  canUseUpiPayments:          true,
+  canUseEmail:                true,
+  canUseRevival:              true,
+  canUseBroadcasts:           true,
+  canUseRecurring:            true,
+  canUseScheduled:            true,
+  canUseCopilot:              true,
+  canUseAutoSend:             true,
+  canUseWeeklyScorecards:     true,
+  canUseAccountability:       true,
+  canUseTrends:               true,
+  canUseDeepContext:          true,
+  canUseRewards:              true,
+  copilotDailyLimit:          -1,
+  aiMsgsUsedThisMonth:        0,
+  aiMsgsLimit:                -1,
+  reason:                     undefined,
+};
 
 type OrgRow = {
   plan:                 string;
@@ -234,7 +270,10 @@ function buildState(org: OrgRow): AccessState {
   };
 }
 
-export async function getAccessState(orgId: string): Promise<AccessState> {
+export async function getAccessState(orgId: string, userEmail?: string): Promise<AccessState> {
+  // Founders bypass all plan/trial checks — return immediately, no DB call needed.
+  if (isFounder(userEmail)) return FOUNDER_ACCESS_STATE;
+
   // Check 60-second cache first (Upstash when configured, in-memory fallback)
   const cached = await cache.get<AccessState>(`access:${orgId}`);
   if (cached) return cached;

@@ -15,16 +15,20 @@ interface Props {
   trialEndsAt: string | null;
   orgSlug:     string;
   subStatus?:  string;  // passed from layout for past_due detection
+  isFounder?:  boolean; // founder accounts never see this modal
 }
 
 const BLOCKED_PLANS = new Set(["cancelled", "halted"]);
 const UPGRADE_PLANS = ["starter", "growth", "pro"] as const;
 
-export function TrialExpiredModal({ plan, trialEndsAt, orgSlug, subStatus }: Props) {
+export function TrialExpiredModal({ plan, trialEndsAt, orgSlug, subStatus, isFounder }: Props) {
   const router   = useRouter();
   const expired  = isTrialExpired(plan, trialEndsAt);
   const isPastDue = subStatus === "past_due";
   const isCancelled = BLOCKED_PLANS.has(plan) || BLOCKED_PLANS.has(subStatus ?? "");
+
+  // Founder accounts always have unrestricted access — never show this modal.
+  if (isFounder) return null;
 
   // Show when: trial expired, past_due, or cancelled
   const shouldBlock = expired || isPastDue || isCancelled;

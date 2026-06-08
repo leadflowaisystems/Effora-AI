@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect, notFound } from "next/navigation";
 import { headers } from "next/headers";
 import { getPlanLimits } from "@/lib/plan";
+import { isFounder } from "@/lib/founder";
 import { AiUsageBanner } from "@/components/layout/ai-usage-banner";
 import { AppShell } from "@/components/layout/app-shell";
 import { TrialExpiredModal } from "@/components/layout/trial-expired-modal";
@@ -61,6 +62,8 @@ export default async function OrgLayout({ children, params }: Props) {
     redirect(`/org/${params.orgSlug}/onboarding`);
   }
 
+  const founderAccount = isFounder(user.email);
+
   // All orgs this user belongs to (for the org switcher)
   const { data: allMemberships } = await supabase
     .from("org_members")
@@ -95,12 +98,13 @@ export default async function OrgLayout({ children, params }: Props) {
       user={{ email: user.email ?? undefined }}
       plan={org.plan}
     >
-      {/* Trial expired modal — client component, renders nothing if not expired */}
+      {/* Trial expired modal — suppressed for founder accounts */}
       <TrialExpiredModal
         plan={org.plan ?? "trial"}
         trialEndsAt={org.trial_ends_at ?? null}
         orgSlug={params.orgSlug}
         subStatus={org.subscription_status ?? undefined}
+        isFounder={founderAccount}
       />
       {/* First-run overlay — client component, auto-dismisses after localStorage flag is set */}
       <FirstRunOverlay orgSlug={params.orgSlug} orgId={org.id} />
@@ -108,7 +112,7 @@ export default async function OrgLayout({ children, params }: Props) {
       <AiUsageBanner
         plan={org.plan ?? "trial"}
         aiMsgsUsed={org.monthly_ai_msg_count ?? 0}
-        aiMsgsLimit={getPlanLimits(org.plan ?? "trial").aiMsgsPerMonth}
+        aiMsgsLimit={founderAccount ? -1 : getPlanLimits(org.plan ?? "trial").aiMsgsPerMonth}
         orgSlug={params.orgSlug}
       />
       <MilestoneBanner orgId={org.id} />

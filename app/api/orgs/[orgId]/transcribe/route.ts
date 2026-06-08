@@ -40,7 +40,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: "Rate limit: max 10 transcriptions/hour" }, { status: 429 });
   }
 
-  const access = await getAccessState(orgId);
+  const access = await getAccessState(orgId, user.email ?? undefined);
   if (!access.canSendAi) {
     return NextResponse.json({
       error: `Transcription requires an active plan with AI credits (${access.reason})`,

@@ -41,7 +41,7 @@ export async function POST(req: NextRequest, { params }: Params) {
 
     let access;
     try {
-      access = await getAccessState(orgId);
+      access = await getAccessState(orgId, user.email ?? undefined);
     } catch {
       access = { canUseCopilot: true, copilotDailyLimit: 60 };
     }
