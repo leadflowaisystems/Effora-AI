@@ -37,9 +37,17 @@ CREATE INDEX IF NOT EXISTS idx_payments_org_status_active
 
 -- ── messages ───────────────────────────────────────────────────────────────
 
--- ManyChats health tab: last message per channel provider + direction
-CREATE INDEX IF NOT EXISTS idx_messages_org_channel_dir_sent
-  ON messages(org_id, channel_provider, direction, sent_at DESC);
+-- Messages are queried by org + sent_at for health/activity views
+-- (channel_provider lives on conversations, not messages)
+CREATE INDEX IF NOT EXISTS idx_messages_org_dir_sent
+  ON messages(org_id, direction, sent_at DESC);
+
+-- ── conversations ───────────────────────────────────────────────────────────
+
+-- ManyChats health tab: last conversation per channel_provider
+-- conversations.channel_provider is the correct column (not messages)
+CREATE INDEX IF NOT EXISTS idx_conversations_org_channel_last
+  ON conversations(org_id, channel_provider, last_message_at DESC);
 
 -- ── broadcasts ─────────────────────────────────────────────────────────────
 
