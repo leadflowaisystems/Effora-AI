@@ -11,7 +11,8 @@ interface PricingCardsProps {
   onSelect?: (plan: "starter" | "growth" | "pro") => void;
   /** Currently active plan for the org */
   currentPlan?: string;
-  loading?: boolean;
+  /** Which specific plan is currently loading — only that button shows a spinner */
+  loadingPlan?: string | null;
 }
 
 const PLANS = ["starter", "growth", "pro"] as const;
@@ -22,13 +23,15 @@ const PLAN_BADGES: Record<string, string | null> = {
   pro:     "Best for Scaling",
 };
 
-export function PricingCards({ onSelect, currentPlan, loading }: PricingCardsProps) {
+export function PricingCards({ onSelect, currentPlan, loadingPlan }: PricingCardsProps) {
   return (
     <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
       {PLANS.map((plan) => {
-        const badge     = PLAN_BADGES[plan];
-        const isGrowth  = plan === "growth";
-        const isCurrent = currentPlan === plan;
+        const badge      = PLAN_BADGES[plan];
+        const isGrowth   = plan === "growth";
+        const isCurrent  = currentPlan === plan;
+        const isLoading  = loadingPlan === plan;
+        const anyLoading = loadingPlan != null;
 
         return (
           <div
@@ -96,7 +99,7 @@ export function PricingCards({ onSelect, currentPlan, loading }: PricingCardsPro
             {onSelect ? (
               <button
                 onClick={() => onSelect(plan as "starter" | "growth" | "pro")}
-                disabled={isCurrent || loading}
+                disabled={isCurrent || anyLoading}
                 className={cn(
                   "w-full rounded-[var(--radius-sm)] py-2 text-sm font-medium transition-opacity",
                   isCurrent
@@ -104,9 +107,11 @@ export function PricingCards({ onSelect, currentPlan, loading }: PricingCardsPro
                     : isGrowth
                     ? "bg-[var(--brand)] text-[#0A0A0C] hover:opacity-90"
                     : "border border-[var(--border)] text-[var(--text-2)] hover:bg-[var(--bg-3)]",
+                  // Only dim OTHER buttons, not the one that's loading
+                  !isCurrent && anyLoading && !isLoading && "opacity-50",
                 )}
               >
-                {isCurrent ? "Current plan" : loading ? "Loading…" : "Select plan"}
+                {isCurrent ? "Current plan" : isLoading ? "Loading…" : "Select plan"}
               </button>
             ) : (
               <Link

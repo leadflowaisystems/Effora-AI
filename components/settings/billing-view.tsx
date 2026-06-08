@@ -33,7 +33,9 @@ export function BillingView({
   monthlyAiMsgCount,
   usageCounts,
 }: Props) {
-  const [loading, setLoading] = React.useState(false);
+  // Track loading per-plan so only the clicked button shows a spinner
+  const [loadingPlan, setLoadingPlan] = React.useState<string | null>(null);
+  const [cancelLoading, setCancelLoading] = React.useState(false);
   const limits = getPlanLimits(plan);
   const trialExpired = isTrialExpired(plan, trialEndsAt);
   const daysLeft = plan === "trial"
@@ -41,7 +43,14 @@ export function BillingView({
     : null;
 
   async function handleSelect(selectedPlan: "starter" | "growth" | "pro") {
-    setLoading(true);
+    if (loadingPlan) return; // prevent double-click while another is in flight
+    setLoadingPlan(selectedPlan);
+
+    // Open a blank window immediately inside the user-gesture so browsers
+    // don't block it as a popup. We'll navigate it to the Razorpay URL once
+    // the API responds, or close it if something goes wrong.
+    const win = window.open("about:blank", "_blank");
+
     try {
       const res = await fetch("/api/billing/subscribe", {
         method:  "POST",
@@ -49,20 +58,27 @@ export function BillingView({
         body:    JSON.stringify({ orgId, plan: selectedPlan }),
       });
       const json = await res.json();
-      if (json.shortUrl) window.open(json.shortUrl, "_blank");
-    } catch { /* ignore */ }
-    finally { setLoading(false); }
+      if (json.shortUrl && win) {
+        win.location.href = json.shortUrl;
+      } else {
+        win?.close();
+      }
+    } catch {
+      win?.close();
+    } finally {
+      setLoadingPlan(null);
+    }
   }
 
   async function handleCancel() {
     if (!confirm("Cancel your subscription? You'll keep access until the end of the billing period.")) return;
-    setLoading(true);
+    setCancelLoading(true);
     await fetch("/api/billing/cancel", {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
       body:    JSON.stringify({ orgId }),
     });
-    setLoading(false);
+    setCancelLoading(false);
     window.location.reload();
   }
 
@@ -200,7 +216,7 @@ export function BillingView({
           <div className="mt-6 pt-4 border-t border-[var(--border)]">
             <button
               onClick={handleCancel}
-              disabled={loading}
+              disabled={cancelLoading}
               className="text-sm text-[var(--text-3)] hover:text-[var(--danger)] transition-colors"
             >
               Cancel subscription
@@ -231,7 +247,7 @@ export function BillingView({
           <PricingCards
             onSelect={handleSelect}
             currentPlan={plan === "trial" ? undefined : plan}
-            loading={loading}
+            loadingPlan={loadingPlan}
           />
         </div>
       )}
