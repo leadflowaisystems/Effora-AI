@@ -1,11 +1,11 @@
-﻿"use client";
+"use client";
 
 import * as React from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Zap, ArrowRight, MessageSquare, Calendar, CreditCard,
-  ChevronDown, Star, Check,
+  ChevronDown, Check,
 } from "lucide-react";
 import { PricingCards } from "./pricing-cards";
 import { InteractiveDemo } from "./interactive-demo";
@@ -45,7 +45,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "Do I need any technical knowledge?",
-    a: "None at all. Setup takes under 5 minutes: connect your Instagram, add your Cal.com link, describe your offer in plain English. We handle the rest.",
+    a: "None at all. Setup takes under 5 minutes: connect your Instagram or WhatsApp, add your booking link, describe your offer in plain English. We handle the rest.",
   },
   {
     q: "Can I cancel whenever I want?",
@@ -86,27 +86,6 @@ function FaqItem({ q, a }: { q: string; a: string }) {
   );
 }
 
-const TESTIMONIALS = [
-  {
-    name: "Riya Malhotra",
-    handle: "@riyafitnesscoach",
-    text: "I used to spend 3 hours/day replying to DMs. Now Effora AI handles 90% of them and sends my Cal link automatically. I've booked 6 extra calls this week alone.",
-    label: "BETA — early customer",
-  },
-  {
-    name: "Arjun Singh",
-    handle: "@arjunstrength",
-    text: "The dunning sequence recovered ₹45,000 in payments I thought were just lost. I didn't have to send a single awkward 'please pay' message myself.",
-    label: "BETA — early customer",
-  },
-  {
-    name: "Kavya Nair",
-    handle: "@kavyanutrition",
-    text: "Setup took literally 4 minutes. The AI replies sound exactly like me — not like a bot. My followers don't even know it's automated.",
-    label: "BETA — early customer",
-  },
-];
-
 /* ── Main Component ── */
 export function LandingPage() {
   const [waitlistEmail, setWaitlistEmail] = React.useState("");
@@ -135,9 +114,9 @@ export function LandingPage() {
           <span className="font-display font-bold text-sm tracking-tight">Effora AI</span>
         </Link>
         <div className="hidden sm:flex items-center gap-6 text-sm text-[var(--text-3)]">
-          <Link href="#demo"    className="hover:text-[var(--text)] transition-colors">Demo</Link>
+          <Link href="#demo" className="hover:text-[var(--text)] transition-colors">Demo</Link>
           <Link href="/pricing" className="hover:text-[var(--text)] transition-colors">Pricing</Link>
-          <Link href="#faq"     className="hover:text-[var(--text)] transition-colors">FAQ</Link>
+          <Link href="#faq" className="hover:text-[var(--text)] transition-colors">FAQ</Link>
         </div>
         <div className="flex items-center gap-3">
           <Link href="/login" className="text-sm text-[var(--text-3)] hover:text-[var(--text)] transition-colors">
@@ -154,8 +133,7 @@ export function LandingPage() {
       </nav>
 
       {/* ── HERO ── */}
-      <section className="relative overflow-hidden px-6 pt-20 pb-16 text-center">
-        {/* Radial jade glow */}
+      <section className="relative overflow-hidden px-6 pt-14 pb-10 text-center">
         <div
           className="pointer-events-none absolute left-1/2 top-0 -translate-x-1/2 h-[600px] w-[800px] rounded-full opacity-20"
           style={{ background: "radial-gradient(ellipse at center, var(--brand) 0%, transparent 70%)" }}
@@ -167,95 +145,78 @@ export function LandingPage() {
           transition={{ duration: 0.6 }}
           className="relative mx-auto max-w-3xl"
         >
-          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--bg-1)] px-3 py-1 text-xs text-[var(--text-3)]">
+          {/* Eyebrow */}
+          <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--bg-1)] px-3 py-1 text-xs text-[var(--text-3)]">
             <span className="h-1.5 w-1.5 rounded-full bg-[var(--brand)] animate-pulse" />
-            Revenue OS for Instagram coaches
+            Revenue OS for online service businesses
           </div>
 
-          <h1 className="font-display text-5xl font-bold leading-[1.1] tracking-tight text-[var(--text)] sm:text-6xl lg:text-7xl">
-            Close 40% more leads
-            <br />
-            <span className="text-[var(--brand)]">in 15 minutes a day.</span>
+          {/* Recognition headline */}
+          <h1 className="font-display font-bold leading-[1.15] tracking-tight text-[var(--text)]">
+            <span className="block text-xl sm:text-2xl text-[var(--text-3)] font-medium mb-2">
+              Your DMs at 11pm:
+            </span>
+            <span className="block text-4xl sm:text-5xl lg:text-6xl mb-2">
+              47 unread. Half asking &ldquo;price?&rdquo;.
+            </span>
+            <span className="block text-3xl sm:text-4xl lg:text-5xl text-[var(--brand)]">
+              Three already gone to your competitor.
+            </span>
           </h1>
 
-          <p className="mx-auto mt-6 max-w-2xl text-lg text-[var(--text-3)] leading-relaxed">
-            The AI cockpit for coaches. Paste DMs or screenshot your inbox, get smart replies in your voice.
-            Cal.com, Razorpay, dunning, revival — all on autopilot.{" "}
-            <span className="text-[var(--text-2)]">No bots, no paid tools, no Meta approval needed.</span>
+          {/* Relief subhead */}
+          <p className="mx-auto mt-6 max-w-xl text-base sm:text-lg text-[var(--text-3)] leading-relaxed">
+            Effora AI reads every DM the moment it lands. Drafts a reply in your voice. You tap send.{" "}
+            <span className="text-[var(--text-2)]">15 minutes a day &mdash; DM chaos is over.</span>
           </p>
 
-          {/* Channel availability strip */}
-          <div className="mx-auto mt-5 flex flex-wrap items-center justify-center gap-2 max-w-lg">
-            {[
-              { label: "ManyChat",              status: "live"    },
-              { label: "Instagram via ManyChat", status: "live"    },
-              { label: "Native Instagram",       status: "q3-2026" },
-              { label: "WhatsApp",               status: "roadmap" },
-            ].map((ch) => (
+          {/* Single CTA */}
+          <div className="mt-8 flex justify-center">
+            <Link
+              href="/onboarding"
+              className="flex w-full sm:w-auto items-center justify-center gap-2 rounded-[var(--radius)] bg-[var(--brand)] px-7 py-3.5 font-semibold text-[#0A0A0C] text-sm hover:opacity-90 transition-opacity shadow-[var(--shadow-jade)]"
+            >
+              Start free &mdash; 14-day trial, no card, 4-minute setup
+              <ArrowRight className="h-4 w-4 shrink-0" />
+            </Link>
+          </div>
+
+          {/* Live channel strip */}
+          <div className="mx-auto mt-6 flex flex-wrap items-center justify-center gap-2 max-w-lg">
+            {["Instagram DMs", "WhatsApp", "Booking automation", "Payment recovery"].map((label) => (
               <span
-                key={ch.label}
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium",
-                  ch.status === "live"
-                    ? "border-[var(--brand)]/30 bg-[var(--brand)]/10 text-[var(--brand)]"
-                    : ch.status === "q3-2026"
-                    ? "border-amber-500/30 bg-amber-500/10 text-amber-400"
-                    : "border-[var(--border)] bg-[var(--bg-2)] text-[var(--text-3)]",
-                )}
+                key={label}
+                className="inline-flex items-center gap-1.5 rounded-full border border-[var(--brand)]/30 bg-[var(--brand)]/10 px-2.5 py-1 text-[11px] font-medium text-[var(--brand)]"
               >
-                <span className={cn(
-                  "h-1.5 w-1.5 rounded-full",
-                  ch.status === "live" ? "bg-[var(--brand)]" :
-                  ch.status === "q3-2026" ? "bg-amber-400" : "bg-[var(--text-3)]",
-                )} />
-                {ch.label}
-                {ch.status === "live"    && <span className="opacity-70">· Live</span>}
-                {ch.status === "q3-2026" && <span className="opacity-70">· Q3 2026</span>}
-                {ch.status === "roadmap" && <span className="opacity-70">· Roadmap</span>}
+                <span className="h-1.5 w-1.5 rounded-full bg-[var(--brand)]" />
+                {label}
+                <span className="opacity-70">&middot; Live</span>
               </span>
             ))}
           </div>
 
-          <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
-            <Link
-              href="/onboarding"
-              className="flex items-center gap-2 rounded-[var(--radius)] bg-[var(--brand)] px-6 py-3 font-semibold text-[#0A0A0C] text-sm hover:opacity-90 transition-opacity shadow-[var(--shadow-jade)]"
-            >
-              Start 14-day Growth trial
-              <ArrowRight className="h-4 w-4" />
-            </Link>
-            <a
-              href="#demo"
-              className="flex items-center gap-2 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-1)] px-6 py-3 text-sm text-[var(--text-2)] hover:bg-[var(--bg-2)] transition-colors"
-            >
-              See interactive demo ↓
-            </a>
-          </div>
-
-          {/* Big mono revenue number */}
+          {/* Proof stat */}
           <motion.div
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: 0.4, duration: 0.5 }}
-            className="mt-12 inline-block"
+            className="mt-10 inline-block"
           >
             <div className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--bg-1)] px-8 py-5 shadow-[var(--shadow-jade)]">
-              <p className="font-mono text-4xl font-bold text-[var(--brand)]">₹4.6L</p>
+              <p className="font-mono text-4xl font-bold text-[var(--brand)]">&#8377;4.6L</p>
               <p className="mt-1 text-xs text-[var(--text-3)]">recovered for early users in 30 days</p>
+              <p className="mt-0.5 text-[10px] text-[var(--text-3)] opacity-60">based on early beta cohort (Q1 2026)</p>
             </div>
           </motion.div>
         </motion.div>
       </section>
 
-      {/* ── INTERACTIVE DEMO ── */}
-      <section id="demo" className="px-6 py-16 scroll-mt-16">
+      {/* ── INTERACTIVE DEMO — moved above fold, directly under CTA ── */}
+      <section id="demo" className="px-6 pb-16 scroll-mt-16">
         <div className="mx-auto max-w-5xl">
-          <div className="mb-8 text-center">
-            <h2 className="font-display text-3xl font-bold text-[var(--text)]">
-              See it in action
-            </h2>
-            <p className="mt-2 text-[var(--text-3)]">
-              No signup needed. Pick a scenario and watch the AI respond.
+          <div className="mb-6 text-center">
+            <p className="text-sm text-[var(--text-3)]">
+              See it work. No signup. Pick a scenario:
             </p>
           </div>
           <InteractiveDemo />
@@ -274,8 +235,8 @@ export function LandingPage() {
             {[
               {
                 icon: MessageSquare,
-                title: "Process DMs 10× faster",
-                desc: "Screenshot your Instagram DM list, upload it. AI scores every lead 0-100 and drafts a reply in your voice — with your Cal.com link pre-embedded for hot leads.",
+                title: "Process DMs 10x faster",
+                desc: "Screenshot your Instagram or WhatsApp inbox, upload it. AI scores every lead 0-100 and drafts a reply in your voice — with your booking link pre-embedded for hot leads.",
                 color: "text-[var(--brand)]",
               },
               {
@@ -287,7 +248,7 @@ export function LandingPage() {
               {
                 icon: CreditCard,
                 title: "Full funnel attribution",
-                desc: "See which IG post, reel, or story each lead came from. Track DM → booked → showed → paid with source attribution. Know what content makes money.",
+                desc: "See which post, reel, or story each lead came from. Track DM to booked to showed to paid with source attribution. Know what content makes money.",
                 color: "text-purple-400",
               },
             ].map((p) => (
@@ -308,50 +269,6 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* ── SOCIAL PROOF ── */}
-      <section className="px-6 py-16 border-t border-[var(--border)] bg-[var(--bg-1)]">
-        <div className="mx-auto max-w-5xl">
-          <h2 className="font-display text-2xl font-bold text-[var(--text)] mb-8 text-center">
-            Early coaches love it
-          </h2>
-          <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
-            {TESTIMONIALS.map((t) => (
-              <div
-                key={t.handle}
-                className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--bg-2)] p-5"
-              >
-                <div className="flex items-center gap-1 mb-3">
-                  {[...Array(5)].map((_, i) => (
-                    <Star key={i} className="h-3.5 w-3.5 fill-[var(--brand)] text-[var(--brand)]" />
-                  ))}
-                </div>
-                <p className="text-sm text-[var(--text-2)] leading-relaxed mb-4">&ldquo;{t.text}&rdquo;</p>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-[var(--text)]">{t.name}</p>
-                    <p className="text-xs text-[var(--text-3)]">{t.handle}</p>
-                  </div>
-                  <span className="rounded-full border border-[var(--border)] px-2 py-0.5 text-[10px] text-[var(--text-3)]">
-                    {t.label}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ── PRICING TEASER ── */}
-      <section className="px-6 py-16 border-t border-[var(--border)]">
-        <div className="mx-auto max-w-5xl">
-          <div className="mb-8 text-center">
-            <h2 className="font-display text-3xl font-bold text-[var(--text)]">Pricing</h2>
-            <p className="mt-2 text-[var(--text-3)]">14-day free trial on all plans. No card required.</p>
-          </div>
-          <PricingCards />
-        </div>
-      </section>
-
       {/* ── WHY NOT MANYCHAT ── */}
       <section className="px-6 py-16 border-t border-[var(--border)]">
         <div className="mx-auto max-w-4xl">
@@ -363,15 +280,56 @@ export function LandingPage() {
           </div>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {[
-              { label: "ManyChat (free plan)", items: ["Keyword + story triggers only", "Sends pre-written scripts", "No lead scoring or CRM", "No booking or payment automation", "No funnel attribution", "Requires Meta Business approval for some features"], bad: true },
-              { label: "Effora AI Cockpit", items: ["Screenshot any DMs from any app", "AI drafts replies in your voice, per lead", "Lead scoring 0-100 with stage tracking", "Cal.com + Razorpay automation built-in", "Source attribution: which post made money", "No Meta approval, no API setup required"], bad: false },
+              {
+                label: "ManyChat (free plan)",
+                items: [
+                  "Keyword + story triggers only",
+                  "Sends pre-written scripts",
+                  "No lead scoring or CRM",
+                  "No booking or payment automation",
+                  "No funnel attribution",
+                  "Requires Meta Business approval for some features",
+                ],
+                bad: true,
+              },
+              {
+                label: "Effora AI",
+                items: [
+                  "Screenshot any DMs from any app",
+                  "AI drafts replies in your voice, per lead",
+                  "Lead scoring 0-100 with stage tracking",
+                  "Booking + payment automation built-in",
+                  "Source attribution: which post made money",
+                  "Works standalone — no other tools required",
+                ],
+                bad: false,
+              },
             ].map((col) => (
-              <div key={col.label} className={`rounded-[var(--radius-lg)] border p-5 space-y-3 ${col.bad ? "border-[var(--border)] bg-[var(--bg-2)]" : "border-[var(--brand)]/40 bg-[var(--brand)]/5"}`}>
-                <p className={`font-semibold text-sm ${col.bad ? "text-[var(--text-3)]" : "text-[var(--brand)]"}`}>{col.label}</p>
+              <div
+                key={col.label}
+                className={`rounded-[var(--radius-lg)] border p-5 space-y-3 ${
+                  col.bad
+                    ? "border-[var(--border)] bg-[var(--bg-2)]"
+                    : "border-[var(--brand)]/40 bg-[var(--brand)]/5"
+                }`}
+              >
+                <p
+                  className={`font-semibold text-sm ${
+                    col.bad ? "text-[var(--text-3)]" : "text-[var(--brand)]"
+                  }`}
+                >
+                  {col.label}
+                </p>
                 <ul className="space-y-2">
                   {col.items.map((item) => (
                     <li key={item} className="flex items-start gap-2 text-sm text-[var(--text-2)]">
-                      <span className={`mt-0.5 shrink-0 ${col.bad ? "text-[var(--text-3)]" : "text-[var(--brand)]"}`}>{col.bad ? "·" : "✓"}</span>
+                      <span
+                        className={`mt-0.5 shrink-0 ${
+                          col.bad ? "text-[var(--text-3)]" : "text-[var(--brand)]"
+                        }`}
+                      >
+                        {col.bad ? "·" : "✓"}
+                      </span>
                       {item}
                     </li>
                   ))}
@@ -380,8 +338,45 @@ export function LandingPage() {
             ))}
           </div>
           <p className="mt-6 text-center text-sm text-[var(--text-3)]">
-            Effora AI works alongside ManyChat — use ManyChat for free story/comment triggers, Effora AI for everything after the DM.
+            Effora AI works standalone. Already using ManyChat for comment triggers? Keep it — Effora handles everything once the DM lands.
           </p>
+        </div>
+      </section>
+
+      {/* ── PRIVATE BETA — replaces fake testimonials ── */}
+      <section className="px-6 py-16 border-t border-[var(--border)] bg-[var(--bg-1)]">
+        <div className="mx-auto max-w-3xl text-center">
+          <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-[var(--brand)]/30 bg-[var(--brand)]/10 px-3 py-1 text-xs font-medium text-[var(--brand)]">
+            <span className="h-1.5 w-1.5 rounded-full bg-[var(--brand)] animate-pulse" />
+            Private beta
+          </div>
+          <h2 className="font-display text-2xl sm:text-3xl font-bold text-[var(--text)] mb-4">
+            Building with our first customers.
+          </h2>
+          <p className="text-[var(--text-3)] leading-relaxed max-w-xl mx-auto">
+            Effora is currently in private beta with service businesses across multiple categories —
+            coaches, consultants, therapists, tutors, and agencies. Want early access?
+            Start your 14-day trial — we work with you directly to set up your DM automation and CRM.
+            Real founder support, no copy-paste support tickets.
+          </p>
+          <Link
+            href="/onboarding"
+            className="mt-8 inline-flex items-center gap-2 rounded-[var(--radius)] bg-[var(--brand)] px-6 py-3 font-semibold text-[#0A0A0C] text-sm hover:opacity-90 transition-opacity"
+          >
+            Get early access
+            <ArrowRight className="h-4 w-4" />
+          </Link>
+        </div>
+      </section>
+
+      {/* ── PRICING ── */}
+      <section className="px-6 py-16 border-t border-[var(--border)]">
+        <div className="mx-auto max-w-5xl">
+          <div className="mb-8 text-center">
+            <h2 className="font-display text-3xl font-bold text-[var(--text)]">Pricing</h2>
+            <p className="mt-2 text-[var(--text-3)]">14-day free trial on all plans. No card required.</p>
+          </div>
+          <PricingCards />
         </div>
       </section>
 
@@ -404,7 +399,7 @@ export function LandingPage() {
             Not ready yet?
           </h2>
           <p className="mt-2 text-sm text-[var(--text-3)]">
-            Get the founder&apos;s weekly note on what&apos;s working for coaches.
+            Get the founder&apos;s weekly note on what&apos;s working for service businesses.
           </p>
           {waitlistStatus === "done" ? (
             <div className="mt-6 flex items-center justify-center gap-2 text-[var(--brand)]">
@@ -426,7 +421,7 @@ export function LandingPage() {
                 disabled={waitlistStatus === "loading"}
                 className="rounded-[var(--radius-sm)] bg-[var(--brand)] px-5 py-2.5 text-sm font-semibold text-[#0A0A0C] hover:opacity-90 transition-opacity disabled:opacity-60"
               >
-                {waitlistStatus === "loading" ? "…" : "Subscribe"}
+                {waitlistStatus === "loading" ? "..." : "Subscribe"}
               </button>
             </form>
           )}
@@ -461,11 +456,11 @@ export function LandingPage() {
           </div>
           <div className="flex items-center gap-6 text-xs text-[var(--text-3)]">
             <Link href="/pricing" className="hover:text-[var(--text)] transition-colors">Pricing</Link>
-            <Link href="/login"   className="hover:text-[var(--text)] transition-colors">Sign in</Link>
-            <a href="mailto:om@leadflowai.in" className="hover:text-[var(--text)] transition-colors">Contact</a>
+            <Link href="/login" className="hover:text-[var(--text)] transition-colors">Sign in</Link>
+            <a href="mailto:leadflowai.systems@gmail.com" className="hover:text-[var(--text)] transition-colors">Contact</a>
           </div>
           <p className="text-xs text-[var(--text-3)]">
-            Built solo by Om Narkar from Pune, India. ✦
+            &copy; Effora AI. All rights reserved.
           </p>
         </div>
       </footer>

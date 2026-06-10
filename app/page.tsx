@@ -9,9 +9,9 @@ import { redirect } from "next/navigation";
 import { LandingPage } from "@/components/marketing/landing-page";
 
 export const metadata = {
-  title: "Effora AI — Revenue OS for Instagram Coaches",
+  title: "Effora AI — Revenue OS for Online Service Businesses",
   description:
-    "Stop losing leads to slow replies, no-shows, and payment ghosting. Effora AI qualifies your DMs, books your calls, and chases your payments while you sleep.",
+    "Stop losing leads to slow replies, no-shows, and payment ghosting. Effora AI qualifies your DMs, books your calls, and chases your payments while you sleep. For coaches, consultants, therapists, tutors, and agencies.",
 };
 
 export default async function Home() {
