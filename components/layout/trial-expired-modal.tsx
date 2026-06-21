@@ -3,7 +3,6 @@
 import * as React from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { AlertTriangle, LogOut } from "lucide-react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { isTrialExpired } from "@/lib/plan";
 import { PLAN_PRICES, PLAN_NAMES, PLAN_FEATURES } from "@/lib/plan";
@@ -14,16 +13,19 @@ interface Props {
   plan:        string;
   trialEndsAt: string | null;
   orgSlug:     string;
-  subStatus?:  string;  // passed from layout for past_due detection
-  isFounder?:  boolean; // founder accounts never see this modal
+  orgId:       string;   // needed to call /api/billing/subscribe
+  subStatus?:  string;   // passed from layout for past_due detection
+  isFounder?:  boolean;  // founder accounts never see this modal
 }
 
 const BLOCKED_PLANS = new Set(["cancelled", "halted"]);
 const UPGRADE_PLANS = ["starter", "growth", "pro"] as const;
 
-export function TrialExpiredModal({ plan, trialEndsAt, orgSlug, subStatus, isFounder }: Props) {
-  const router   = useRouter();
-  const expired  = isTrialExpired(plan, trialEndsAt);
+export function TrialExpiredModal({ plan, trialEndsAt, orgSlug, orgId, subStatus, isFounder }: Props) {
+  const router      = useRouter();
+  const expired     = isTrialExpired(plan, trialEndsAt);
+  const [loadingPlan, setLoadingPlan] = React.useState<string | null>(null);
+  const [error, setError]             = React.useState<string | null>(null);
   const isPastDue = subStatus === "past_due";
   const isCancelled = BLOCKED_PLANS.has(plan) || BLOCKED_PLANS.has(subStatus ?? "");
 
@@ -50,6 +52,34 @@ export function TrialExpiredModal({ plan, trialEndsAt, orgSlug, subStatus, isFou
     const sb = createClient();
     await sb.auth.signOut();
     router.push("/login");
+  }
+
+  async function handleSelectPlan(p: "starter" | "growth" | "pro") {
+    if (loadingPlan) return;
+    setLoadingPlan(p);
+    setError(null);
+    // Open a blank tab immediately inside the user-gesture so browsers don't
+    // block it as a popup. Navigate it to the Razorpay URL once we get it back.
+    const win = window.open("about:blank", "_blank");
+    try {
+      const res = await fetch("/api/billing/subscribe", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ orgId, plan: p }),
+      });
+      const json = await res.json();
+      if (json.shortUrl && win) {
+        win.location.href = json.shortUrl;
+      } else {
+        win?.close();
+        setError(json.error ?? "Could not start checkout. Please try again.");
+      }
+    } catch {
+      win?.close();
+      setError("Network error. Please try again.");
+    } finally {
+      setLoadingPlan(null);
+    }
   }
 
   return (
@@ -92,52 +122,63 @@ export function TrialExpiredModal({ plan, trialEndsAt, orgSlug, subStatus, isFou
           </p>
 
           {/* Plan cards — three compact cards */}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 mb-6">
-            {UPGRADE_PLANS.map((p) => (
-              <div
-                key={p}
-                className={cn(
-                  "rounded-[var(--radius-md)] border p-4 flex flex-col gap-3",
-                  p === "growth"
-                    ? "border-[var(--brand)] bg-[var(--brand-glow)]"
-                    : "border-[var(--border)] bg-[var(--bg-2)]"
-                )}
-              >
-                <div>
-                  <p className="text-xs font-semibold text-[var(--text)] uppercase tracking-wide">
-                    {PLAN_NAMES[p]}
-                    {p === "growth" && (
-                      <span className="ml-1.5 rounded-full bg-[var(--brand)] px-1.5 py-0.5 text-[9px] font-bold text-[#0A0A0C]">
-                        Popular
-                      </span>
-                    )}
-                  </p>
-                  <p className="font-mono text-lg font-bold text-[var(--text)] mt-0.5">
-                    ₹{PLAN_PRICES[p].toLocaleString("en-IN")}
-                    <span className="text-xs text-[var(--text-3)] font-normal">/mo</span>
-                  </p>
-                </div>
-                <ul className="space-y-1">
-                  {(PLAN_FEATURES[p] ?? []).slice(0, 3).map((f) => (
-                    <li key={f} className="text-[11px] text-[var(--text-3)] leading-relaxed truncate">
-                      · {f.replace(" — coming Q3 2026", "")}
-                    </li>
-                  ))}
-                </ul>
-                <Link
-                  href={`/org/${orgSlug}/settings/billing`}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 mb-4">
+            {UPGRADE_PLANS.map((p) => {
+              const isLoading  = loadingPlan === p;
+              const anyLoading = loadingPlan !== null;
+              return (
+                <div
+                  key={p}
                   className={cn(
-                    "mt-auto block w-full rounded-[var(--radius-sm)] py-2 text-center text-xs font-semibold transition-opacity",
+                    "rounded-[var(--radius-md)] border p-4 flex flex-col gap-3",
                     p === "growth"
-                      ? "bg-[var(--brand)] text-[#0A0A0C] hover:opacity-90"
-                      : "border border-[var(--border)] text-[var(--text-2)] hover:bg-[var(--bg-3)]"
+                      ? "border-[var(--brand)] bg-[var(--brand-glow)]"
+                      : "border-[var(--border)] bg-[var(--bg-2)]"
                   )}
                 >
-                  Select {PLAN_NAMES[p]}
-                </Link>
-              </div>
-            ))}
+                  <div>
+                    <p className="text-xs font-semibold text-[var(--text)] uppercase tracking-wide">
+                      {PLAN_NAMES[p]}
+                      {p === "growth" && (
+                        <span className="ml-1.5 rounded-full bg-[var(--brand)] px-1.5 py-0.5 text-[9px] font-bold text-[#0A0A0C]">
+                          Popular
+                        </span>
+                      )}
+                    </p>
+                    <p className="font-mono text-lg font-bold text-[var(--text)] mt-0.5">
+                      ₹{PLAN_PRICES[p].toLocaleString("en-IN")}
+                      <span className="text-xs text-[var(--text-3)] font-normal">/mo</span>
+                    </p>
+                  </div>
+                  <ul className="space-y-1">
+                    {(PLAN_FEATURES[p] ?? []).slice(0, 3).map((f) => (
+                      <li key={f} className="text-[11px] text-[var(--text-3)] leading-relaxed truncate">
+                        · {f.replace(" — coming Q3 2026", "")}
+                      </li>
+                    ))}
+                  </ul>
+                  <button
+                    onClick={() => handleSelectPlan(p)}
+                    disabled={anyLoading}
+                    className={cn(
+                      "mt-auto w-full rounded-[var(--radius-sm)] py-2 text-center text-xs font-semibold transition-opacity",
+                      p === "growth"
+                        ? "bg-[var(--brand)] text-[#0A0A0C] hover:opacity-90"
+                        : "border border-[var(--border)] text-[var(--text-2)] hover:bg-[var(--bg-3)]",
+                      anyLoading && !isLoading && "opacity-50",
+                    )}
+                  >
+                    {isLoading ? "Opening…" : `Select ${PLAN_NAMES[p]}`}
+                  </button>
+                </div>
+              );
+            })}
           </div>
+
+          {/* Error message */}
+          {error && (
+            <p className="mb-3 text-center text-xs text-red-400">{error}</p>
+          )}
 
           <p className="text-center text-xs text-[var(--text-3)]">
             Your data is safe and read-only until you subscribe.

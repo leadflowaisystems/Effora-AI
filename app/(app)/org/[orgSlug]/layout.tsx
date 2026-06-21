@@ -103,6 +103,7 @@ export default async function OrgLayout({ children, params }: Props) {
         plan={org.plan ?? "trial"}
         trialEndsAt={org.trial_ends_at ?? null}
         orgSlug={params.orgSlug}
+        orgId={org.id}
         subStatus={org.subscription_status ?? undefined}
         isFounder={founderAccount}
       />

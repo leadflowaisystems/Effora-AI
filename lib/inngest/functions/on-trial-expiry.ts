@@ -28,7 +28,7 @@ export const onTrialExpiry = inngest.createFunction(
         await svc.from("copilot_chats").insert({
           org_id:   org.id,
           role:     "assistant",
-          content:  "Your 14-day trial ends today. To keep AI replies, CRM, and automations running, upgrade now in Settings > Billing. Takes 2 minutes.",
+          content:  "Your 15-day trial ends today. To keep AI replies, CRM, and automations running, upgrade now in Settings > Billing. Takes 2 minutes.",
           metadata: { source: "trial_expiry" },
         });
         notified++;

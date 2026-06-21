@@ -67,9 +67,9 @@ export function PricingCards({ onSelect, currentPlan, loadingPlan }: PricingCard
                 <span className="text-sm text-[var(--text-3)]">/month</span>
               </div>
               <p className="mt-1.5 text-xs text-[var(--text-3)]">
-                {plan === "starter" && "Perfect for solo coaches just starting out"}
-                {plan === "growth"  && "For coaches growing their client base"}
-                {plan === "pro"     && "For established coaches scaling operations"}
+                {plan === "starter" && "Perfect for solo service businesses starting out"}
+                {plan === "growth"  && "For growing your client base and revenue"}
+                {plan === "pro"     && "For established businesses scaling operations"}
               </p>
             </div>
 

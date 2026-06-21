@@ -29,7 +29,7 @@ function GrainOverlay() {
 const FAQ_ITEMS = [
   {
     q: "What does Effora AI cost?",
-    a: "Plans start at ₹2,999/month after a free 14-day trial. No card required to start. Cancel anytime.",
+    a: "Plans start at ₹999/month after a free 15-day trial. No card required to start. Cancel anytime.",
   },
   {
     q: "Is it safe to connect my Instagram?",
@@ -176,7 +176,7 @@ export function LandingPage() {
               href="/onboarding"
               className="flex w-full sm:w-auto items-center justify-center gap-2 rounded-[var(--radius)] bg-[var(--brand)] px-7 py-3.5 font-semibold text-[#0A0A0C] text-sm hover:opacity-90 transition-opacity shadow-[var(--shadow-jade)]"
             >
-              Start free &mdash; 14-day trial, no card, 4-minute setup
+              Start free &mdash; 15-day trial, no card, 4-minute setup
               <ArrowRight className="h-4 w-4 shrink-0" />
             </Link>
           </div>
@@ -356,7 +356,7 @@ export function LandingPage() {
           <p className="text-[var(--text-3)] leading-relaxed max-w-xl mx-auto">
             Effora is currently in private beta with service businesses across multiple categories —
             coaches, consultants, therapists, tutors, and agencies. Want early access?
-            Start your 14-day trial — we work with you directly to set up your DM automation and CRM.
+            Start your 15-day trial — we work with you directly to set up your DM automation and CRM.
             Real founder support, no copy-paste support tickets.
           </p>
           <Link
@@ -374,7 +374,7 @@ export function LandingPage() {
         <div className="mx-auto max-w-5xl">
           <div className="mb-8 text-center">
             <h2 className="font-display text-3xl font-bold text-[var(--text)]">Pricing</h2>
-            <p className="mt-2 text-[var(--text-3)]">14-day free trial on all plans. No card required.</p>
+            <p className="mt-2 text-[var(--text-3)]">15-day free trial on all plans. No card required.</p>
           </div>
           <PricingCards />
         </div>
@@ -435,7 +435,7 @@ export function LandingPage() {
             Start earning while you sleep.
           </h2>
           <p className="mt-3 text-[var(--text-3)]">
-            14-day free trial. Setup in 5 minutes. Cancel anytime.
+            15-day free trial. Setup in 5 minutes. Cancel anytime.
           </p>
           <Link
             href="/onboarding"

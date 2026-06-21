@@ -58,7 +58,7 @@ export default function PricingPage() {
             See the FAQ
           </Link>{" "}
           or{" "}
-          <a href="mailto:om@leadflowai.in" className="text-[var(--brand)] hover:underline">
+          <a href="mailto:leadflowai.systems@gmail.com" className="text-[var(--brand)] hover:underline">
             email us
           </a>
           .
