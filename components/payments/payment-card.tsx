@@ -86,8 +86,21 @@ function UpiQrModal({ url, onClose }: { url: string; onClose: () => void }) {
     return () => { cancelled = true; };
   }, [url]);
 
+  // Escape key
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) { if (e.key === "Escape") onClose(); }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center px-4"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="UPI QR code"
+    >
       <div className="absolute inset-0 bg-black/70" />
       <div
         className="relative z-10 w-full max-w-xs rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-1)] p-5 space-y-4 shadow-2xl"
@@ -95,8 +108,8 @@ function UpiQrModal({ url, onClose }: { url: string; onClose: () => void }) {
       >
         <div className="flex items-center justify-between">
           <p className="text-sm font-semibold text-[var(--text)]">Scan to pay via UPI</p>
-          <button onClick={onClose} className="text-[var(--text-3)] hover:text-[var(--text)]">
-            <X className="h-4 w-4" />
+          <button onClick={onClose} aria-label="Close QR code" className="p-1 -mr-1 text-[var(--text-3)] hover:text-[var(--text)] rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]">
+            <X className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
         <div className="flex items-center justify-center rounded-[var(--radius)] bg-[#0A0A0C] p-3">
@@ -375,24 +388,26 @@ export function PaymentCard({ payment, onUpdate, onDelete, isDev, orgId }: Props
 
           {/* Archive (soft) + Delete permanently (hard) */}
           {orgId && (
-            <div className="ml-auto flex items-center gap-2">
+            <div className="ml-auto flex items-center">
               <button
                 type="button"
                 onClick={archivePayment}
                 disabled={isBusy}
-                className="inline-flex items-center gap-1 text-xs text-[var(--text-3)] hover:text-[var(--text-2)] transition-colors disabled:opacity-50"
+                aria-label="Archive payment"
+                className="inline-flex items-center gap-1 px-2 py-2 text-xs text-[var(--text-3)] hover:text-[var(--text-2)] transition-colors disabled:opacity-50 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
               >
-                {deleting === "soft" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Archive className="h-3 w-3" />}
-                {deleting === "soft" ? "Archiving…" : "Archive"}
+                {deleting === "soft" ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" /> : <Archive className="h-3 w-3" aria-hidden="true" />}
+                <span className="hidden sm:inline">{deleting === "soft" ? "Archiving…" : "Archive"}</span>
               </button>
               <button
                 type="button"
                 onClick={() => setHardConfirm(true)}
                 disabled={isBusy}
-                className="inline-flex items-center gap-1 text-xs text-[var(--text-3)] hover:text-red-400 transition-colors disabled:opacity-50"
+                aria-label="Delete payment permanently"
+                className="inline-flex items-center gap-1 px-2 py-2 text-xs text-[var(--text-3)] hover:text-red-400 transition-colors disabled:opacity-50 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
               >
-                {deleting === "hard" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-                {deleting === "hard" ? "Deleting…" : "Delete"}
+                {deleting === "hard" ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" /> : <Trash2 className="h-3 w-3" aria-hidden="true" />}
+                <span className="hidden sm:inline">{deleting === "hard" ? "Deleting…" : "Delete"}</span>
               </button>
             </div>
           )}

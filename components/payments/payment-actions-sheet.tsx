@@ -44,28 +44,45 @@ const MARK_METHODS = [
 function SheetWrap({ title, onClose, children, onSubmit, saving, disabled, submitLabel }:
   { title: string; onClose: () => void; children: React.ReactNode;
     onSubmit: (e: React.FormEvent) => void; saving: boolean; disabled: boolean; submitLabel: string }) {
+  // Close on Escape
+  React.useEffect(() => {
+    function handleKey(e: KeyboardEvent) { if (e.key === "Escape") onClose(); }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
+  const titleId = React.useId();
+
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
-      onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
+      onClick={onClose}
+      aria-hidden="false"
+    >
       <div className="absolute inset-0 bg-black/50" />
-      <form onSubmit={onSubmit}
+      <form
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        onSubmit={onSubmit}
         className="relative z-10 w-full max-w-sm bg-[var(--bg-1)] border border-[var(--border)] rounded-t-2xl sm:rounded-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}>
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between">
-          <h2 className="font-display text-base font-semibold text-[var(--text)]">{title}</h2>
-          <button type="button" onClick={onClose} className="text-[var(--text-3)] hover:text-[var(--text)]">
-            <X className="h-4 w-4" />
+          <h2 id={titleId} className="font-display text-base font-semibold text-[var(--text)]">{title}</h2>
+          <button type="button" onClick={onClose} aria-label="Close" className="p-1 -mr-1 text-[var(--text-3)] hover:text-[var(--text)] rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]">
+            <X className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
         {children}
         <div className="flex gap-3 pt-1">
           <button type="button" onClick={onClose}
-            className="flex-1 rounded-[var(--radius)] border border-[var(--border)] py-2.5 text-sm text-[var(--text-2)] hover:bg-[var(--bg-3)] transition-colors">
+            className="flex-1 rounded-[var(--radius)] border border-[var(--border)] py-2.5 text-sm text-[var(--text-2)] hover:bg-[var(--bg-3)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]">
             Cancel
           </button>
           <button type="submit" disabled={saving || disabled}
-            className="flex-1 rounded-[var(--radius)] bg-[var(--brand)] py-2.5 text-sm font-semibold text-[#0A0A0C] hover:opacity-90 disabled:opacity-50 transition-opacity flex items-center justify-center gap-2">
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            className="flex-1 rounded-[var(--radius)] bg-[var(--brand)] py-2.5 text-sm font-semibold text-[#0A0A0C] hover:opacity-90 disabled:opacity-50 transition-opacity flex items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] focus-visible:ring-offset-2">
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
             {saving ? "Saving…" : submitLabel}
           </button>
         </div>

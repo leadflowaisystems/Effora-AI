@@ -32,6 +32,7 @@ const CATEGORY_TABS = [
 interface PendingPayment { id: string; amount_inr: number; lead_name: string | null }
 interface Props {
   initialPayments: PaymentRow[];
+  initialHasMore?: boolean;
   orgId:           string;
   orgSlug:         string;
   isDev:           boolean;
@@ -95,7 +96,7 @@ function StatTile({ label, value, color, loading }: { label: string; value: stri
   );
 }
 
-export function PaymentsView({ initialPayments, orgId, orgSlug: _slug, isDev, leads, groups = [], pendingPayments, paymentMode }: Props) {
+export function PaymentsView({ initialPayments, initialHasMore = false, orgId, orgSlug: _slug, isDev, leads, groups = [], pendingPayments, paymentMode }: Props) {
   const router      = useRouter();
   const pathname    = usePathname();
   const searchParams = useSearchParams();
@@ -113,6 +114,8 @@ export function PaymentsView({ initialPayments, orgId, orgSlug: _slug, isDev, le
   const [customTo,   setCustomTo]   = useState<string | null>(() => readStoredFilter(STORAGE_KEY)?.to   ?? null);
 
   const [payments, setPayments]         = useState<PaymentRow[]>(initialPayments);
+  const [hasMore, setHasMore]           = useState(initialHasMore);
+  const [loadingMore, setLoadingMore]   = useState(false);
   const [localPending, setLocalPending] = useState<PendingPayment[]>(pendingPayments);
   const [open, setOpen]                 = useState<Record<string, boolean>>({ pending: true, paid: true });
   const [stats, setStats]               = useState<StatsData | null>(null);
@@ -226,12 +229,17 @@ export function PaymentsView({ initialPayments, orgId, orgSlug: _slug, isDev, le
   useEffect(() => { fetchStats(range, category, customFrom, customTo); }, []); // eslint-disable-line
 
   const handleUpdate = useCallback(async () => {
-    const res = await fetch(`/api/orgs/${orgId}/payments`);
-    if (res.ok) {
+    try {
+      const res = await fetch(`/api/orgs/${orgId}/payments?limit=101`);
+      if (!res.ok) throw new Error("Failed to refresh payments");
       const json = await res.json();
-      const rows: PaymentRow[] = json.payments ?? [];
+      const all: PaymentRow[] = json.payments ?? [];
+      setHasMore(all.length > 100);
+      const rows = all.slice(0, 100);
       setPayments(rows);
       setLocalPending(rows.filter((p) => p.status === "pending").map((p) => ({ id: p.id, amount_inr: p.amount_inr, lead_name: p.lead?.name ?? null })));
+    } catch {
+      toast({ title: "Could not refresh payments", description: "Check your connection and try again.", variant: "destructive" });
     }
     fetchStats(range, category, customFrom, customTo);
     router.refresh();
@@ -242,6 +250,28 @@ export function PaymentsView({ initialPayments, orgId, orgSlug: _slug, isDev, le
     setPayments((prev) => prev.filter((p) => p.id !== id));
     setLocalPending((prev) => prev.filter((p) => p.id !== id));
   }, []);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore || payments.length === 0) return;
+    const cursor = payments[payments.length - 1].created_at;
+    setLoadingMore(true);
+    try {
+      const res = await fetch(`/api/orgs/${orgId}/payments?limit=101&cursor=${encodeURIComponent(cursor)}`);
+      if (!res.ok) throw new Error("Failed to load more");
+      const json = await res.json();
+      const all: PaymentRow[] = json.payments ?? [];
+      setHasMore(all.length > 100);
+      const nextPage = all.slice(0, 100);
+      setPayments((prev) => {
+        const existingIds = new Set(prev.map((p) => p.id));
+        return [...prev, ...nextPage.filter((p) => !existingIds.has(p.id))];
+      });
+    } catch {
+      toast({ title: "Could not load more payments", description: "Check your connection and try again.", variant: "destructive" });
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [orgId, payments, hasMore, loadingMore]);
 
   // Apply the SAME filter to the row list: range + category.
   // This makes the row list and the metric tiles consistent.
@@ -286,19 +316,33 @@ export function PaymentsView({ initialPayments, orgId, orgSlug: _slug, isDev, le
       </div>
 
       {/* ── Empty state (non-recurring tabs) ─────────────── */}
-      {category !== "recurring" && paymentGroups.length === 0 && (
-        <div className="flex flex-col items-center justify-center gap-4 py-16 text-center max-w-2xl">
-          <div className="flex h-14 w-14 items-center justify-center rounded-[var(--radius-lg)] bg-[var(--bg-3)]">
-            <IndianRupee className="h-7 w-7 text-[var(--text-3)]" />
+      {category !== "recurring" && paymentGroups.length === 0 && (() => {
+        const neverHadPayments = payments.length === 0;
+        return (
+          <div className="flex flex-col items-center justify-center gap-4 py-16 text-center max-w-2xl">
+            <div className="flex h-14 w-14 items-center justify-center rounded-[var(--radius-lg)] bg-[var(--bg-3)]">
+              <IndianRupee className="h-7 w-7 text-[var(--text-3)]" />
+            </div>
+            <div className="space-y-1 max-w-xs">
+              {neverHadPayments ? (
+                <>
+                  <p className="font-display text-base font-semibold text-[var(--text)]">No payments yet</p>
+                  <p className="text-sm text-[var(--text-3)] leading-relaxed">
+                    Send your first payment request to a lead using the button above.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="font-display text-base font-semibold text-[var(--text)]">No payments in this range</p>
+                  <p className="text-sm text-[var(--text-3)] leading-relaxed">
+                    {isDev ? "Use the Simulate button above to create test payments." : "Try a wider time range, or send a payment link to a qualified lead."}
+                  </p>
+                </>
+              )}
+            </div>
           </div>
-          <div className="space-y-1 max-w-xs">
-            <p className="font-display text-base font-semibold text-[var(--text)]">No payments in this range</p>
-            <p className="text-sm text-[var(--text-3)] leading-relaxed">
-              {isDev ? "Use the Simulate button above to create test payments." : "Try a wider time range, or send a payment link to a qualified lead."}
-            </p>
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── Recurring tab ────────────────────────────────── */}
       {category === "recurring" && (
@@ -467,6 +511,23 @@ export function PaymentsView({ initialPayments, orgId, orgSlug: _slug, isDev, le
             </div>
           );
         })}
+
+        {/* Load more — only shown when there are visible payments and more exist */}
+        {paymentGroups.length > 0 && hasMore && (
+          <div className="flex justify-center pt-2">
+            <button
+              onClick={loadMore}
+              disabled={loadingMore}
+              className="inline-flex items-center gap-2 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-2)] px-4 py-2.5 text-sm text-[var(--text-2)] hover:bg-[var(--bg-3)] disabled:opacity-50 transition-colors"
+              aria-label="Load more payments"
+            >
+              {loadingMore
+                ? <><Loader2 className="h-4 w-4 animate-spin" /> Loading…</>
+                : "Load more payments"
+              }
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -34,7 +34,7 @@ async function getHandler(req: NextRequest, { params }: Params) {
     .from("payments")
     .select(`
       id, status, amount_inr, payment_link_id, payment_link_url,
-      conversation_id, razorpay_payment_id, notes, created_at, updated_at,
+      link_method, conversation_id, razorpay_payment_id, notes, created_at, updated_at,
       lead:leads(id, name, avatar_url, stage, channel)
     `)
     .eq("org_id", params.orgId)

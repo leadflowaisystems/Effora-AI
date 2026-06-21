@@ -54,7 +54,7 @@ export default async function PaymentsPage({ params }: Props) {
       .eq("org_id", org.id)
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
-      .limit(100),
+      .limit(101),          // fetch 101 to detect whether more exist
     svc
       .from("leads")
       .select("id, name, channel")
@@ -69,7 +69,9 @@ export default async function PaymentsPage({ params }: Props) {
       .order("name"),
   ]);
 
-  const payments: PaymentRow[] = (paymentRes.data ?? []).map((r) => ({
+  const rawPaymentData = paymentRes.data ?? [];
+  const initialHasMore = rawPaymentData.length > 100;
+  const payments: PaymentRow[] = rawPaymentData.slice(0, 100).map((r) => ({
     id:               r.id,
     status:           r.status as PaymentRow["status"],
     amount_inr:       r.amount_inr,
@@ -156,6 +158,7 @@ export default async function PaymentsPage({ params }: Props) {
 
       <PaymentsView
         initialPayments={payments}
+        initialHasMore={initialHasMore}
         orgId={org.id}
         orgSlug={params.orgSlug}
         isDev={isDev}
