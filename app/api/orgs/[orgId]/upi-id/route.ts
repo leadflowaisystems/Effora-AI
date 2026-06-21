@@ -33,8 +33,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const svc = createServiceClient() as any;
   const { error } = await svc.from("orgs").update({
-    upi_id:     parsed.data.upi_id || null,
-    updated_at: new Date().toISOString(),
+    upi_id: parsed.data.upi_id || null,
   }).eq("id", params.orgId);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

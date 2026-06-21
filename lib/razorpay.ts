@@ -16,33 +16,53 @@ interface RazorpayConfig {
 
 // ── Config loader ────────────────────────────────────────────
 export async function getRazorpayConfig(orgId: string): Promise<RazorpayConfig | null> {
-  try {
-    const svc = createServiceClient();
-    const { data } = await svc
-      .from("integrations")
-      .select("config, active")
-      .eq("org_id", orgId)
-      .eq("provider", "razorpay")
-      .single();
+  const svc = createServiceClient();
+  const { data, error: dbErr } = await svc
+    .from("integrations")
+    .select("config, active")
+    .eq("org_id", orgId)
+    .eq("provider", "razorpay")
+    .single();
 
-    if (!data?.active) return null;
-    const config = (data.config as Record<string, unknown>) ?? {};
-
-    const keyId = (config.key_id as string | undefined) ?? "";
-
-    let keySecret = "";
-    const enc = config.key_secret_enc as string | undefined;
-    if (enc && isEncrypted(enc)) {
-      try { keySecret = decryptSecret(enc); } catch { /* fall through */ }
-    } else {
-      keySecret = (config.key_secret as string | undefined) ?? "";
-    }
-
-    if (!keyId || !keySecret) return null;
-    return { keyId, keySecret };
-  } catch {
+  if (dbErr) {
+    console.error(`[razorpay] getRazorpayConfig DB error for org ${orgId}:`, dbErr.message);
     return null;
   }
+  if (!data?.active) {
+    console.warn(`[razorpay] getRazorpayConfig: no active Razorpay integration for org ${orgId}`);
+    return null;
+  }
+
+  const config = (data.config as Record<string, unknown>) ?? {};
+  const keyId  = (config.key_id as string | undefined) ?? "";
+  if (!keyId) {
+    console.warn(`[razorpay] getRazorpayConfig: key_id missing for org ${orgId}`);
+    return null;
+  }
+
+  let keySecret = "";
+  const enc = config.key_secret_enc as string | undefined;
+  if (enc && isEncrypted(enc)) {
+    try {
+      keySecret = decryptSecret(enc);
+    } catch (decErr) {
+      console.error(
+        `[razorpay] getRazorpayConfig: failed to decrypt key_secret_enc for org ${orgId}. ` +
+        `Check that ENCRYPTION_KEY on Vercel matches the key used when credentials were saved.`,
+        decErr,
+      );
+      return null;
+    }
+  } else {
+    keySecret = (config.key_secret as string | undefined) ?? "";
+  }
+
+  if (!keySecret) {
+    console.warn(`[razorpay] getRazorpayConfig: key_secret missing or empty for org ${orgId}`);
+    return null;
+  }
+
+  return { keyId, keySecret };
 }
 
 // ── Payment link creation ────────────────────────────────────
@@ -64,7 +84,10 @@ export async function createPaymentLink(
   params: CreatePaymentLinkParams
 ): Promise<PaymentLinkResult | null> {
   const config = await getRazorpayConfig(params.orgId);
-  if (!config) return null;
+  if (!config) {
+    console.error(`[razorpay] createPaymentLink: no valid config for org ${params.orgId} — credentials missing or unreadable`);
+    return null;
+  }
 
   const auth = Buffer.from(`${config.keyId}:${config.keySecret}`).toString("base64");
 
@@ -94,7 +117,10 @@ export async function createPaymentLink(
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    console.error("[razorpay] createPaymentLink failed:", err);
+    console.error(
+      `[razorpay] createPaymentLink API error for org ${params.orgId} — HTTP ${res.status}:`,
+      JSON.stringify(err),
+    );
     return null;
   }
 

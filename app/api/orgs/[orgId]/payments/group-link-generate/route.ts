@@ -54,13 +54,13 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   // Load org payment settings + group members in parallel
   const [orgRes, rzpRes, membersRes] = await Promise.all([
-    svc.from("orgs").select("name, upi_id").eq("id", params.orgId).single(),
+    svc.from("orgs").select("name, upi_id, payment_mode").eq("id", params.orgId).single(),
     svc.from("integrations").select("config, active").eq("org_id", params.orgId).eq("provider", "razorpay").eq("active", true).maybeSingle(),
     svc.from("lead_group_members").select("lead_id, lead:lead_id(id, name, external_id, channel, metadata)")
       .eq("group_id", parsed.data.group_id),
   ]);
 
-  const org     = orgRes.data as { name: string; upi_id: string | null } | null;
+  const org     = orgRes.data as { name: string; upi_id: string | null; payment_mode: string | null } | null;
   const rzp     = rzpRes.data as { active: boolean } | null;
   const members = (membersRes.data ?? []) as Array<{
     lead_id: string;
@@ -71,12 +71,40 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   const hasRazorpay = !!rzp?.active;
   const hasUpi      = !!org?.upi_id;
+  const paymentMode = (org?.payment_mode ?? "both") as "razorpay_only" | "upi_only" | "both";
   const { method, amount_inr, description, custom_url, custom_message } = parsed.data;
 
-  const useRazorpay = method === "razorpay" || (method === "auto" && hasRazorpay);
-  const useUpi      = method === "upi" || (method === "auto" && !hasRazorpay && hasUpi);
+  // Enforce payment mode (skip for custom_url — it bypasses mode entirely)
+  if (!custom_url?.trim()) {
+    if (paymentMode === "razorpay_only" && !hasRazorpay) {
+      return NextResponse.json({ error: "Razorpay Only mode is active but Razorpay is not configured. Add API keys in Settings › Payments." }, { status: 400 });
+    }
+    if (paymentMode === "upi_only" && !hasUpi) {
+      return NextResponse.json({ error: "UPI Only mode is active but no UPI ID is configured. Add your UPI ID in Settings › Payments." }, { status: 400 });
+    }
+    if (method === "razorpay" && paymentMode === "upi_only") {
+      return NextResponse.json({ error: "This org is set to UPI Only. Change payment mode in Settings › Payments to use Razorpay." }, { status: 400 });
+    }
+    if (method === "upi" && paymentMode === "razorpay_only") {
+      return NextResponse.json({ error: "This org is set to Razorpay Only. Change payment mode in Settings › Payments to use UPI." }, { status: 400 });
+    }
+  }
 
-  console.log(`[payments/group-link-generate] DIAG org="${org?.name}" upi_id="${org?.upi_id ?? "(none)"}" hasRazorpay=${hasRazorpay} hasUpi=${hasUpi} method="${method}" useRazorpay=${useRazorpay} useUpi=${useUpi} custom_url="${custom_url ?? "(none)"}" members=${members.length}`);
+  let useRazorpay: boolean;
+  let useUpi: boolean;
+
+  if (paymentMode === "razorpay_only") {
+    useRazorpay = hasRazorpay;
+    useUpi      = false;
+  } else if (paymentMode === "upi_only") {
+    useRazorpay = false;
+    useUpi      = hasUpi;
+  } else {
+    useRazorpay = method === "razorpay" || (method === "auto" && hasRazorpay);
+    useUpi      = method === "upi" || (method === "auto" && !hasRazorpay && hasUpi);
+  }
+
+  console.log(`[payments/group-link-generate] DIAG org="${org?.name}" upi_id="${org?.upi_id ?? "(none)"}" payment_mode="${paymentMode}" hasRazorpay=${hasRazorpay} hasUpi=${hasUpi} method="${method}" useRazorpay=${useRazorpay} useUpi=${useUpi} custom_url="${custom_url ?? "(none)"}" members=${members.length}`);
 
   if (!custom_url?.trim() && !useRazorpay && !useUpi) {
     return NextResponse.json({ error: "No payment method configured. Connect Razorpay or add a UPI ID in Settings › Payments." }, { status: 400 });
@@ -104,18 +132,18 @@ export async function POST(req: NextRequest, { params }: Params) {
         console.log(`[payments/group-link-generate] DIAG lead=${lead.id} link_path=custom_url linkUrl="${linkUrl}"`);
       } else {
         if (useRazorpay && hasRazorpay) {
-          try {
-            const result = await createPaymentLink({
-              orgId:        params.orgId,
-              amountInr:    amount_inr,
-              description,
-              customerName: lead.name ?? undefined,
-            });
-            linkUrl    = result?.shortUrl ?? "";
+          const result = await createPaymentLink({
+            orgId:        params.orgId,
+            amountInr:    amount_inr,
+            description,
+            customerName: lead.name ?? undefined,
+          });
+          if (result) {
+            linkUrl    = result.shortUrl;
             linkMethod = "razorpay";
             console.log(`[payments/group-link-generate] DIAG lead=${lead.id} link_path=razorpay linkUrl="${linkUrl}"`);
-          } catch (rzpErr) {
-            console.warn(`[payments/group-link-generate] DIAG lead=${lead.id} razorpay_failed="${rzpErr instanceof Error ? rzpErr.message : String(rzpErr)}" falling_through_to_upi`);
+          } else {
+            console.warn(`[payments/group-link-generate] DIAG lead=${lead.id} razorpay_returned_null payment_mode="${paymentMode}" falling_through`);
           }
         }
 

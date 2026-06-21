@@ -10,15 +10,17 @@ import * as React from "react";
 import { Link2, CheckCircle2, Loader2, X, Users } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
+import type { PaymentMode } from "@/app/(app)/org/[orgSlug]/settings/payments/payment-mode-form-client";
 
 export interface PaymentActionLead  { id: string; name: string | null; channel: string }
 export interface PaymentActionGroup { id: string; name: string; tag: string; member_count: number }
 
 interface Props {
-  orgId:   string;
-  leads:   PaymentActionLead[];
-  groups?: PaymentActionGroup[];
-  onDone:  () => void;
+  orgId:        string;
+  leads:        PaymentActionLead[];
+  groups?:      PaymentActionGroup[];
+  onDone:       () => void;
+  paymentMode:  PaymentMode;
 }
 
 type Mode = "request" | "mark";
@@ -72,15 +74,23 @@ function SheetWrap({ title, onClose, children, onSubmit, saving, disabled, submi
   );
 }
 
-export function PaymentActionsSheet({ orgId, leads, groups = [], onDone }: Props) {
+export function PaymentActionsSheet({ orgId, leads, groups = [], onDone, paymentMode }: Props) {
   const [mode,   setMode]   = React.useState<Mode | null>(null);
   const [saving, setSaving] = React.useState(false);
+
+  // Derive which methods are available based on org payment mode
+  const availableMethods = REQUEST_METHODS.filter((m) => {
+    if (paymentMode === "razorpay_only") return m.value === "razorpay";
+    if (paymentMode === "upi_only")      return m.value === "upi";
+    return true;
+  });
+  const defaultMethod = paymentMode === "upi_only" ? "upi" : "razorpay";
 
   // Request form state — recipientVal is "lead:ID" or "group:ID"
   const [rRecipient,      setRRecipient]      = React.useState("");
   const [rAmount,         setRAmount]         = React.useState("");
   const [rDesc,           setRDesc]           = React.useState("");
-  const [rMethod,         setRMethod]         = React.useState<"razorpay" | "upi">("razorpay");
+  const [rMethod,         setRMethod]         = React.useState<"razorpay" | "upi">(defaultMethod);
   const [rCustomUrl,      setRCustomUrl]      = React.useState("");
   const [rCustomMessage,  setRCustomMessage]  = React.useState("");
   const [rSchedule,       setRSchedule]       = React.useState(false);
@@ -289,21 +299,35 @@ export function PaymentActionsSheet({ orgId, leads, groups = [], onDone }: Props
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-[var(--text-2)]">Payment method <span className="text-[var(--text-3)] text-[11px]">{rCustomUrl ? "(ignored — using custom URL)" : "*"}</span></label>
-              <div className={rCustomUrl ? "opacity-50 pointer-events-none" : ""}>
-              <div className="flex gap-3">
-                {REQUEST_METHODS.map((m) => (
-                  <label key={m.value} className={cn(
-                    "flex flex-1 items-center justify-center gap-2 rounded-[var(--radius)] border py-2.5 text-xs font-medium cursor-pointer transition-colors",
-                    rMethod === m.value ? "border-[var(--brand)] bg-[var(--brand)]/10 text-[var(--brand)]" : "border-[var(--border)] text-[var(--text-2)] hover:border-[var(--text-3)]"
-                  )}>
-                    <input type="radio" name="r-method" value={m.value} checked={rMethod === m.value}
-                      onChange={() => setRMethod(m.value as typeof rMethod)} className="sr-only" />
-                    {m.label}
-                  </label>
-                ))}
-              </div>
-              </div> {/* closes opacity wrapper */}
+              <label className="text-xs font-medium text-[var(--text-2)]">
+                Payment method{" "}
+                <span className="text-[var(--text-3)] text-[11px]">
+                  {rCustomUrl ? "(ignored — using custom URL)" : availableMethods.length === 1 ? "(fixed by payment mode)" : "*"}
+                </span>
+              </label>
+              {availableMethods.length === 1 ? (
+                <div className="flex items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-3)] px-3 py-2 text-xs text-[var(--text-2)]">
+                  {availableMethods[0].label}
+                  <span className="ml-auto text-[10px] text-[var(--text-3)]">
+                    Set in Settings › Payments
+                  </span>
+                </div>
+              ) : (
+                <div className={rCustomUrl ? "opacity-50 pointer-events-none" : ""}>
+                  <div className="flex gap-3">
+                    {availableMethods.map((m) => (
+                      <label key={m.value} className={cn(
+                        "flex flex-1 items-center justify-center gap-2 rounded-[var(--radius)] border py-2.5 text-xs font-medium cursor-pointer transition-colors",
+                        rMethod === m.value ? "border-[var(--brand)] bg-[var(--brand)]/10 text-[var(--brand)]" : "border-[var(--border)] text-[var(--text-2)] hover:border-[var(--text-3)]"
+                      )}>
+                        <input type="radio" name="r-method" value={m.value} checked={rMethod === m.value}
+                          onChange={() => setRMethod(m.value as typeof rMethod)} className="sr-only" />
+                        {m.label}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </SheetWrap>

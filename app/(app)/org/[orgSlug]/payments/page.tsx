@@ -11,6 +11,7 @@ import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { PaymentsView } from "@/components/payments/payments-view";
 import type { PaymentRow, PaymentLead } from "@/components/payments/payment-card";
 import type { SimulateLead } from "@/components/payments/simulate-payment-sheet";
+import type { PaymentMode } from "@/app/(app)/org/[orgSlug]/settings/payments/payment-mode-form-client";
 
 interface Props {
   params: { orgSlug: string };
@@ -27,11 +28,11 @@ export default async function PaymentsPage({ params }: Props) {
 
   const { data: orgRow } = await supabase
     .from("orgs")
-    .select("id")
+    .select("id, payment_mode")
     .eq("slug", params.orgSlug)
     .single();
 
-  const org = orgRow as { id: string } | null;
+  const org = orgRow as { id: string; payment_mode: string | null } | null;
   if (!org) notFound();
 
   const svc = createServiceClient();
@@ -127,6 +128,7 @@ export default async function PaymentsPage({ params }: Props) {
   const totalPending = payments.filter((p) => p.status === "pending").length;
 
   const isDev = process.env.NODE_ENV !== "production";
+  const paymentMode = (org.payment_mode ?? "both") as PaymentMode;
 
   return (
     <div className="space-y-6">
@@ -158,6 +160,7 @@ export default async function PaymentsPage({ params }: Props) {
         leads={leads}
         groups={paymentGroups}
         pendingPayments={pendingPayments}
+        paymentMode={paymentMode}
       />
     </div>
   );

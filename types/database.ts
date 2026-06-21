@@ -16,6 +16,7 @@ export interface Database {
           onboarding_completed_at: string | null;
           auto_send_replies: boolean;
           created_at: string;
+          updated_at: string;
           trial_ends_at: string;
           subscription_id: string | null;
           subscription_status: string;
@@ -25,6 +26,8 @@ export interface Database {
           agency_owner_id: string | null;
           referral_code: string | null;
           referred_by: string | null;
+          upi_id: string | null;
+          payment_mode: "razorpay_only" | "upi_only" | "both";
         };
         Insert: {
           id?: string;
@@ -38,6 +41,7 @@ export interface Database {
           onboarding_completed_at?: string | null;
           auto_send_replies?: boolean;
           created_at?: string;
+          updated_at?: string;
           trial_ends_at?: string;
           subscription_id?: string | null;
           subscription_status?: string;
@@ -47,6 +51,8 @@ export interface Database {
           agency_owner_id?: string | null;
           referral_code?: string | null;
           referred_by?: string | null;
+          upi_id?: string | null;
+          payment_mode?: "razorpay_only" | "upi_only" | "both";
         };
         Update: {
           id?: string;
@@ -60,6 +66,7 @@ export interface Database {
           onboarding_completed_at?: string | null;
           auto_send_replies?: boolean;
           created_at?: string;
+          updated_at?: string;
           trial_ends_at?: string;
           subscription_id?: string | null;
           subscription_status?: string;
@@ -69,6 +76,8 @@ export interface Database {
           agency_owner_id?: string | null;
           referral_code?: string | null;
           referred_by?: string | null;
+          upi_id?: string | null;
+          payment_mode?: "razorpay_only" | "upi_only" | "both";
         };
         Relationships: [];
       };

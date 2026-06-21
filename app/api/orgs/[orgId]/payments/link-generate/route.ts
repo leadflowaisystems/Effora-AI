@@ -54,7 +54,7 @@ async function handler(req: NextRequest, { params }: Params) {
 
   // Load org + integrations + voice profile in parallel
   const [orgRes, rzpRes, leadRes, vpRes] = await Promise.all([
-    svc.from("orgs").select("name, upi_id").eq("id", params.orgId).single(),
+    svc.from("orgs").select("name, upi_id, payment_mode").eq("id", params.orgId).single(),
     svc.from("integrations").select("config, active").eq("org_id", params.orgId).eq("provider", "razorpay").eq("active", true).maybeSingle(),
     svc.from("leads").select("id, name, external_id, channel, metadata").eq("id", lead_id).eq("org_id", params.orgId).single(),
     svc.from("voice_profiles").select("tone, offer, price_range, sells, objections, extra_context").eq("org_id", params.orgId).maybeSingle(),
@@ -62,40 +62,84 @@ async function handler(req: NextRequest, { params }: Params) {
 
   if (!leadRes.data) return NextResponse.json({ error: "Lead not found" }, { status: 404 });
 
-  const org   = orgRes.data as { name: string; upi_id: string | null } | null;
+  const org   = orgRes.data as { name: string; upi_id: string | null; payment_mode: string | null } | null;
   const rzp   = rzpRes.data as { config: Record<string, string>; active: boolean } | null;
   const lead  = leadRes.data as { id: string; name: string | null; external_id?: string | null; channel?: string | null; metadata?: Record<string, unknown> };
   const vp    = vpRes.data as { tone: string; offer: string; price_range: string; sells: string; objections: string[]; extra_context: string } | null;
   const leadEmail = (lead.metadata?.email) as string | undefined ?? null;
   const firstName = getLeadFirstName({ name: lead.name, external_id: lead.external_id ?? null });
 
-  const hasRazorpay = !!rzp?.active;
-  const hasUpi      = !!org?.upi_id;
+  const hasRazorpay   = !!rzp?.active;
+  const hasUpi        = !!org?.upi_id;
+  const paymentMode   = (org?.payment_mode ?? "both") as "razorpay_only" | "upi_only" | "both";
 
   let linkUrl    = "";
   let linkMethod = "upi";
 
-  // Custom URL overrides auto-generation entirely
+  // Custom URL overrides everything — mode is irrelevant
   if (custom_url?.trim()) {
     linkUrl    = custom_url.trim();
     linkMethod = "custom";
   } else {
-    const useRazorpay = method === "razorpay" || (method === "auto" && hasRazorpay);
-    const useUpi      = method === "upi"      || (method === "auto" && !hasRazorpay && hasUpi);
+    // Enforce payment mode: block methods the org has excluded
+    if (paymentMode === "razorpay_only" && !hasRazorpay) {
+      return NextResponse.json(
+        { error: "Razorpay Only mode is active but Razorpay is not configured. Add API keys in Settings › Payments." },
+        { status: 400 },
+      );
+    }
+    if (paymentMode === "upi_only" && !hasUpi) {
+      return NextResponse.json(
+        { error: "UPI Only mode is active but no UPI ID is configured. Add your UPI ID in Settings › Payments." },
+        { status: 400 },
+      );
+    }
+    if (method === "razorpay" && paymentMode === "upi_only") {
+      return NextResponse.json(
+        { error: "This org is set to UPI Only. Change payment mode in Settings › Payments to use Razorpay." },
+        { status: 400 },
+      );
+    }
+    if (method === "upi" && paymentMode === "razorpay_only") {
+      return NextResponse.json(
+        { error: "This org is set to Razorpay Only. Change payment mode in Settings › Payments to use UPI." },
+        { status: 400 },
+      );
+    }
+
+    // Derive which methods to attempt based on mode
+    let useRazorpay: boolean;
+    let useUpi: boolean;
+
+    if (paymentMode === "razorpay_only") {
+      useRazorpay = hasRazorpay;
+      useUpi      = false;
+    } else if (paymentMode === "upi_only") {
+      useRazorpay = false;
+      useUpi      = hasUpi;
+    } else {
+      // "both" — Razorpay preferred, UPI fallback
+      useRazorpay = method === "razorpay" || (method === "auto" && hasRazorpay);
+      useUpi      = method === "upi"      || (method === "auto" && !hasRazorpay && hasUpi);
+    }
 
     if (useRazorpay && hasRazorpay) {
-      try {
-        const result = await createPaymentLink({
-          orgId:        params.orgId,
-          amountInr:    amount_inr,
-          description,
-          customerName: lead.name ?? undefined,
-        });
-        linkUrl    = result?.shortUrl ?? "";
+      const result = await createPaymentLink({
+        orgId:        params.orgId,
+        amountInr:    amount_inr,
+        description,
+        customerName: lead.name ?? undefined,
+      });
+      if (result) {
+        linkUrl    = result.shortUrl;
         linkMethod = "razorpay";
-      } catch {
-        // fall through to UPI
+      } else if (method === "razorpay" || paymentMode === "razorpay_only") {
+        return NextResponse.json(
+          { error: "Razorpay payment link could not be created. Re-save your API keys in Settings › Payments. Check server logs for details." },
+          { status: 502 },
+        );
       }
+      // "both" auto mode: fall through to UPI below
     }
 
     if (!linkUrl && useUpi && hasUpi) {

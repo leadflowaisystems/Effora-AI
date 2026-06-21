@@ -11,6 +11,7 @@ import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 import { RazorpaySettingsForm } from "./razorpay-form-client";
 import { UpiIdForm } from "./upi-id-form-client";
+import { PaymentModeForm, type PaymentMode } from "./payment-mode-form-client";
 
 interface Props { params: { orgSlug: string } }
 
@@ -30,12 +31,14 @@ export default async function PaymentsSettingsPage({ params }: Props) {
   const svc = createServiceClient() as any;
   const [intRow, orgData] = await Promise.all([
     svc.from("integrations").select("config, active").eq("org_id", org.id).eq("provider", "razorpay").maybeSingle(),
-    svc.from("orgs").select("upi_id").eq("id", org.id).single(),
+    svc.from("orgs").select("upi_id, payment_mode").eq("id", org.id).single(),
   ]);
 
-  const config = (intRow?.data?.config ?? {}) as { key_id?: string };
+  const config      = (intRow?.data?.config ?? {}) as { key_id?: string };
   const isConnected = !!intRow?.data?.active;
-  const upiId = (orgData?.data as { upi_id: string | null } | null)?.upi_id ?? "";
+  const orgRow2     = orgData?.data as { upi_id: string | null; payment_mode: string | null } | null;
+  const upiId       = orgRow2?.upi_id ?? "";
+  const paymentMode = (orgRow2?.payment_mode ?? "both") as PaymentMode;
 
   return (
     <div className="max-w-lg mx-auto space-y-8">
@@ -69,12 +72,28 @@ export default async function PaymentsSettingsPage({ params }: Props) {
       {/* UPI fallback */}
       <div className="space-y-3 border-t border-[var(--border)] pt-6">
         <div>
-          <h2 className="text-sm font-semibold text-[var(--text)]">UPI fallback</h2>
+          <h2 className="text-sm font-semibold text-[var(--text)]">UPI ID</h2>
           <p className="text-xs text-[var(--text-3)] mt-0.5">
-            For coaches without Razorpay. Generates a <code className="text-[var(--brand)]">upi://</code> deep link — customers tap it to pay instantly on any UPI app.
+            Generates a <code className="text-[var(--brand)]">upi://</code> deep link — customers tap it to pay instantly on any UPI app.
           </p>
         </div>
         <UpiIdForm orgId={org.id} initialUpiId={upiId} />
+      </div>
+
+      {/* Payment mode */}
+      <div className="space-y-3 border-t border-[var(--border)] pt-6">
+        <div>
+          <h2 className="text-sm font-semibold text-[var(--text)]">Payment mode</h2>
+          <p className="text-xs text-[var(--text-3)] mt-0.5">
+            Choose which payment method(s) to use when generating payment links.
+          </p>
+        </div>
+        <PaymentModeForm
+          orgId={org.id}
+          initialMode={paymentMode}
+          hasRazorpay={isConnected}
+          hasUpiId={!!upiId}
+        />
       </div>
     </div>
   );

@@ -10,6 +10,7 @@ import { RecurringPaymentCard, type RecurringPaymentRow } from "./recurring-paym
 import { SimulatePaymentSheet, type SimulateLead } from "./simulate-payment-sheet";
 import { PaymentActionsSheet, type PaymentActionGroup } from "./payment-actions-sheet";
 import { ManualPaymentSheet, type ManualPaymentGroup } from "./manual-payment-sheet";
+import type { PaymentMode } from "@/app/(app)/org/[orgSlug]/settings/payments/payment-mode-form-client";
 import { TimeRangeFilter, readStoredFilter } from "@/components/filters/time-range-filter";
 import { SubCategoryTabs } from "@/components/filters/sub-category-tabs";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -37,6 +38,7 @@ interface Props {
   leads:           SimulateLead[];
   groups?:         PaymentActionGroup[];
   pendingPayments: PendingPayment[];
+  paymentMode:     PaymentMode;
 }
 
 type Group = { key: string; label: string; icon: React.ElementType; color: string; rows: PaymentRow[] };
@@ -93,7 +95,7 @@ function StatTile({ label, value, color, loading }: { label: string; value: stri
   );
 }
 
-export function PaymentsView({ initialPayments, orgId, orgSlug: _slug, isDev, leads, groups = [], pendingPayments }: Props) {
+export function PaymentsView({ initialPayments, orgId, orgSlug: _slug, isDev, leads, groups = [], pendingPayments, paymentMode }: Props) {
   const router      = useRouter();
   const pathname    = usePathname();
   const searchParams = useSearchParams();
@@ -259,7 +261,7 @@ export function PaymentsView({ initialPayments, orgId, orgSlug: _slug, isDev, le
     <div className="space-y-5">
       {/* ── Dev / actions bar ──────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-2">
-        <PaymentActionsSheet orgId={orgId} leads={leads} groups={groups} onDone={handleUpdate} />
+        <PaymentActionsSheet orgId={orgId} leads={leads} groups={groups} onDone={handleUpdate} paymentMode={paymentMode} />
         <ManualPaymentSheet orgId={orgId} leads={leads} groups={groups as ManualPaymentGroup[]} onDone={handleUpdate} />
         {isDev && (
           <div className="flex items-center gap-2 rounded-[var(--radius-sm)] border border-dashed border-amber-500/20 bg-amber-500/5 px-3 py-1.5">
