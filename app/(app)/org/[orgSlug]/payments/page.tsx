@@ -46,6 +46,7 @@ export default async function PaymentsPage({ params }: Props) {
       .select(`
         id, status, amount_inr,
         payment_link_url, payment_link_id,
+        link_method,
         conversation_id, notes,
         created_at, updated_at,
         lead:leads(id, name, avatar_url, stage, channel)
@@ -74,6 +75,7 @@ export default async function PaymentsPage({ params }: Props) {
     amount_inr:       r.amount_inr,
     payment_link_url: r.payment_link_url,
     payment_link_id:  r.payment_link_id,
+    link_method:      (r.link_method ?? null) as string | null,
     conversation_id:  r.conversation_id,
     notes:            r.notes,
     created_at:       r.created_at,

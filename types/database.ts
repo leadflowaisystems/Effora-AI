@@ -535,6 +535,7 @@ export interface Database {
           status: "pending" | "paid" | "failed" | "refunded";
           payment_link_id: string | null;
           payment_link_url: string | null;
+          link_method: string | null;
           razorpay_order_id: string | null;
           razorpay_payment_id: string | null;
           notes: string | null;
@@ -550,6 +551,7 @@ export interface Database {
           status?: "pending" | "paid" | "failed" | "refunded";
           payment_link_id?: string | null;
           payment_link_url?: string | null;
+          link_method?: string | null;
           razorpay_order_id?: string | null;
           razorpay_payment_id?: string | null;
           notes?: string | null;
@@ -565,6 +567,7 @@ export interface Database {
           status?: "pending" | "paid" | "failed" | "refunded";
           payment_link_id?: string | null;
           payment_link_url?: string | null;
+          link_method?: string | null;
           razorpay_order_id?: string | null;
           razorpay_payment_id?: string | null;
           notes?: string | null;

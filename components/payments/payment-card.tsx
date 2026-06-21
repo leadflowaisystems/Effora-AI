@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
   ExternalLink, User, CheckCircle2,
-  Clock, XCircle, AlertTriangle, Copy, Check, Trash2, Loader2, Archive,
+  Clock, XCircle, AlertTriangle, Copy, Check, Trash2, Loader2, Archive, QrCode, X,
 } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
@@ -24,6 +24,7 @@ export interface PaymentRow {
   amount_inr:       number;
   payment_link_url: string | null;
   payment_link_id:  string | null;
+  link_method:      string | null;
   conversation_id:  string | null;
   notes:            string | null;
   created_at:       string;
@@ -39,6 +40,24 @@ const STATUS_CONFIG = {
   refunded: { label: "Refunded", color: "bg-[var(--bg-3)] text-[var(--text-3)] border-[var(--border)]",     icon: AlertTriangle },
 } as const;
 
+// ── Method badge ─────────────────────────────────────────────
+const METHOD_BADGE: Record<string, { label: string; cls: string }> = {
+  razorpay: { label: "Razorpay",       cls: "bg-blue-500/10 text-blue-400 border-blue-500/20" },
+  upi:      { label: "UPI",            cls: "bg-violet-500/10 text-violet-400 border-violet-500/20" },
+  custom:   { label: "Custom link",    cls: "bg-[var(--bg-3)] text-[var(--text-3)] border-[var(--border)]" },
+  manual:   { label: "Manual",         cls: "bg-[var(--bg-3)] text-[var(--text-3)] border-[var(--border)]" },
+};
+
+function MethodBadge({ method }: { method: string | null }) {
+  if (!method) return null;
+  const cfg = METHOD_BADGE[method] ?? { label: method, cls: "bg-[var(--bg-3)] text-[var(--text-3)] border-[var(--border)]" };
+  return (
+    <span className={cn("inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium", cfg.cls)}>
+      {cfg.label}
+    </span>
+  );
+}
+
 function formatInr(n: number): string {
   return new Intl.NumberFormat("en-IN", {
     style: "currency", currency: "INR", maximumFractionDigits: 0,
@@ -51,6 +70,47 @@ function formatDate(iso: string): string {
       day: "numeric", month: "short", year: "numeric",
     });
   } catch { return iso; }
+}
+
+// ── UPI QR modal ─────────────────────────────────────────────
+function UpiQrModal({ url, onClose }: { url: string; onClose: () => void }) {
+  const [dataUrl, setDataUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    import("qrcode").then((QRCode) => {
+      QRCode.toDataURL(url, { width: 240, margin: 2, color: { dark: "#FFFFFF", light: "#0A0A0C" } })
+        .then((d) => { if (!cancelled) setDataUrl(d); })
+        .catch(() => null);
+    });
+    return () => { cancelled = true; };
+  }, [url]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/70" />
+      <div
+        className="relative z-10 w-full max-w-xs rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-1)] p-5 space-y-4 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-semibold text-[var(--text)]">Scan to pay via UPI</p>
+          <button onClick={onClose} className="text-[var(--text-3)] hover:text-[var(--text)]">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="flex items-center justify-center rounded-[var(--radius)] bg-[#0A0A0C] p-3">
+          {dataUrl
+            ? <img src={dataUrl} alt="UPI QR code" className="h-48 w-48" />
+            : <div className="h-48 w-48 animate-pulse rounded-[var(--radius-sm)] bg-[var(--bg-3)]" />
+          }
+        </div>
+        <p className="text-xs text-[var(--text-3)] text-center leading-relaxed">
+          Open any UPI app — PhonePe, GPay, Paytm — and scan this code.
+        </p>
+      </div>
+    </div>
+  );
 }
 
 // ── Inline confirmation modal ─────────────────────────────────
@@ -95,11 +155,8 @@ function ConfirmModal({
 
 interface Props {
   payment:  PaymentRow;
-  /** Called after a status-change action so the list can refresh. */
   onUpdate?: () => void;
-  /** Called with the deleted payment id to remove it from local state. */
   onDelete?: (id: string) => void;
-  /** Shows dev action buttons when true. */
   isDev?:    boolean;
   orgId?:    string;
 }
@@ -109,10 +166,11 @@ export function PaymentCard({ payment, onUpdate, onDelete, isDev, orgId }: Props
   const [copied,      setCopied]      = useState(false);
   const [deleting,    setDeleting]    = useState<"soft" | "hard" | null>(null);
   const [hardConfirm, setHardConfirm] = useState(false);
+  const [showQr,      setShowQr]      = useState(false);
 
-  const isBusy = !!acting || !!deleting;
+  const isBusy   = !!acting || !!deleting;
+  const isUpiUrl = payment.payment_link_url?.startsWith("upi://") ?? false;
 
-  // ── Soft delete: hides from list, preserved for reports + lead history ──
   async function archivePayment() {
     if (!orgId || isBusy) return;
     setDeleting("soft");
@@ -124,7 +182,6 @@ export function PaymentCard({ payment, onUpdate, onDelete, isDev, orgId }: Props
     }
   }
 
-  // ── Hard delete: permanently removes the payment row ────────────────────
   async function hardDeletePayment() {
     if (!orgId || isBusy) return;
     setDeleting("hard");
@@ -173,6 +230,13 @@ export function PaymentCard({ payment, onUpdate, onDelete, isDev, orgId }: Props
     .split(" ").slice(0, 2)
     .map((w) => w[0]?.toUpperCase() ?? "").join("");
 
+  // Strip the "method: " prefix from notes if present — it's internal metadata
+  const displayNotes = (() => {
+    if (!payment.notes) return null;
+    const stripped = payment.notes.replace(/^(razorpay|upi|custom|manual):\s*/i, "").trim();
+    return stripped || null;
+  })();
+
   async function devAction(action: "capture" | "unpaid") {
     if (!orgId || isBusy) return;
     setActing(action);
@@ -198,6 +262,10 @@ export function PaymentCard({ payment, onUpdate, onDelete, isDev, orgId }: Props
           onConfirm={hardDeletePayment}
           onCancel={() => setHardConfirm(false)}
         />
+      )}
+
+      {showQr && payment.payment_link_url && (
+        <UpiQrModal url={payment.payment_link_url} onClose={() => setShowQr(false)} />
       )}
 
       <motion.div
@@ -236,6 +304,7 @@ export function PaymentCard({ payment, onUpdate, onDelete, isDev, orgId }: Props
                 <Icon className="h-3 w-3" />
                 {cfg.label}
               </span>
+              <MethodBadge method={payment.link_method} />
             </div>
             <p className="text-xs text-[var(--text-3)] mt-0.5">{formatDate(payment.created_at)}</p>
           </div>
@@ -249,11 +318,9 @@ export function PaymentCard({ payment, onUpdate, onDelete, isDev, orgId }: Props
           </div>
         </div>
 
-        {/* ── Notes ── */}
-        {payment.notes && (
-          <p className="text-xs text-amber-400 bg-amber-500/10 rounded-[var(--radius-sm)] px-2.5 py-1.5">
-            ⚑ {payment.notes}
-          </p>
+        {/* ── Description (stripped notes) ── */}
+        {displayNotes && (
+          <p className="text-xs text-[var(--text-3)] px-0.5">{displayNotes}</p>
         )}
 
         {/* ── Actions row ── */}
@@ -264,14 +331,24 @@ export function PaymentCard({ payment, onUpdate, onDelete, isDev, orgId }: Props
             <div className="flex items-center gap-2 flex-wrap">
               {payment.payment_link_url && (
                 <>
-                  <a href={payment.payment_link_url} target="_blank" rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-xs text-[var(--brand)] hover:underline">
-                    <ExternalLink className="h-3 w-3" /> Open link
-                  </a>
+                  {/* UPI — show QR on desktop, deep-link on mobile */}
+                  {isUpiUrl ? (
+                    <button
+                      onClick={() => setShowQr(true)}
+                      className="inline-flex items-center gap-1 text-xs text-violet-400 hover:text-violet-300 transition-colors"
+                    >
+                      <QrCode className="h-3 w-3" /> Show QR
+                    </button>
+                  ) : (
+                    <a href={payment.payment_link_url} target="_blank" rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-xs text-[var(--brand)] hover:underline">
+                      <ExternalLink className="h-3 w-3" /> Open link
+                    </a>
+                  )}
                   <button onClick={copyLink}
                     className="inline-flex items-center gap-1 text-xs text-[var(--text-3)] hover:text-[var(--text-2)] transition-colors">
                     {copied ? <Check className="h-3 w-3 text-[var(--brand)]" /> : <Copy className="h-3 w-3" />}
-                    {copied ? "Copied" : "Copy"}
+                    {copied ? "Copied" : "Copy link"}
                   </button>
                 </>
               )}
@@ -288,7 +365,15 @@ export function PaymentCard({ payment, onUpdate, onDelete, isDev, orgId }: Props
             </div>
           )}
 
-          {/* Delete From List (soft) + Delete Payment (hard) — for ALL statuses */}
+          {/* Paid: copy link so coach can reshare if needed */}
+          {payment.status === "paid" && payment.payment_link_url && !isUpiUrl && (
+            <a href={payment.payment_link_url} target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-[var(--text-3)] hover:text-[var(--text-2)] transition-colors">
+              <ExternalLink className="h-3 w-3" /> View receipt
+            </a>
+          )}
+
+          {/* Archive (soft) + Delete permanently (hard) */}
           {orgId && (
             <div className="ml-auto flex items-center gap-2">
               <button
@@ -298,7 +383,7 @@ export function PaymentCard({ payment, onUpdate, onDelete, isDev, orgId }: Props
                 className="inline-flex items-center gap-1 text-xs text-[var(--text-3)] hover:text-[var(--text-2)] transition-colors disabled:opacity-50"
               >
                 {deleting === "soft" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Archive className="h-3 w-3" />}
-                {deleting === "soft" ? "Archiving…" : "Delete from list"}
+                {deleting === "soft" ? "Archiving…" : "Archive"}
               </button>
               <button
                 type="button"
@@ -307,7 +392,7 @@ export function PaymentCard({ payment, onUpdate, onDelete, isDev, orgId }: Props
                 className="inline-flex items-center gap-1 text-xs text-[var(--text-3)] hover:text-red-400 transition-colors disabled:opacity-50"
               >
                 {deleting === "hard" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-                {deleting === "hard" ? "Deleting…" : "Delete payment"}
+                {deleting === "hard" ? "Deleting…" : "Delete"}
               </button>
             </div>
           )}

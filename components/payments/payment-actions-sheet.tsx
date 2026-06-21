@@ -223,6 +223,7 @@ export function PaymentActionsSheet({ orgId, leads, groups = [], onDone, payment
           submitLabel={submitLabel}
         >
           <div className="space-y-3">
+            {/* 1. Recipient */}
             <div className="space-y-1">
               <label className="text-xs font-medium text-[var(--text-2)]">Lead or Group <span className="text-[var(--brand)]">*</span></label>
               <select value={rRecipient} onChange={(e) => setRRecipient(e.target.value)} required className={inputCls}>
@@ -237,7 +238,7 @@ export function PaymentActionsSheet({ orgId, leads, groups = [], onDone, payment
                 {groups.length > 0 && (
                   <optgroup label="Groups (sends one request per member)">
                     {groups.map((g) => (
-                      <option key={g.id} value={`group:${g.id}`}>📋 Group: {g.name} · {g.member_count} members</option>
+                      <option key={g.id} value={`group:${g.id}`}>Group: {g.name} · {g.member_count} members</option>
                     ))}
                   </optgroup>
                 )}
@@ -255,33 +256,51 @@ export function PaymentActionsSheet({ orgId, leads, groups = [], onDone, payment
               </div>
             )}
 
+            {/* 2. Payment method — pick this before amount so the coach knows what kind of link they're sending */}
+            {!rCustomUrl && (
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-[var(--text-2)]">
+                  Payment method
+                  {availableMethods.length > 1 && <span className="text-[var(--brand)]"> *</span>}
+                  {availableMethods.length === 1 && (
+                    <span className="text-[var(--text-3)] text-[11px] ml-1">(fixed by payment mode)</span>
+                  )}
+                </label>
+                {availableMethods.length === 1 ? (
+                  <div className="flex items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-3)] px-3 py-2 text-xs text-[var(--text-2)]">
+                    {availableMethods[0].label}
+                    <span className="ml-auto text-[10px] text-[var(--text-3)]">Settings › Payments</span>
+                  </div>
+                ) : (
+                  <div className="flex gap-3">
+                    {availableMethods.map((m) => (
+                      <label key={m.value} className={cn(
+                        "flex flex-1 items-center justify-center gap-2 rounded-[var(--radius)] border py-2.5 text-xs font-medium cursor-pointer transition-colors",
+                        rMethod === m.value ? "border-[var(--brand)] bg-[var(--brand)]/10 text-[var(--brand)]" : "border-[var(--border)] text-[var(--text-2)] hover:border-[var(--text-3)]"
+                      )}>
+                        <input type="radio" name="r-method" value={m.value} checked={rMethod === m.value}
+                          onChange={() => setRMethod(m.value as typeof rMethod)} className="sr-only" />
+                        {m.label}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 3. Amount */}
             <div className="space-y-1">
               <label className="text-xs font-medium text-[var(--text-2)]">Amount (₹) <span className="text-[var(--brand)]">*</span></label>
               <input type="number" min="1" step="1" value={rAmount} onChange={(e) => setRAmount(e.target.value)} required placeholder="15000" className={inputCls} />
             </div>
+
+            {/* 4. Description */}
             <div className="space-y-1">
               <label className="text-xs font-medium text-[var(--text-2)]">Description <span className="text-[var(--brand)]">*</span></label>
               <input value={rDesc} onChange={(e) => setRDesc(e.target.value)} required placeholder="3-month coaching program" className={inputCls} />
             </div>
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-[var(--text-2)]">Payment URL <span className="text-[var(--text-3)] text-[11px]">(optional)</span></label>
-              <input
-                type="url" value={rCustomUrl} onChange={(e) => setRCustomUrl(e.target.value)}
-                placeholder="Leave blank to auto-generate UPI/Razorpay link, or paste any payment URL — sent to lead instead"
-                className={inputCls}
-              />
-            </div>
 
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-[var(--text-2)]">Custom message <span className="text-[var(--text-3)] text-[11px]">(optional)</span></label>
-              <textarea
-                value={rCustomMessage} onChange={(e) => setRCustomMessage(e.target.value)} rows={3}
-                placeholder={"Leave blank to use AI-generated message, or type your own.\nVariables: {{name}} {{first_name}} {{amount}} {{description}} {{link}}"}
-                className={inputCls}
-                style={{ resize: "none" }}
-              />
-            </div>
-
+            {/* 5. Schedule */}
             <div className="space-y-1.5">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" checked={rSchedule} onChange={(e) => setRSchedule(e.target.checked)} className="rounded" />
@@ -298,36 +317,25 @@ export function PaymentActionsSheet({ orgId, leads, groups = [], onDone, payment
               )}
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-[var(--text-2)]">
-                Payment method{" "}
-                <span className="text-[var(--text-3)] text-[11px]">
-                  {rCustomUrl ? "(ignored — using custom URL)" : availableMethods.length === 1 ? "(fixed by payment mode)" : "*"}
-                </span>
-              </label>
-              {availableMethods.length === 1 ? (
-                <div className="flex items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-3)] px-3 py-2 text-xs text-[var(--text-2)]">
-                  {availableMethods[0].label}
-                  <span className="ml-auto text-[10px] text-[var(--text-3)]">
-                    Set in Settings › Payments
-                  </span>
-                </div>
-              ) : (
-                <div className={rCustomUrl ? "opacity-50 pointer-events-none" : ""}>
-                  <div className="flex gap-3">
-                    {availableMethods.map((m) => (
-                      <label key={m.value} className={cn(
-                        "flex flex-1 items-center justify-center gap-2 rounded-[var(--radius)] border py-2.5 text-xs font-medium cursor-pointer transition-colors",
-                        rMethod === m.value ? "border-[var(--brand)] bg-[var(--brand)]/10 text-[var(--brand)]" : "border-[var(--border)] text-[var(--text-2)] hover:border-[var(--text-3)]"
-                      )}>
-                        <input type="radio" name="r-method" value={m.value} checked={rMethod === m.value}
-                          onChange={() => setRMethod(m.value as typeof rMethod)} className="sr-only" />
-                        {m.label}
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              )}
+            {/* 6. Advanced: custom message */}
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-[var(--text-2)]">Message <span className="text-[var(--text-3)] text-[11px]">(optional — AI-generated if blank)</span></label>
+              <textarea
+                value={rCustomMessage} onChange={(e) => setRCustomMessage(e.target.value)} rows={3}
+                placeholder={"Variables: {{name}} {{first_name}} {{amount}} {{description}} {{link}}"}
+                className={inputCls}
+                style={{ resize: "none" }}
+              />
+            </div>
+
+            {/* 7. Advanced: custom payment URL (overrides auto-generated link) */}
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-[var(--text-2)]">Custom link <span className="text-[var(--text-3)] text-[11px]">(optional — overrides auto-generated link)</span></label>
+              <input
+                type="url" value={rCustomUrl} onChange={(e) => setRCustomUrl(e.target.value)}
+                placeholder="https://rzp.io/l/your-link or any payment URL"
+                className={inputCls}
+              />
             </div>
           </div>
         </SheetWrap>
