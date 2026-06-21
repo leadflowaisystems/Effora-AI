@@ -89,7 +89,7 @@ async function postHandler(req: NextRequest, { params }: Params) {
   const leadName = (lead as { name: string | null } | null)?.name ?? undefined;
 
   // Try to create a real Razorpay payment link
-  const linkResult = await createPaymentLink({
+  const linkResult     = await createPaymentLink({
     orgId,
     amountInr,
     description:   description ?? "Coaching program",
@@ -97,8 +97,15 @@ async function postHandler(req: NextRequest, { params }: Params) {
     referenceId:   `Effora AI_${leadId.slice(0, 8)}_${Date.now()}`,
   });
 
-  const paymentLinkId  = linkResult?.id       ?? null;
-  const paymentLinkUrl = linkResult?.shortUrl ?? null;
+  const paymentLinkId  = linkResult.ok ? linkResult.data.id       : null;
+  const paymentLinkUrl = linkResult.ok ? linkResult.data.shortUrl : null;
+  if (!linkResult.ok) {
+    const e = linkResult.error;
+    if (e.isTestMode)
+      console.warn("[payments POST] Razorpay test-mode limit reached (30 links). Switch to Live Mode.");
+    else
+      console.error("[payments POST] Razorpay link creation failed:", e.description);
+  }
 
   // Create payment row
   const { data: payment, error } = await svc.from("payments").insert({

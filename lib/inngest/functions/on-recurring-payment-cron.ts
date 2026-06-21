@@ -128,18 +128,18 @@ export const onRecurringPaymentCron = inngest.createFunction(
           let linkMethod = "upi";
 
           if (hasRzp) {
-            try {
-              const result = await createPaymentLink({
-                orgId:        tpl.org_id,
-                amountInr:    tpl.amount_inr,
-                description,
-                customerName: lead.name ?? undefined,
-                referenceId:  `rec_${tpl.id.slice(0, 8)}_${Date.now()}`,
-              });
-              linkUrl    = result?.shortUrl ?? "";
+            const result = await createPaymentLink({
+              orgId:        tpl.org_id,
+              amountInr:    tpl.amount_inr,
+              description,
+              customerName: lead.name ?? undefined,
+              referenceId:  `rec_${tpl.id.slice(0, 8)}_${Date.now()}`,
+            });
+            if (result.ok) {
+              linkUrl    = result.data.shortUrl;
               linkMethod = "razorpay";
-            } catch (e) {
-              console.warn(`[recurring-payment] Razorpay failed for ${tpl.id}:`, e);
+            } else {
+              console.warn(`[recurring-payment] Razorpay failed for ${tpl.id}: ${result.error.description}`);
             }
           }
 

@@ -80,16 +80,39 @@ export interface PaymentLinkResult {
   shortUrl: string;
 }
 
+export interface PaymentLinkError {
+  httpStatus:  number;
+  razorpayCode: string | null;  // e.g. "RATE_LIMIT_EXCEEDED", "BAD_REQUEST_ERROR"
+  description:  string;          // human-readable from Razorpay
+  isRateLimit:  boolean;
+  isTestMode:   boolean;         // true when test-mode quota is the cause
+}
+
+export type CreatePaymentLinkResult =
+  | { ok: true;  data: PaymentLinkResult }
+  | { ok: false; error: PaymentLinkError; configMissing?: boolean };
+
 export async function createPaymentLink(
   params: CreatePaymentLinkParams
-): Promise<PaymentLinkResult | null> {
+): Promise<CreatePaymentLinkResult> {
   const config = await getRazorpayConfig(params.orgId);
   if (!config) {
     console.error(`[razorpay] createPaymentLink: no valid config for org ${params.orgId} — credentials missing or unreadable`);
-    return null;
+    return {
+      ok: false,
+      configMissing: true,
+      error: {
+        httpStatus:   0,
+        razorpayCode: null,
+        description:  "Razorpay credentials are missing or could not be decrypted. Re-save your API keys in Settings › Payments.",
+        isRateLimit:  false,
+        isTestMode:   false,
+      },
+    };
   }
 
-  const auth = Buffer.from(`${config.keyId}:${config.keySecret}`).toString("base64");
+  const isTestKey = config.keyId.startsWith("rzp_test_");
+  const auth      = Buffer.from(`${config.keyId}:${config.keySecret}`).toString("base64");
 
   const body: Record<string, unknown> = {
     amount:      Math.round(params.amountInr * 100), // paise
@@ -116,16 +139,32 @@ export async function createPaymentLink(
   });
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
+    const errBody = await res.json().catch(() => ({})) as {
+      error?: { code?: string; description?: string; reason?: string };
+    };
+    const rzpCode   = errBody?.error?.code ?? null;
+    const rzpDesc   = errBody?.error?.description ?? errBody?.error?.reason ?? `HTTP ${res.status}`;
+    const isRL      = res.status === 429 || rzpCode === "RATE_LIMIT_EXCEEDED";
+    const isTestMode = isRL && isTestKey;
+
     console.error(
-      `[razorpay] createPaymentLink API error for org ${params.orgId} — HTTP ${res.status}:`,
-      JSON.stringify(err),
+      `[razorpay] createPaymentLink API error for org ${params.orgId} — HTTP ${res.status} code=${rzpCode ?? "?"}: ${rzpDesc}`,
     );
-    return null;
+
+    return {
+      ok: false,
+      error: {
+        httpStatus:   res.status,
+        razorpayCode: rzpCode,
+        description:  rzpDesc,
+        isRateLimit:  isRL,
+        isTestMode,
+      },
+    };
   }
 
   const data = await res.json();
-  return { id: data.id as string, shortUrl: data.short_url as string };
+  return { ok: true, data: { id: data.id as string, shortUrl: data.short_url as string } };
 }
 
 // ── Webhook signature verification ───────────────────────────

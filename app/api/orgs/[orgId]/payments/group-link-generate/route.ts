@@ -8,12 +8,21 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { z } from "zod";
 import { getOrCreateConversation, deliverOutboundMessage } from "@/lib/conversation";
-import { createPaymentLink } from "@/lib/razorpay";
+import { createPaymentLink, type PaymentLinkError } from "@/lib/razorpay";
 import { getLeadFirstName } from "@/lib/leads";
 import { inngest } from "@/lib/inngest/client";
 import { writeLeadEvent } from "@/lib/lead-events";
 
 interface Params { params: { orgId: string } }
+
+function razorpayUserMessage(err: PaymentLinkError): string {
+  if (err.httpStatus === 0) return err.description;
+  if (err.isTestMode)
+    return "Razorpay test-mode limit reached (30 payment links). Switch to Live Mode in your Razorpay dashboard, or use UPI.";
+  if (err.isRateLimit)
+    return "Razorpay rate limit exceeded. Please try again in a moment.";
+  return `Razorpay error: ${err.description}`;
+}
 
 async function assertMember(orgId: string) {
   const supabase = createClient();
@@ -138,12 +147,18 @@ export async function POST(req: NextRequest, { params }: Params) {
             description,
             customerName: lead.name ?? undefined,
           });
-          if (result) {
-            linkUrl    = result.shortUrl;
+          if (result.ok) {
+            linkUrl    = result.data.shortUrl;
             linkMethod = "razorpay";
             console.log(`[payments/group-link-generate] DIAG lead=${lead.id} link_path=razorpay linkUrl="${linkUrl}"`);
+          } else if (paymentMode === "razorpay_only") {
+            const userMsg = razorpayUserMessage(result.error);
+            console.warn(`[payments/group-link-generate] DIAG lead=${lead.id} razorpay_failed_razorpay_only code=${result.error.razorpayCode}`);
+            results.push({ lead_id: lead.id, ok: false, error: userMsg });
+            continue;
           } else {
-            console.warn(`[payments/group-link-generate] DIAG lead=${lead.id} razorpay_returned_null payment_mode="${paymentMode}" falling_through`);
+            // "both" mode — fall through to UPI
+            console.warn(`[payments/group-link-generate] DIAG lead=${lead.id} razorpay_failed code=${result.error.razorpayCode ?? result.error.httpStatus} falling_back_to_upi`);
           }
         }
 

@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
-import { createPaymentLink } from "@/lib/razorpay";
+import { createPaymentLink, type PaymentLinkError } from "@/lib/razorpay";
 import { inngest } from "@/lib/inngest/client";
 import { getOrCreateConversation, deliverOutboundMessage } from "@/lib/conversation";
 import { generatePaymentLinkMessage } from "@/lib/ai";
@@ -18,6 +18,15 @@ import { writeLeadEvent } from "@/lib/lead-events";
 import { z } from "zod";
 
 interface Params { params: { orgId: string } }
+
+function razorpayUserMessage(err: PaymentLinkError): string {
+  if (err.httpStatus === 0) return err.description; // credentials missing/unreadable
+  if (err.isTestMode)
+    return "Razorpay test-mode limit reached (30 payment links). Switch to Live Mode in your Razorpay dashboard, or use UPI.";
+  if (err.isRateLimit)
+    return "Razorpay rate limit exceeded. Please try again in a moment.";
+  return `Razorpay error: ${err.description}`;
+}
 
 async function assertMember(orgId: string) {
   const supabase = createClient();
@@ -130,16 +139,18 @@ async function handler(req: NextRequest, { params }: Params) {
         description,
         customerName: lead.name ?? undefined,
       });
-      if (result) {
-        linkUrl    = result.shortUrl;
+      if (result.ok) {
+        linkUrl    = result.data.shortUrl;
         linkMethod = "razorpay";
-      } else if (method === "razorpay" || paymentMode === "razorpay_only") {
-        return NextResponse.json(
-          { error: "Razorpay payment link could not be created. Re-save your API keys in Settings › Payments. Check server logs for details." },
-          { status: 502 },
-        );
+      } else {
+        // Surface specific error for razorpay_only — no fallback allowed
+        if (paymentMode === "razorpay_only") {
+          const userMsg = razorpayUserMessage(result.error);
+          return NextResponse.json({ error: userMsg }, { status: 502 });
+        }
+        // "both" mode — log and fall through to UPI below
+        console.warn(`[link-generate] Razorpay failed (${result.error.razorpayCode ?? result.error.httpStatus}), falling back to UPI`);
       }
-      // "both" auto mode: fall through to UPI below
     }
 
     if (!linkUrl && useUpi && hasUpi) {
