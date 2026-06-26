@@ -6,7 +6,7 @@
     "type": "git",
     "url": "https://github.com/leadflowaisystems/Effora-AI.git"
   },
-  "homepage": "https://effora-ai.vercel.app",
+  "homepage": "https://www.effora.co.in",
   "scripts": {
     "dev": "next dev",
     "build": "cross-env NODE_OPTIONS='--max-old-space-size=4096' next build",

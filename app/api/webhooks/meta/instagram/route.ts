@@ -74,9 +74,6 @@ interface IgWebhookBody {
 }
 
 export async function POST(req: NextRequest) {
-  // DIAGNOSTIC — remove after root cause confirmed
-  console.error("[ig-webhook] BUILD_MARKER=2026-06-05-v3");
-
   // ── 1. Resolve app secret for signature verification ──────────────────────
   let appSecret = process.env.META_APP_SECRET;
   let secretSource = "env-var";
@@ -112,104 +109,12 @@ export async function POST(req: NextRequest) {
   const sig     = req.headers.get("x-hub-signature-256") ?? "";
   const expected = "sha256=" + createHmac("sha256", appSecret).update(rawBody).digest("hex");
 
-
-  // Diagnostic: log enough to debug without exposing the full secret
   console.log(
-    `[ig-webhook] sig-diag secret_source=${secretSource}` +
+    `[ig-webhook] sig-check source=${secretSource}` +
     ` secret_len=${appSecret.length}` +
-    ` secret_prefix=${appSecret.slice(0, 6)}` +
     ` body_len=${rawBody.length}` +
-    ` sig_header_present=${!!req.headers.get("x-hub-signature-256")}` +
-    ` received_sig=${sig.slice(0, 20)}...` +
-    ` expected_sig=${expected.slice(0, 20)}...`
+    ` sig_match=${sig === expected}`,
   );
-
-  // ── Extended diagnostics (remove after root cause confirmed) ─────────────
-
-  // 1. Body encoding — byte-level details including first 32 bytes as hex.
-  //    hex32 will reveal any byte-level transformation invisible to .length check.
-  const bodyBuffer = Buffer.from(rawBody, "utf8");
-  const hex32      = bodyBuffer.slice(0, 32).toString("hex");
-  console.error("[ig-webhook] body-diag", {
-    bodyLength:  rawBody.length,
-    bodyBytes:   bodyBuffer.byteLength,
-    contentLen:  req.headers.get("content-length"),
-    hex32,                     // first 32 raw bytes as hex — detects any invisible transformation
-    first80:     rawBody.slice(0, 80),
-  });
-
-  // 2. All signature-related headers
-  console.error("[ig-webhook] headers-diag", {
-    xHubSignature256: req.headers.get("x-hub-signature-256"),
-    xHubSignature:    req.headers.get("x-hub-signature"),
-    contentType:      req.headers.get("content-type"),
-    contentLength:    req.headers.get("content-length"),
-    userAgent:        req.headers.get("user-agent"),
-  });
-
-  // 3. HMAC inputs and outputs — two variants to rule out string-vs-buffer encoding
-  const secretHash       = createHmac("sha256", "diagnostic-salt").update(appSecret).digest("hex");
-  const expectedFromStr  = "sha256=" + createHmac("sha256", appSecret).update(rawBody).digest("hex");
-  const expectedFromBuf  = "sha256=" + createHmac("sha256", appSecret).update(bodyBuffer).digest("hex");
-  console.error("[ig-webhook] hmac-diag", {
-    secretLength:        appSecret.length,
-    secretPrefix:        appSecret.slice(0, 6),
-    secretHash,
-    receivedSig:         sig,
-    expectedFromStr,     // HMAC using rawBody string  (current production path)
-    expectedFromBuf,     // HMAC using Buffer(rawBody) (byte-identical for ASCII; detects encoding divergence)
-    strVariantMatches:   expectedFromStr === sig,
-    bufVariantMatches:   expectedFromBuf === sig,
-    strAndBufIdentical:  expectedFromStr === expectedFromBuf,
-  });
-
-  // 4. OLD APP SECRET CHECK
-  const OLD_APP_SECRET = "56e0a2c62e4d5943f6205a2cbc2daf00";
-  const expectedOld    = "sha256=" + createHmac("sha256", OLD_APP_SECRET).update(bodyBuffer).digest("hex");
-  console.error("[ig-webhook] old-secret-check", {
-    equalWithOldSecret: expectedOld === sig,
-    oldSecretPrefix:    OLD_APP_SECRET.slice(0, 6),
-  });
-
-  // 5. FULL BODY LOG — only emitted on mismatch so the exact bytes can be
-  //    replayed via POST /api/debug/meta-config { body, sig } to confirm HMAC.
-  //    This is the definitive test: if that endpoint returns match=false with
-  //    the same body+sig, the secret in Vercel is wrong.
-  if (sig !== expected) {
-    console.error("[ig-webhook] full-body-for-replay", rawBody);
-    console.error("[ig-webhook] full-sig-for-replay",  sig);
-  }
-
-  // 5. Parse payload safely and identify webhook type
-  try {
-    const parsed = JSON.parse(rawBody);
-    console.error("[ig-webhook] parsed-diag", {
-      object:         parsed?.object,
-      entryCount:     parsed?.entry?.length,
-      firstEntryId:   parsed?.entry?.[0]?.id,
-      firstEntryKeys: parsed?.entry?.[0] ? Object.keys(parsed.entry[0]) : [],
-    });
-  } catch {
-    console.error("[ig-webhook] parsed-diag", "JSON_PARSE_FAILED");
-  }
-
-  // ── End extended diagnostics ─────────────────────────────────────────────
-
-  // app-diag: confirm which Meta app ID + webhook object production is seeing
-  try {
-    const _payload = JSON.parse(rawBody);
-    console.error("[ig-webhook] app-diag", {
-      appId:   process.env.META_APP_ID,
-      object:  _payload?.object,
-      entryId: _payload?.entry?.[0]?.id,
-    });
-  } catch {
-    console.error("[ig-webhook] app-diag", {
-      appId:   process.env.META_APP_ID,
-      object:  "(parse failed)",
-      entryId: "(parse failed)",
-    });
-  }
 
   // ── Signature gate ────────────────────────────────────────────────────────
   // META_WEBHOOK_DEBUG_BYPASS_SIGNATURE=true skips enforcement for pipeline

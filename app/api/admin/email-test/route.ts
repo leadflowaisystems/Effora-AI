@@ -1,4 +1,4 @@
-/**
+﻿/**
  * POST /api/admin/email-test
  *
  * Deep Brevo SMTP diagnostic that checks both BREVO_* and SMTP_* env vars,
@@ -9,7 +9,7 @@
  *       No browser session needed — safe to call with curl.
  *
  * curl example:
- *   curl -X POST https://effora-ai-qh35.vercel.app/api/admin/email-test \
+ *   curl -X POST https://www.effora.co.in/api/admin/email-test \
  *     -H "Content-Type: application/json" \
  *     -d '{"adminEmail":"you@example.com","testTo":"you@example.com"}'
  */

@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://effora-ai-qh35.vercel.app/sitemap.xml
+Sitemap: https://www.effora.co.in/sitemap.xml

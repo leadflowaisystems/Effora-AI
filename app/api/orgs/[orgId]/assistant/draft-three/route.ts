@@ -49,7 +49,7 @@ export async function POST(req: NextRequest, { params }: Params) {
   ]);
 
   const calLink  = ((calRow.data?.config as Record<string,string> | null)?.booking_url) ?? null;
-  const appUrl   = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai-qh35.vercel.app";
+  const appUrl   = process.env.NEXT_PUBLIC_APP_URL ?? "https://www.effora.co.in";
   const orgSlug  = (orgRow.data as { slug: string } | null)?.slug ?? "";
   const funnelUrl = `${appUrl}/c/${orgSlug}`;
 

@@ -27,7 +27,7 @@ export default async function ManyChatSetupPage({ params }: Props) {
   const org = orgRow as { id: string; name: string };
 
   const svc = createServiceClient();
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai-qh35.vercel.app";
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://www.effora.co.in";
   const funnelUrl = `${appUrl}/c/${params.orgSlug}`;
 
   // Load Cal.com URL if connected

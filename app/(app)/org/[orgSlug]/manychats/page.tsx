@@ -36,7 +36,7 @@ export default async function ManychatsPage({ params }: Props) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const svc = createServiceClient() as any;
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai-qh35.vercel.app";
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://www.effora.co.in";
   const funnelUrl  = `${appUrl}/c/${params.orgSlug}`;
   const handoffUrl = `${appUrl}/api/webhooks/manychat-handoff/${org.id}`;
 

@@ -1,9 +1,9 @@
-/**
+﻿/**
  * GET /api/admin/diagnostics
  * Returns env-var presence and runtime info — admin-only.
  *
  * Use this after deployment to confirm production has the same env vars as local.
- * curl https://effora-ai-qh35.vercel.app/api/admin/diagnostics  (must be logged in as admin)
+ * curl https://www.effora.co.in/api/admin/diagnostics  (must be logged in as admin)
  */
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";

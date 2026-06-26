@@ -1,4 +1,4 @@
-/**
+﻿/**
  * POST /api/auth/signup-password
  * Create account with email + password.
  *
@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Please use a permanent email address." }, { status: 400 });
   }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai-qh35.vercel.app";
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://www.effora.co.in";
 
   // Collect session cookies to stamp onto the response
   const pendingCookies: Array<{ name: string; value: string; options: CookieOptions }> = [];

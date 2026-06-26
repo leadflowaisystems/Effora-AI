@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Inngest cron: weekly performance email to coaches.
  * Fires every Monday at 9 AM UTC.
  */
@@ -57,7 +57,7 @@ export const onWeeklyReport = inngest.createFunction(
   [{ cron: "0 9 * * 1" }, { event: "test/weekly-report.trigger" }], // cron + manual test trigger
   async ({ step }) => {
     const svc     = createServiceClient();
-    const appUrl  = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai-qh35.vercel.app";
+    const appUrl  = process.env.NEXT_PUBLIC_APP_URL ?? "https://www.effora.co.in";
     const now     = new Date();
     const weekAgo = new Date(now.getTime() - 7  * 86400000).toISOString();
     const twoWAgo = new Date(now.getTime() - 14 * 86400000).toISOString();

@@ -25,7 +25,7 @@ export default async function FunnelSettingsPage({ params }: Props) {
   const svc = createServiceClient();
   const { data: cfgRow } = await svc.from("funnel_configs").select("*").eq("org_id", org.id).maybeSingle();
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai-qh35.vercel.app";
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://www.effora.co.in";
   const publicUrl = `${appUrl}/c/${params.orgSlug}`;
 
   return (

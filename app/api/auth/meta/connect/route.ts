@@ -1,4 +1,4 @@
-/**
+﻿/**
  * GET /api/auth/meta/connect?orgSlug=...
  *
  * Generates the Facebook Login for Business OAuth URL and redirects the coach.
@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
   const metaCfg = await getMetaConfig(orgId).catch(() => null);
 
   if (!metaCfg) {
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai-qh35.vercel.app";
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://www.effora.co.in";
     return NextResponse.redirect(
       new URL(
         `/org/${orgSlug}/health?error=meta_not_configured`,
@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
   }
 
   if (!metaCfg.config_id) {
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai-qh35.vercel.app";
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://www.effora.co.in";
     return NextResponse.redirect(
       new URL(
         `/org/${orgSlug}/health?error=meta_config_id_missing`,
@@ -49,7 +49,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const appUrl     = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai-qh35.vercel.app";
+  const appUrl     = process.env.NEXT_PUBLIC_APP_URL ?? "https://www.effora.co.in";
   const redirectUri = `${appUrl}/api/auth/meta/callback`;
 
   // Encode orgSlug + userId in state so callback can verify and associate

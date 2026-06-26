@@ -1,4 +1,4 @@
-/**
+﻿/**
  * GET /api/auth/meta/callback?code=...&state=...
  *
  * OAuth callback from Facebook Login for Business.
@@ -23,7 +23,7 @@ import {
 } from "@/lib/integrations/meta-instagram";
 
 export async function GET(req: NextRequest) {
-  const appUrl    = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai-qh35.vercel.app";
+  const appUrl    = process.env.NEXT_PUBLIC_APP_URL ?? "https://www.effora.co.in";
 
   const code       = req.nextUrl.searchParams.get("code");
   const stateRaw   = req.nextUrl.searchParams.get("state");

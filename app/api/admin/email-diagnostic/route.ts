@@ -1,11 +1,11 @@
-/**
+﻿/**
  * POST /api/admin/email-diagnostic
  *
  * Full Brevo SMTP diagnostic: tests connection AND actual send, then returns
  * a plain-English conclusion explaining exactly what's broken.
  *
  * Usage:
- *   curl -X POST https://effora-ai-qh35.vercel.app/api/admin/email-diagnostic \
+ *   curl -X POST https://www.effora.co.in/api/admin/email-diagnostic \
  *     -H "Content-Type: application/json" \
  *     -d '{"adminEmail":"you@example.com","testTo":"you@example.com"}'
  *

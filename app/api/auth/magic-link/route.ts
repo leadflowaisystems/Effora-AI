@@ -1,4 +1,4 @@
-/**
+﻿/**
  * POST /api/auth/magic-link
  *
  * Sends a magic-link sign-in email via Supabase Auth (NOT via our lib/email.ts).
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://effora-ai-qh35.vercel.app";
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://www.effora.co.in";
 
   // Collect session cookies (in case Supabase sets any during this call)
   const pendingCookies: Array<{ name: string; value: string; options: CookieOptions }> = [];

@@ -1,6 +1,6 @@
-import { MetadataRoute } from "next";
+﻿import { MetadataRoute } from "next";
 
-const BASE = "https://effora-ai-qh35.vercel.app";
+const BASE = "https://www.effora.co.in";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const now = new Date().toISOString();

@@ -1,4 +1,4 @@
-import type { Metadata, Viewport } from "next";
+﻿import type { Metadata, Viewport } from "next";
 import { Bricolage_Grotesque, Hanken_Grotesk } from "next/font/google";
 import { GeistMono } from "geist/font/mono";
 import { Toaster } from "@/components/ui/toaster";
@@ -18,7 +18,7 @@ const hankenGrotesk = Hanken_Grotesk({
   display: "swap",
 });
 
-const BASE_URL = "https://effora-ai-qh35.vercel.app";
+const BASE_URL = "https://www.effora.co.in";
 
 export const metadata: Metadata = {
   title: "Effora AI — AI Inbox for Service Businesses",
@@ -26,6 +26,7 @@ export const metadata: Metadata = {
   manifest: "/manifest.json",
   appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Effora AI" },
   metadataBase: new URL(BASE_URL),
+  alternates: { canonical: BASE_URL },
   openGraph: {
     type:        "website",
     siteName:    "Effora AI",
