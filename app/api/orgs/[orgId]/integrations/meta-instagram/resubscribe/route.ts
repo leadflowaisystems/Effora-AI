@@ -5,7 +5,7 @@
  * from the last OAuth flow. No re-OAuth required if user_access_token_enc
  * is present (stored since the architecture realignment commit).
  *
- * Calls POST /v18.0/{ig_account_id}/subscribed_apps using the user/system-user
+ * Calls POST /v23.0/{ig_account_id}/subscribed_apps using the user/system-user
  * access token. This is the Instagram Messaging API subscription endpoint.
  * The page access token does NOT work here — only user/system-user tokens do.
  *

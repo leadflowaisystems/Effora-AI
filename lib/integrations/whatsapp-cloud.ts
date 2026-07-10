@@ -6,7 +6,7 @@
 import { createServiceClient } from "@/lib/supabase/server";
 import { encryptSecret, decryptSecret } from "@/lib/crypto";
 
-const GRAPH = "https://graph.facebook.com/v18.0";
+const GRAPH = "https://graph.facebook.com/v23.0";
 
 export interface WhatsAppConfig {
   waba_id:              string;

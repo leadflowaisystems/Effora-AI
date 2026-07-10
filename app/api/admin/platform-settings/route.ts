@@ -51,7 +51,7 @@ export async function PUT(req: NextRequest) {
   let verifiedAt: string | null = null;
   try {
     const verifyRes = await fetch(
-      `https://graph.facebook.com/v18.0/${body.meta_app_id}?access_token=${body.meta_app_id}|${body.meta_app_secret ?? ""}`,
+      `https://graph.facebook.com/v23.0/${body.meta_app_id}?access_token=${body.meta_app_id}|${body.meta_app_secret ?? ""}`,
     );
     if (verifyRes.ok) {
       verifiedAt = new Date().toISOString();

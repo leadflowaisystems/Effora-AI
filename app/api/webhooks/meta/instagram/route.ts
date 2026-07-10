@@ -120,8 +120,12 @@ export async function POST(req: NextRequest) {
   // META_WEBHOOK_DEBUG_BYPASS_SIGNATURE=true skips enforcement for pipeline
   // testing only. Remove the env var to re-enable enforcement. Never commit
   // with bypass active — it is controlled entirely by the Vercel env var.
+  // Gated on NODE_ENV so this can never take effect in production even if the
+  // env var is accidentally left set there — it only applies to local dev.
   const signatureValid  = sig === expected;
-  const bypassSignature = process.env.META_WEBHOOK_DEBUG_BYPASS_SIGNATURE === "true";
+  const bypassSignature =
+    process.env.NODE_ENV !== "production" &&
+    process.env.META_WEBHOOK_DEBUG_BYPASS_SIGNATURE === "true";
 
   if (!signatureValid) {
     console.error("[ig-webhook] SIGNATURE FAILED - received_sig does not match expected_sig");
