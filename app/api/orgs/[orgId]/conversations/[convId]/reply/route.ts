@@ -81,7 +81,9 @@ export async function POST(req: NextRequest, { params }: Params) {
     } else {
       try {
         console.log(`[ig-send] graph request POST /{page_id}/messages recipient=${rawIgUserId}`);
-        const result = await sendInstagramMessage(params.orgId, rawIgUserId, content, attachmentUrl);
+        // humanInitiated=true — this route only fires from an authenticated
+        // org member's manual reply (assertMember above), never AI/automation.
+        const result = await sendInstagramMessage(params.orgId, rawIgUserId, content, attachmentUrl, true);
         providerMessageId = result.provider_message_id;
         console.log(`[ig-send] graph response ok provider_message_id=${providerMessageId}`);
       } catch (sendErr) {
