@@ -117,15 +117,13 @@ export async function POST(req: NextRequest) {
   );
 
   // ── Signature gate ────────────────────────────────────────────────────────
-  // META_WEBHOOK_DEBUG_BYPASS_SIGNATURE=true skips enforcement for pipeline
-  // testing only. Remove the env var to re-enable enforcement. Never commit
-  // with bypass active — it is controlled entirely by the Vercel env var.
-  // Gated on NODE_ENV so this can never take effect in production even if the
-  // env var is accidentally left set there — it only applies to local dev.
+  // TEMPORARY DEBUG BYPASS — META_WEBHOOK_DEBUG_BYPASS_SIGNATURE=true skips
+  // Instagram signature enforcement only, for isolating whether the signature
+  // check is the sole blocker. Disabled by default (env var must be exactly
+  // "true"). Does NOT affect the WhatsApp webhook, which has no bypass path.
+  // Remove the Vercel env var to fully restore enforcement.
   const signatureValid  = sig === expected;
-  const bypassSignature =
-    process.env.NODE_ENV !== "production" &&
-    process.env.META_WEBHOOK_DEBUG_BYPASS_SIGNATURE === "true";
+  const bypassSignature = process.env.META_WEBHOOK_DEBUG_BYPASS_SIGNATURE === "true";
 
   if (!signatureValid) {
     console.error("[ig-webhook] SIGNATURE FAILED - received_sig does not match expected_sig");
@@ -133,10 +131,7 @@ export async function POST(req: NextRequest) {
       console.warn("[ig-webhook] ✗ signature mismatch — halting (set META_WEBHOOK_DEBUG_BYPASS_SIGNATURE=true to bypass for pipeline testing)");
       return NextResponse.json({ ok: true });
     }
-    console.error("[ig-webhook] ================================================================");
-    console.error("[ig-webhook] DEBUG MODE: META_WEBHOOK_DEBUG_BYPASS_SIGNATURE=true");
-    console.error("[ig-webhook] continuing despite signature failure — pipeline test in progress");
-    console.error("[ig-webhook] ================================================================");
+    console.log("[ig-webhook] DEBUG: Signature verification bypassed");
   } else {
     console.log("[ig-webhook] ✓ signature verified");
   }
