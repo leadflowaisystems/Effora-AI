@@ -9,6 +9,7 @@ import { Badge }     from "@/components/ui/badge";
 import { Skeleton }  from "@/components/ui/skeleton";
 import { AiDraftCard } from "./ai-draft-card";
 import { ComposeBar  } from "./compose-bar";
+import { linkify }     from "./linkify";
 import { timeAgo }   from "@/lib/time";
 import { createClient } from "@/lib/supabase/client";
 import type { InboxMessage, InboxDraft, InboxLead } from "@/types/inbox";
@@ -89,11 +90,11 @@ function MessageBubble({ msg }: { msg: InboxMessage }) {
               className="max-w-[240px] rounded-lg object-cover mb-1"
             />
             {msg.content && msg.content !== "📷 Image" && (
-              <p className="whitespace-pre-wrap break-words text-sm">{msg.content}</p>
+              <p className="whitespace-pre-wrap break-words text-sm">{linkify(msg.content)}</p>
             )}
           </>
         ) : (
-          <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+          <p className="whitespace-pre-wrap break-words">{linkify(msg.content)}</p>
         )}
         <p className={cn(
           "mt-1 text-[10px]",
