@@ -143,6 +143,9 @@ export async function POST(req: NextRequest) {
           .maybeSingle();
 
         let leadId: string;
+        // Whether this enquiry is from someone we've never spoken to before.
+        // Forwarded to Inngest so the owner gets a "new enquiry" notification.
+        const isNewLead = !existingLead;
 
         if (existingLead) {
           leadId = (existingLead as { id: string }).id;
@@ -224,7 +227,7 @@ export async function POST(req: NextRequest) {
         // ── 4. Fire Inngest event (fire-and-forget — Meta retries on 200 loss) ─
         inngest.send({
           name: "whatsapp.message_received",
-          data: { orgId, leadId, conversationId, messageId, senderPhone },
+          data: { orgId, leadId, conversationId, messageId, senderPhone, isNewLead, leadName: contactName },
         }).catch((err: unknown) => console.error("[wa-webhook] inngest.send failed:", err));
 
         console.log(`[wa-webhook] ✓ message lead=${leadId} conv=${conversationId}`);

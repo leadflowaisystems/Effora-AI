@@ -22,7 +22,7 @@ type Provider = typeof ALLOWED_PROVIDERS[number];
 /** Fields that contain secrets and must be encrypted. */
 const SECRET_FIELDS: Record<Provider, string[]> = {
   calcom:    ["api_key", "webhook_secret"],
-  razorpay:  ["key_secret"],
+  razorpay:  ["key_secret", "webhook_secret"],
   manychat:  ["api_key"],
   meta:      ["page_access_token", "app_secret"],
 };
@@ -119,16 +119,22 @@ export async function PUT(req: NextRequest, { params }: Params) {
     // Use maybeSingle() so "no rows" returns null instead of a PGRST116 error.
     const { data: existing } = await service
       .from("integrations")
-      .select("id")
+      .select("id, config")
       .eq("org_id", params.orgId)
       .eq("provider", provider)
       .maybeSingle();
 
     let result;
     if (existing) {
+      // MERGE, don't replace. Blank fields are skipped above, so a partial save
+      // (e.g. rotating API keys without re-entering the webhook secret) must not
+      // silently delete the credentials it didn't submit.
+      const prevConfig = ((existing as { config?: Record<string, string> }).config ?? {});
+      const mergedConfig = { ...prevConfig, ...storedConfig };
+
       result = await service
         .from("integrations")
-        .update({ config: storedConfig, active, updated_at: now })
+        .update({ config: mergedConfig, active, updated_at: now })
         .eq("id", (existing as { id: string }).id)
         .select("id, provider, active, updated_at")
         .single();

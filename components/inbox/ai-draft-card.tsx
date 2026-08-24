@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge }    from "@/components/ui/badge";
 import { cn }       from "@/lib/utils";
 import type { InboxDraft } from "@/types/inbox";
+import { linkify }         from "./linkify";
 
 interface Props {
   draft:        InboxDraft;
@@ -83,7 +84,7 @@ export function AiDraftCard({ draft, orgId, convId, onDone }: Props) {
         <div className="px-4 py-3">
           {mode === "view" ? (
             <p className="text-sm text-[var(--text)] leading-relaxed whitespace-pre-wrap">
-              {draft.content}
+              {linkify(draft.content)}
             </p>
           ) : (
             <Textarea

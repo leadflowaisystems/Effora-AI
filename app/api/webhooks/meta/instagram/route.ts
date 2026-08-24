@@ -17,7 +17,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { createHmac }               from "crypto";
+import { createHmac, timingSafeEqual } from "crypto";
 import { createServiceClient }      from "@/lib/supabase/server";
 import { inngest }                  from "@/lib/inngest/client";
 import { getIgUserProfile }         from "@/lib/integrations/meta-instagram";
@@ -100,8 +100,9 @@ export async function POST(req: NextRequest) {
   }
 
   if (!appSecret) {
-    console.error("[ig-webhook] META_APP_SECRET not configured — cannot verify signature. Set META_APP_SECRET in Vercel env vars.");
-    return NextResponse.json({ ok: true }); // return 200 so Meta doesn't retry endlessly
+    // No secret means no request can ever be authenticated. Fail closed.
+    console.error("[ig-webhook] META_APP_SECRET not configured — cannot verify signature. Rejecting.");
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   // ── 2. Signature verification ─────────────────────────────────────────────
@@ -109,29 +110,50 @@ export async function POST(req: NextRequest) {
   const sig     = req.headers.get("x-hub-signature-256") ?? "";
   const expected = "sha256=" + createHmac("sha256", appSecret).update(rawBody).digest("hex");
 
+  // Constant-time comparison. timingSafeEqual throws on length mismatch, so
+  // guard on length first — an unequal length is already a mismatch.
+  const sigBuf = Buffer.from(sig);
+  const expBuf = Buffer.from(expected);
+  const signatureValid =
+    sigBuf.length === expBuf.length && timingSafeEqual(sigBuf, expBuf);
+
   console.log(
     `[ig-webhook] sig-check source=${secretSource}` +
-    ` secret_len=${appSecret.length}` +
     ` body_len=${rawBody.length}` +
-    ` sig_match=${sig === expected}`,
+    ` sig_match=${signatureValid}`,
   );
 
-  // ── Signature gate ────────────────────────────────────────────────────────
-  // TEMPORARY DEBUG BYPASS — META_WEBHOOK_DEBUG_BYPASS_SIGNATURE=true skips
-  // Instagram signature enforcement only, for isolating whether the signature
-  // check is the sole blocker. Disabled by default (env var must be exactly
-  // "true"). Does NOT affect the WhatsApp webhook, which has no bypass path.
-  // Remove the Vercel env var to fully restore enforcement.
-  const signatureValid  = sig === expected;
-  const bypassSignature = process.env.META_WEBHOOK_DEBUG_BYPASS_SIGNATURE === "true";
+  // ── Signature gate — FAIL CLOSED ──────────────────────────────────────────
+  // The debug bypass is permanently inert in production. It is honoured only
+  // in a non-production runtime, and only when explicitly set to "true".
+  // In production an invalid signature is ALWAYS a 401, with no escape hatch.
+  //
+  // Merge note: this supersedes main's NODE_ENV-gated variant. Same production
+  // outcome, but it also covers Preview builds, warns when the var is set in a
+  // built deployment, and compares the HMAC in constant time (see above).
+  const IS_PROD = process.env.NODE_ENV === "production";
+  const bypassRequested = process.env.META_WEBHOOK_DEBUG_BYPASS_SIGNATURE === "true";
+
+  if (IS_PROD && bypassRequested) {
+    // NOTE: Next.js inlines NODE_ENV as "production" for every built deployment,
+    // so this fires on Preview builds too. Name the actual environment rather
+    // than assuming Production, or the operator hunts in the wrong place.
+    console.warn(
+      "[ig-webhook] ⚠ SECURITY: META_WEBHOOK_DEBUG_BYPASS_SIGNATURE is set in a built " +
+      `deployment (VERCEL_ENV=${process.env.VERCEL_ENV ?? "unknown"}). It is being IGNORED — ` +
+      "signature enforcement remains active. Remove this env var from that Vercel environment.",
+    );
+  }
+
+  const bypassSignature = bypassRequested && !IS_PROD;
 
   if (!signatureValid) {
-    console.error("[ig-webhook] SIGNATURE FAILED - received_sig does not match expected_sig");
+    console.error("[ig-webhook] SIGNATURE FAILED — received signature does not match expected");
     if (!bypassSignature) {
-      console.warn("[ig-webhook] ✗ signature mismatch — halting (set META_WEBHOOK_DEBUG_BYPASS_SIGNATURE=true to bypass for pipeline testing)");
-      return NextResponse.json({ ok: true });
+      console.warn("[ig-webhook] ✗ signature mismatch — rejecting with 401");
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    console.log("[ig-webhook] DEBUG: Signature verification bypassed");
+    console.warn("[ig-webhook] NON-PRODUCTION DEBUG BYPASS ACTIVE — continuing despite signature failure");
   } else {
     console.log("[ig-webhook] ✓ signature verified");
   }
@@ -289,6 +311,10 @@ export async function POST(req: NextRequest) {
 
       // ── 6. Upsert lead ──────────────────────────────────────────────────
       let leadId: string;
+      // Whether this enquiry is from someone we've never spoken to before.
+      // Forwarded to Inngest so the owner gets a "new enquiry" notification.
+      let isNewLead = false;
+      let leadDisplayName: string | null = resolvedName;
       try {
         const { data: existingLead } = await svc
           .from("leads")
@@ -301,6 +327,7 @@ export async function POST(req: NextRequest) {
         if (existingLead) {
           leadId = (existingLead as { id: string; name?: string | null }).id;
           const currentName = (existingLead as { id: string; name?: string | null }).name ?? "";
+          leadDisplayName = resolvedName ?? (currentName || null);
           // Re-enrich if: (a) name is blank/numeric IGSID, OR (b) name is a stored
           // "IG …" fallback from a previous failed lookup (stored directly), OR
           // (c) name is "@IG …" — an artifact of a prior webhook bug where the
@@ -323,7 +350,9 @@ export async function POST(req: NextRequest) {
         } else {
           // For new leads use resolvedName if available, otherwise store the IGSID as the name
           // so there's always a non-null name. The UI has its own display fallback.
+          isNewLead = true;
           const nameForInsert = resolvedName ?? senderIgsid;
+          leadDisplayName = nameForInsert;
           const { data: newLead, error: le } = await svc.from("leads").insert({
             org_id:       orgId,
             channel:      "instagram",
@@ -429,7 +458,7 @@ export async function POST(req: NextRequest) {
       try {
         await inngest.send({
           name: "dm.received",
-          data: { orgId, leadId, conversationId, messageId },
+          data: { orgId, leadId, conversationId, messageId, isNewLead, leadName: leadDisplayName },
         });
         console.log(
           `[ig-webhook] workflow triggered event=dm.received lead=${leadId} conv=${conversationId} msg=${messageId}` +

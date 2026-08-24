@@ -14,6 +14,7 @@ import { createServiceClient }  from "@/lib/supabase/server";
 import { qualifyLead, draftReply } from "@/lib/ai";
 import { getCalLink, embedMetadataInCalLink } from "@/lib/booking";
 import { deliverOutboundMessage } from "@/lib/conversation";
+import { notifyNewLead, notifyHotLead } from "@/lib/notify";
 
 interface WAMessageData {
   orgId:          string;
@@ -21,6 +22,8 @@ interface WAMessageData {
   conversationId: string;
   messageId:      string;
   senderPhone:    string;
+  isNewLead?:     boolean;
+  leadName?:      string | null;
 }
 
 export const onWhatsAppMessageReceived = inngest.createFunction(
@@ -32,7 +35,10 @@ export const onWhatsAppMessageReceived = inngest.createFunction(
   },
   { event: "whatsapp.message_received" },
   async ({ event, step }) => {
-    const { orgId, leadId, conversationId, messageId, senderPhone: _senderPhone } = event.data as WAMessageData;
+    const {
+      orgId, leadId, conversationId, messageId,
+      senderPhone: _senderPhone, isNewLead, leadName,
+    } = event.data as WAMessageData;
 
     // ── 1. Load context (parallel DB + Cal.com) ──────────────────────────────
     const ctx = await step.run("load-context", async () => {
@@ -67,6 +73,25 @@ export const onWhatsAppMessageReceived = inngest.createFunction(
     if (!ctx.org || !ctx.lead || ctx.messages.length === 0) {
       return { skipped: true, reason: "Missing context" };
     }
+
+    // ── 1b. Notify the owner of a brand-new enquiry ──────────────────────────
+    // Deliberately its own step: a push failure must never cause the qualify /
+    // draft / send step to retry. notify* helpers never throw (lib/notify.ts).
+    const latestInbound = [...ctx.messages].reverse().find((m) => m.direction === "inbound");
+    if (isNewLead) {
+      await step.run("notify-new-lead", async () => {
+        await notifyNewLead({
+          orgId,
+          leadName,
+          channel:        "whatsapp_cloud",
+          messageText:    latestInbound?.content ?? null,
+          conversationId,
+        });
+        return { notified: true };
+      });
+    }
+
+    const previousStage = ctx.lead.stage;
 
     // ── 2. Qualify → (if warm/hot) draft + send — all in ONE step ───────────
     //    Merging qualify, update-lead, draft-reply and save-or-send into a single
@@ -155,6 +180,21 @@ export const onWhatsAppMessageReceived = inngest.createFunction(
         sent:    autoReply,
       };
     });
+
+    // ── 3. Notify the owner of a HOT lead ────────────────────────────────────
+    // Runs after the reply step so a push failure cannot re-send the AI reply.
+    // Fires only on the transition into "hot", not on every subsequent message.
+    if (result.stage === "hot" && previousStage !== "hot") {
+      await step.run("notify-hot-lead", async () => {
+        await notifyHotLead({
+          orgId,
+          leadName,
+          messageText:    latestInbound?.content ?? null,
+          conversationId,
+        });
+        return { notified: true };
+      });
+    }
 
     return result;
   },

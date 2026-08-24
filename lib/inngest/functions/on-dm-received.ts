@@ -17,12 +17,15 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { qualifyLead, draftReply } from "@/lib/ai";
 import { getCalLink, embedMetadataInCalLink } from "@/lib/booking";
 import { deliverOutboundMessage } from "@/lib/conversation";
+import { notifyNewLead, notifyHotLead } from "@/lib/notify";
 
 interface DmReceivedData {
   orgId:          string;
   leadId:         string;
   conversationId: string;
   messageId:      string;
+  isNewLead?:     boolean;
+  leadName?:      string | null;
 }
 
 export const onDmReceived = inngest.createFunction(
@@ -33,7 +36,7 @@ export const onDmReceived = inngest.createFunction(
   },
   { event: "dm.received" },
   async ({ event, step }) => {
-    const { orgId, leadId, conversationId, messageId } =
+    const { orgId, leadId, conversationId, messageId, isNewLead, leadName } =
       event.data as DmReceivedData;
 
     // ── 1. Load all context in a single DB round-trip ──────────
@@ -92,6 +95,23 @@ export const onDmReceived = inngest.createFunction(
         .eq("status", "active");
     });
 
+    // ── 1c. Notify the owner of a brand-new enquiry ─────────────
+    // Its own step so a push failure can never retry the AI pipeline.
+    // notify* helpers are guaranteed non-throwing (lib/notify.ts).
+    const latestInbound = [...ctx.messages].reverse().find((m) => m.direction === "inbound");
+    if (isNewLead) {
+      await step.run("notify-new-lead", async () => {
+        await notifyNewLead({
+          orgId,
+          leadName,
+          channel:        "instagram",
+          messageText:    latestInbound?.content ?? null,
+          conversationId,
+        });
+        return { notified: true };
+      });
+    }
+
     // ── 2. Qualify ──────────────────────────────────────────────
     const qualification = await step.run("qualify-lead", async () => {
       return qualifyLead({
@@ -112,6 +132,21 @@ export const onDmReceived = inngest.createFunction(
         updated_at:   now,
       }).eq("id", leadId);
     });
+
+    // ── 3b. Notify the owner of a HOT lead ──────────────────────
+    // Only when the lead newly became hot, so re-qualification of an
+    // already-hot conversation doesn't re-ping on every message.
+    if (qualification.stage === "hot" && ctx.lead.stage !== "hot") {
+      await step.run("notify-hot-lead", async () => {
+        await notifyHotLead({
+          orgId,
+          leadName,
+          messageText:    latestInbound?.content ?? null,
+          conversationId,
+        });
+        return { notified: true };
+      });
+    }
 
     // ── 4 + 5. Draft + save/send (warm or hot only) ────────────
     if (qualification.stage === "hot" || qualification.stage === "warm") {
