@@ -127,6 +127,10 @@ export async function POST(req: NextRequest) {
   // The debug bypass is permanently inert in production. It is honoured only
   // in a non-production runtime, and only when explicitly set to "true".
   // In production an invalid signature is ALWAYS a 401, with no escape hatch.
+  //
+  // Merge note: this supersedes main's NODE_ENV-gated variant. Same production
+  // outcome, but it also covers Preview builds, warns when the var is set in a
+  // built deployment, and compares the HMAC in constant time (see above).
   const IS_PROD = process.env.NODE_ENV === "production";
   const bypassRequested = process.env.META_WEBHOOK_DEBUG_BYPASS_SIGNATURE === "true";
 
