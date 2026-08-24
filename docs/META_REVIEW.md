@@ -231,7 +231,46 @@ apps get rejected and re-review gets slower.
 
 ---
 
-## 9. INSTAGRAM ROOT CAUSE — SCOPED, NOT IMPLEMENTED (Phase 7.2)
+## 9. INSTAGRAM ROOT CAUSE — ✅ FIXED (commit `0e8303e`)
+
+**Superseded the "scoped, not implemented" assessment below.** Production evidence arrived and
+made the fix evidence-driven rather than speculative: `webhook_events` held **69 meta_instagram
+deliveries, all `verified=false`, with zero `verified=true` in the table's entire history**
+(2026-06-05 → 2026-08-10). The signature had never once passed — structural, not intermittent.
+
+**Fix:** `lib/meta-secrets.ts` verifies each delivery against **every** app secret the deployment
+holds — env, `platform_settings`, and each active `meta_byo` org — constant-time per candidate,
+logging which **source** matched (source name and non-secret app id only). The GET handshake had
+the identical inversion and was fixed the same way. Rejected deliveries are logged again.
+
+**Acceptance was not widened.** A forged payload must still carry a valid HMAC-SHA256 of the exact
+raw body under one of our real secrets. The Phase 1 hard-block on
+`META_WEBHOOK_DEBUG_BYPASS_SIGNATURE` is untouched and remains inert in every built deployment.
+
+### What this changes for the Instagram App Review submission
+
+1. **The §8 Instagram NO-GO gate can now actually be cleared.** It previously could not be — the
+   webhook rejected 100% of real traffic. Re-read that gate before submitting; it is unchanged in
+   substance, but it is now achievable.
+2. **Meta may have dropped or throttled the subscription** after a 69-delivery failure streak.
+   Re-verify the callback URL and re-subscribe the `messages` field before testing (steps in the
+   verification plan handed to the founder), and confirm the Webhooks page shows no "disabled due
+   to failures" banner.
+3. **Development Mode constrains testing, not correctness.** While the app is in Development mode,
+   Instagram messaging webhooks fire only for accounts holding a role on the app. A test DM from an
+   account without a role produces *no delivery at all* — which looks identical to the old bug.
+   Always test from an added Tester/Developer/Admin account.
+4. **`webhook_events` is now the source of truth for review readiness.** Before submitting, confirm
+   at least one row with `provider='meta_instagram'` and `verified=true`. Zero such rows means the
+   integration is not actually receiving, whatever the Dashboard shows.
+5. **The residual case is configuration, not code.** If a genuine delivery still 401s after this
+   fix, the subscription belongs to a Meta App whose secret we hold nowhere. The `curl
+   /{app-id}/subscriptions` check below becomes mandatory, and the resolution is to align the app
+   id — no further code change would help.
+
+---
+
+## 9b. ORIGINAL SCOPING (retained for context)
 
 **Fail-closed confirmed.** `app/api/webhooks/meta/instagram/route.ts` rejects any request with an
 invalid or missing signature with a 401 in every built deployment; the debug bypass is inert;

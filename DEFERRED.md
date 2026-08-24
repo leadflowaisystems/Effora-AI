@@ -33,10 +33,8 @@ Cleanup is cosmetic and risky to automate. Not touching.
 not in the `select` at line 50, so it is always `undefined` and `config_id` always falls through to
 `process.env.META_CONFIG_ID`. Harmless today. Belongs with the Instagram work, which is deferred.
 
-**Instagram signature root cause (`meta_byo` vs env precedence inversion)**
-Explicitly out of scope per instruction. The webhook now fails closed in production, so the
-insecure state is gone regardless. Evidence packet to diagnose it is already prepared at
-`_gate0/EVIDENCE_PACKET.md`. Scheduled for Phase 7.2.
+~~**Instagram signature root cause (`meta_byo` vs env precedence inversion)**~~
+✅ **RESOLVED** in `0e8303e` — see the Part 2 section below for the evidence and the fix.
 
 **`ADMIN_EMAILS` env var is now unused by the two email routes**
 Still used by `lib/admin.ts` → `/api/admin/diagnostics` and `/api/admin/platform-settings`.
@@ -136,7 +134,7 @@ accurate*, since the underlying `dms_received` metric counts both WhatsApp and I
 
 ## Deferred by explicit scope rule
 
-- **Instagram signature root-cause debugging** — Phase 7.2 will scope it; only implemented if <2h and zero-risk.
+- ~~**Instagram signature root-cause debugging**~~ — ✅ **RESOLVED** in `0e8303e`; see the entry above.
 - **Tests / CI** — repo has zero test files and only an `npm audit` workflow. Post-revenue.
 - **`sequences` table** — dead table, no code queries it. Ghost revival covers client #1's nurture need.
 - **Voice / missed-call handling** — no code exists. Out of the WhatsApp-first path.
@@ -208,9 +206,22 @@ rule was not to touch revenue-path code shipped in Part 1. Consolidating both be
 `deleteLeadCascade()` helper is the right cleanup once Part 1 is settled and smoke-tested.
 *Effort: 45 min, plus re-testing both paths.*
 
-**Instagram webhook root cause — scoped, not implemented.**
-Fails the Phase 7.2 "<2h and zero-risk" bar. Full reasoning and a 35-minute read-only diagnostic
-sequence are in `docs/META_REVIEW.md` §9. Do the measurement before writing any code.
+**Instagram webhook root cause — ✅ RESOLVED (commit `0e8303e`).**
+Closed on evidence, not guesswork. Production `webhook_events` showed **69 meta_instagram
+deliveries, every one `verified=false`, and zero `verified=true` ever** — proving the signature had
+never once passed, which is structural rather than intermittent and matched the diagnosed
+credential-resolution inversion.
+
+Fixed by `lib/meta-secrets.ts`: the webhook now verifies against **every** app secret the
+deployment holds (env, `platform_settings`, and each active `meta_byo` org), constant-time per
+candidate, logging which **source** matched. Acceptance is not widened — a forger must still produce
+a valid HMAC under one of our real secrets — and the Phase 1 bypass hard-block is untouched. The
+GET handshake had the identical inversion and was fixed the same way. Rejected deliveries are
+logged again (fail-closed had been returning before the `webhook_events` insert, destroying the very
+observability this diagnosis used).
+
+**Residual, if it still 401s after a real delivery:** the subscription belongs to a Meta App whose
+secret we hold nowhere. That is configuration, not code — see `docs/META_REVIEW.md` §9.
 
 ---
 
