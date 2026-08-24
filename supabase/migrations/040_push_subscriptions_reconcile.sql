@@ -1,4 +1,4 @@
--- 038_push_subscriptions_reconcile.sql
+-- 040_push_subscriptions_reconcile.sql
 --
 -- user_push_subscriptions is declared TWICE, with different shapes:
 --   010_cockpit.sql    → UNIQUE (org_id, user_id, endpoint), no updated_at

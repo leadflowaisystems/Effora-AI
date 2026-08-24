@@ -1,4 +1,4 @@
--- 037_founder_account_correction.sql
+-- 039_founder_account_correction.sql
 --
 -- Migration 034 seeded founder_accounts with '0mnaarkar2673@gmail.com'
 -- (leading DIGIT ZERO, "2673"). The address actually used to log in to Effora

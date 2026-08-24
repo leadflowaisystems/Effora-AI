@@ -65,7 +65,7 @@ export async function requireFounder(): Promise<string | null> {
   } catch (err) {
     console.error(
       "[founder-guard] founder_accounts lookup threw (check SUPABASE_SERVICE_ROLE_KEY " +
-      "and that migration 034/037 has been applied):",
+      "and that migration 034/039 has been applied):",
       err,
     );
   }
