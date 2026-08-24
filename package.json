@@ -13,7 +13,9 @@
     "start": "next start",
     "lint": "next lint",
     "format": "prettier --write .",
-    "test:rls": "tsx scripts/test-rls.ts"
+    "test:rls": "tsx scripts/test-rls.ts",
+    "demo:seed": "tsx scripts/demo-seed.ts",
+    "demo:reset": "tsx scripts/demo-reset.ts"
   },
   "dependencies": {
     "@emoji-mart/data": "^1.2.1",
