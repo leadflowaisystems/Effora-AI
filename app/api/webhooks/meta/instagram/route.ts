@@ -17,14 +17,65 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { createHmac, timingSafeEqual } from "crypto";
 import { createServiceClient }      from "@/lib/supabase/server";
+import {
+  collectMetaAppSecrets,
+  verifyAgainstCandidates,
+  collectMetaVerifyTokens,
+  matchVerifyToken,
+} from "@/lib/meta-secrets";
 import { inngest }                  from "@/lib/inngest/client";
 import { getIgUserProfile }         from "@/lib/integrations/meta-instagram";
 import { decryptSecret }            from "@/lib/crypto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+/**
+ * Record a webhook delivery outcome — including REJECTED ones.
+ *
+ * Bounded on purpose: this is an unauthenticated code path, so it must not
+ * become a write amplifier. A row is only written when the request at least
+ * looks like Meta traffic (a signature header present AND a JSON body with an
+ * `object` field). Random internet noise gets a 401 with no database write.
+ * Only a small, fixed set of non-secret fields is stored — never the raw body.
+ */
+async function logWebhookEvent(
+  rawBody:  string,
+  sigHeader: string,
+  verified: boolean,
+  reason:   string,
+  orgId:    string | null = null,
+): Promise<void> {
+  try {
+    if (!sigHeader) return; // not plausibly Meta — do not write
+
+    let entryId: string | null = null;
+    let objectType: string | null = null;
+    try {
+      const parsed = JSON.parse(rawBody) as { object?: string; entry?: { id?: string }[] };
+      if (!parsed?.object) return; // not plausibly Meta — do not write
+      objectType = parsed.object;
+      entryId = parsed.entry?.[0]?.id ?? null;
+    } catch {
+      return; // unparseable — do not write
+    }
+
+    const svc = createServiceClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (svc as any).from("webhook_events").insert({
+      org_id:     orgId,
+      provider:   "meta_instagram",
+      event_type: verified ? "message" : "signature_rejected",
+      sender_id:  null,
+      payload:    { object: objectType, entry_id: entryId, body_len: rawBody.length, reason },
+      verified,
+      created_at: new Date().toISOString(),
+    });
+  } catch (e) {
+    console.error("[ig-webhook] webhook_events insert failed (non-fatal):", e);
+  }
+}
 
 // ── GET — Webhook verification ───────────────────────────────────────────────
 
@@ -34,15 +85,30 @@ export async function GET(req: NextRequest) {
   const token     = url.searchParams.get("hub.verify_token");
   const challenge = url.searchParams.get("hub.challenge");
 
-  const expectedToken = process.env.META_WEBHOOK_VERIFY_TOKEN;
+  // Same inversion as the POST path: this previously read ONLY
+  // process.env.META_WEBHOOK_VERIFY_TOKEN, while getMetaConfig() resolves the
+  // token from meta_byo → platform_settings → env. A deployment configured
+  // through /admin/platform-settings would pass POST but fail Meta's GET
+  // re-verification — and a failed re-verification is itself a reason Meta
+  // drops a subscription.
+  if (mode !== "subscribe" || !token) {
+    return new Response("Forbidden", { status: 403 });
+  }
 
-  if (mode === "subscribe" && token === expectedToken && expectedToken) {
-    console.log("[ig-webhook] ✓ verification accepted");
+  const tokenCandidates = await collectMetaVerifyTokens();
+  const matchedToken = matchVerifyToken(token, tokenCandidates);
+
+  if (matchedToken) {
+    console.log(`[ig-webhook] ✓ verification accepted source=${matchedToken.source}`);
     return new Response(challenge ?? "", {
       status: 200,
       headers: { "Content-Type": "text/plain" },
     });
   }
+
+  console.warn(
+    `[ig-webhook] ✗ verify_token mismatch — tried=${tokenCandidates.map((c) => c.source).join(",") || "none"}`,
+  );
   return new Response("Forbidden", { status: 403 });
 }
 
@@ -74,51 +140,34 @@ interface IgWebhookBody {
 }
 
 export async function POST(req: NextRequest) {
-  // ── 1. Resolve app secret for signature verification ──────────────────────
-  let appSecret = process.env.META_APP_SECRET;
-  let secretSource = "env-var";
+  const rawBody = await req.text();
+  const sig     = req.headers.get("x-hub-signature-256") ?? "";
 
-  if (!appSecret) {
-    secretSource = "db";
-    try {
-      const svc = createServiceClient();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: ps } = await (svc as any)
-        .from("platform_settings")
-        .select("meta_app_secret_encrypted")
-        .eq("id", 1)
-        .maybeSingle();
-      if (ps?.meta_app_secret_encrypted) {
-        const { isEncrypted, decryptSecret: dec } = await import("@/lib/crypto");
-        appSecret = isEncrypted(ps.meta_app_secret_encrypted as string)
-          ? dec(ps.meta_app_secret_encrypted as string)
-          : (ps.meta_app_secret_encrypted as string);
-      }
-    } catch (e) {
-      console.error("[ig-webhook] failed to load platform app secret:", e);
-    }
-  }
+  // ── 1. Gather every app secret this deployment knows about ────────────────
+  // Previously this read ONLY process.env.META_APP_SECRET (falling back to
+  // platform_settings when env was unset) and never consulted meta_byo — the
+  // inverse of the order OAuth uses to mint the token that CREATES the
+  // subscription. Production evidence: 69 meta_instagram webhook_events, every
+  // one verified=false, zero verified=true ever recorded. See lib/meta-secrets.ts.
+  const candidates = await collectMetaAppSecrets();
 
-  if (!appSecret) {
-    // No secret means no request can ever be authenticated. Fail closed.
-    console.error("[ig-webhook] META_APP_SECRET not configured — cannot verify signature. Rejecting.");
+  if (candidates.length === 0) {
+    console.error("[ig-webhook] no Meta app secret configured anywhere — cannot verify signature. Rejecting.");
+    void logWebhookEvent(rawBody, sig, false, "no_candidates");
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // ── 2. Signature verification ─────────────────────────────────────────────
-  const rawBody = await req.text();
-  const sig     = req.headers.get("x-hub-signature-256") ?? "";
-  const expected = "sha256=" + createHmac("sha256", appSecret).update(rawBody).digest("hex");
-
-  // Constant-time comparison. timingSafeEqual throws on length mismatch, so
-  // guard on length first — an unequal length is already a mismatch.
-  const sigBuf = Buffer.from(sig);
-  const expBuf = Buffer.from(expected);
-  const signatureValid =
-    sigBuf.length === expBuf.length && timingSafeEqual(sigBuf, expBuf);
+  // ── 2. Constant-time verification against each candidate ──────────────────
+  // This does NOT widen acceptance: a forger must still produce a valid
+  // HMAC-SHA256 of this exact body under one of OUR real secrets.
+  const { matched, tried } = verifyAgainstCandidates(rawBody, sig, candidates);
+  const signatureValid = matched !== null;
+  const secretSource   = matched?.source ?? "none";
 
   console.log(
-    `[ig-webhook] sig-check source=${secretSource}` +
+    `[ig-webhook] sig-check matched_source=${secretSource}` +
+    ` matched_app_id=${matched?.appId ?? "unknown"}` +
+    ` candidates_tried=${tried.join(",")}` +
     ` body_len=${rawBody.length}` +
     ` sig_match=${signatureValid}`,
   );
@@ -148,9 +197,15 @@ export async function POST(req: NextRequest) {
   const bypassSignature = bypassRequested && !IS_PROD;
 
   if (!signatureValid) {
-    console.error("[ig-webhook] SIGNATURE FAILED — received signature does not match expected");
+    console.error(
+      `[ig-webhook] SIGNATURE FAILED — no candidate matched. tried=${tried.join(",")}`,
+    );
     if (!bypassSignature) {
       console.warn("[ig-webhook] ✗ signature mismatch — rejecting with 401");
+      // Record the rejection. Fail-closed previously returned BEFORE the
+      // webhook_events insert, which destroyed exactly the observability this
+      // whole diagnosis relied on (69 rows, all verified=false). Fire-and-forget.
+      void logWebhookEvent(rawBody, sig, false, `no_match:${tried.join("|")}`);
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
     console.warn("[ig-webhook] NON-PRODUCTION DEBUG BYPASS ACTIVE — continuing despite signature failure");
