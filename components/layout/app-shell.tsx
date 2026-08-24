@@ -11,7 +11,6 @@ import {
   ChevronLeft,
   ChevronDown,
   Menu,
-  Bell,
   Zap,
   Activity,
   GitBranch,
@@ -31,7 +30,6 @@ import { useRouter, usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import {
   DropdownMenu,
@@ -410,12 +408,13 @@ export function AppShell({
             />
           </div>
 
-          {/* Right: bell + user menu */}
+          {/* Right: user menu */}
+          {/* The notification bell is intentionally not rendered. It had no
+              handler, no dropdown and no unread badge — a dead control that
+              reads as broken to a client. Alerts are delivered via web push
+              (lib/notify.ts). Restore this once there is a real in-app
+              notification centre to open. */}
           <div className="flex items-center gap-1 shrink-0">
-            <Button variant="ghost" size="icon" aria-label="Notifications">
-              <Bell className="h-4 w-4 text-[var(--text-3)]" />
-            </Button>
-
             <UserMenu
               initials={initials}
               email={user?.email}

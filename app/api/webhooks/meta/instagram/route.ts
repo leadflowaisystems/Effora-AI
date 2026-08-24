@@ -307,6 +307,10 @@ export async function POST(req: NextRequest) {
 
       // ── 6. Upsert lead ──────────────────────────────────────────────────
       let leadId: string;
+      // Whether this enquiry is from someone we've never spoken to before.
+      // Forwarded to Inngest so the owner gets a "new enquiry" notification.
+      let isNewLead = false;
+      let leadDisplayName: string | null = resolvedName;
       try {
         const { data: existingLead } = await svc
           .from("leads")
@@ -319,6 +323,7 @@ export async function POST(req: NextRequest) {
         if (existingLead) {
           leadId = (existingLead as { id: string; name?: string | null }).id;
           const currentName = (existingLead as { id: string; name?: string | null }).name ?? "";
+          leadDisplayName = resolvedName ?? (currentName || null);
           // Re-enrich if: (a) name is blank/numeric IGSID, OR (b) name is a stored
           // "IG …" fallback from a previous failed lookup (stored directly), OR
           // (c) name is "@IG …" — an artifact of a prior webhook bug where the
@@ -341,7 +346,9 @@ export async function POST(req: NextRequest) {
         } else {
           // For new leads use resolvedName if available, otherwise store the IGSID as the name
           // so there's always a non-null name. The UI has its own display fallback.
+          isNewLead = true;
           const nameForInsert = resolvedName ?? senderIgsid;
+          leadDisplayName = nameForInsert;
           const { data: newLead, error: le } = await svc.from("leads").insert({
             org_id:       orgId,
             channel:      "instagram",
@@ -447,7 +454,7 @@ export async function POST(req: NextRequest) {
       try {
         await inngest.send({
           name: "dm.received",
-          data: { orgId, leadId, conversationId, messageId },
+          data: { orgId, leadId, conversationId, messageId, isNewLead, leadName: leadDisplayName },
         });
         console.log(
           `[ig-webhook] workflow triggered event=dm.received lead=${leadId} conv=${conversationId} msg=${messageId}` +
