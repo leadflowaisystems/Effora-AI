@@ -28,10 +28,20 @@ async function assertMember(orgId: string) {
 }
 
 export async function POST(req: NextRequest, { params }: Params) {
-  const user = await assertMember(params.orgId);
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // ── Latency instrumentation ───────────────────────────────────────────────
+  // One structured line per hop so the 5s can be attributed to a specific
+  // network round-trip rather than guessed at. Search Vercel logs for [send-timing].
+  const t0 = Date.now();
+  const timings: Record<string, number> = {};
+  let last = t0;
+  const mark = (label: string) => {
+    const nowMs = Date.now();
+    timings[label] = nowMs - last;
+    last = nowMs;
+  };
 
   const body = await req.json().catch(() => ({})) as { content?: string; attachment_url?: string };
+  mark("parse_body");
 
   if (!body.content?.trim() && !body.attachment_url?.trim()) {
     return NextResponse.json({ error: "content or attachment_url is required" }, { status: 400 });
@@ -42,12 +52,21 @@ export async function POST(req: NextRequest, { params }: Params) {
   const now     = new Date().toISOString();
   const svc     = createServiceClient();
 
-  // Load conversation to determine channel + lead's external_id for real delivery
-  const { data: conv } = await svc
-    .from("conversations")
-    .select("channel_provider, lead_id")
-    .eq("id", params.convId)
-    .single();
+  // Auth check and conversation load are independent — run them concurrently
+  // instead of serially. Previously this was ~3 sequential round-trips
+  // (getUser -> org_members -> conversations) before any send work started.
+  const [user, convRes] = await Promise.all([
+    assertMember(params.orgId),
+    svc.from("conversations")
+       .select("channel_provider, lead_id")
+       .eq("id", params.convId)
+       .single(),
+  ]);
+  mark("auth_and_conversation");
+
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const conv = convRes.data;
 
   let providerMessageId: string | null = null;
   const deliveryMeta: Record<string, string> = {};
@@ -67,6 +86,8 @@ export async function POST(req: NextRequest, { params }: Params) {
       .eq("id", (conv as { lead_id: string }).lead_id)
       .single();
 
+    mark("lead_lookup");
+
     const rawIgUserId = ((lead as { external_id: string } | null)?.external_id ?? "")
       .replace(/^ig_/, "");
 
@@ -85,6 +106,7 @@ export async function POST(req: NextRequest, { params }: Params) {
         // org member's manual reply (assertMember above), never AI/automation.
         const result = await sendInstagramMessage(params.orgId, rawIgUserId, content, attachmentUrl, true);
         providerMessageId = result.provider_message_id;
+        mark("graph_send");
         console.log(`[ig-send] graph response ok provider_message_id=${providerMessageId}`);
       } catch (sendErr) {
         const reason = sendErr instanceof Error ? sendErr.message : String(sendErr);
@@ -114,6 +136,8 @@ export async function POST(req: NextRequest, { params }: Params) {
       .eq("id", (conv as { lead_id: string }).lead_id)
       .single();
 
+    mark("lead_lookup");
+
     const rawExtId = ((lead as { external_id: string } | null)?.external_id ?? "")
       .replace(/^wa_/, "");
 
@@ -129,6 +153,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       try {
         const result = await sendWhatsAppMessage(params.orgId, rawExtId, content);
         providerMessageId = result.provider_message_id;
+        mark("graph_send");
         console.log(`[wa-send] delivery ok provider_message_id=${providerMessageId}`);
       } catch (sendErr) {
         const reason = sendErr instanceof Error ? sendErr.message : String(sendErr);
@@ -165,13 +190,32 @@ export async function POST(req: NextRequest, { params }: Params) {
     },
   }).select("id, content, sent_at").single();
 
+  mark("message_insert");
+
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  await svc.from("conversations").update({
+  // Fire-and-forget: this only drives the sidebar preview, which Realtime picks
+  // up independently. Awaiting it added a round-trip to every send for no
+  // benefit the sender can perceive.
+  void svc.from("conversations").update({
     last_message_at:      now,
     last_message_preview: (content || (attachmentUrl ? "📷 Image" : "")).slice(0, 80),
-  }).eq("id", params.convId);
+  }).eq("id", params.convId)
+    .then(({ error: upErr }) => {
+      if (upErr) console.error("[reply] conversation preview update failed (non-fatal):", upErr.message);
+    });
+
+  const total = Date.now() - t0;
+  console.log(
+    `[send-timing] total=${total}ms channel=${channelProvider} ` +
+    Object.entries(timings).map(([k, v]) => `${k}=${v}ms`).join(" "),
+  );
 
   const deliveryFailed = !!deliveryMeta.delivery_error;
-  return NextResponse.json({ message, delivery_failed: deliveryFailed, delivery_error: deliveryMeta.delivery_error ?? null });
+  return NextResponse.json({
+    message,
+    delivery_failed: deliveryFailed,
+    delivery_error:  deliveryMeta.delivery_error ?? null,
+    timing_ms:       total,
+  });
 }

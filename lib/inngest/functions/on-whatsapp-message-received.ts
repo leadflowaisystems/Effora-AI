@@ -100,12 +100,21 @@ export const onWhatsAppMessageReceived = inngest.createFunction(
       const svc = createServiceClient();
       const now = new Date().toISOString();
 
+      // ── Step timing ──────────────────────────────────────────────────────
+      // Emitted as [ai-timing] so p50 per stage can be read straight from
+      // Vercel logs without extra infrastructure.
+      const tStart = Date.now();
+      let tMark = tStart;
+      const t: Record<string, number> = {};
+      const lap = (label: string) => { const n = Date.now(); t[label] = n - tMark; tMark = n; };
+
       // 2a. Qualify
       const qualification = await qualifyLead({
         messages:     ctx.messages,
         voiceProfile: ctx.voiceProfile,
         orgId,
       });
+      lap("qualify");
 
       // 2b. Persist score + stage immediately after qualify
       await svc.from("leads").update({
@@ -117,6 +126,10 @@ export const onWhatsAppMessageReceived = inngest.createFunction(
 
       // 2c. Draft + send only for warm / hot leads
       if (qualification.stage !== "hot" && qualification.stage !== "warm") {
+        console.log(
+          `[ai-timing] wa cold-exit total=${Date.now() - tStart}ms ` +
+          Object.entries(t).map(([k, v]) => `${k}=${v}ms`).join(" "),
+        );
         return { score: qualification.score, stage: qualification.stage, drafted: false };
       }
 
@@ -134,6 +147,8 @@ export const onWhatsAppMessageReceived = inngest.createFunction(
         (convRow as { auto_reply_enabled: boolean } | null)?.auto_reply_enabled
         ?? ctx.org?.auto_send_replies;
 
+      lap("persist_and_conv_lookup");
+
       // 2e. Draft
       const draft = await draftReply({
         messages:     ctx.messages,
@@ -143,6 +158,7 @@ export const onWhatsAppMessageReceived = inngest.createFunction(
         orgId,
         calLink:      calLinkForDraft,
       });
+      lap("draft");
 
       if (autoReply) {
         // deliverOutboundMessage sends via WA Cloud API AND stores message to DB atomically
@@ -172,6 +188,18 @@ export const onWhatsAppMessageReceived = inngest.createFunction(
           status:          "pending",
         });
       }
+
+      lap("deliver_and_persist");
+
+      // Webhook-to-here latency, using the Inngest event timestamp as t0.
+      const eventTs = typeof event.ts === "number" ? event.ts : null;
+      const e2e = eventTs ? Date.now() - eventTs : null;
+      console.log(
+        `[ai-timing] wa total=${Date.now() - tStart}ms ` +
+        (e2e !== null ? `e2e_from_event=${e2e}ms ` : "") +
+        Object.entries(t).map(([k, v]) => `${k}=${v}ms`).join(" ") +
+        ` stage=${qualification.stage} sent=${autoReply}`,
+      );
 
       return {
         score:   qualification.score,

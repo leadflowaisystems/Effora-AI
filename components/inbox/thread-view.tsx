@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ArrowLeft, Instagram, Phone, MessageSquare } from "lucide-react";
+import { ArrowLeft, Instagram, Phone, MessageSquare, Loader2, AlertCircle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn }        from "@/lib/utils";
 import { Badge }     from "@/components/ui/badge";
@@ -54,7 +54,7 @@ const STAGE_BADGE: Record<string, Parameters<typeof Badge>[0]["variant"]> = {
   hot: "hot", warm: "warm", cold: "cold",
 };
 
-function MessageBubble({ msg }: { msg: InboxMessage }) {
+function MessageBubble({ msg, onRetry }: { msg: InboxMessage; onRetry?: (m: InboxMessage) => void }) {
   const isOut = msg.direction === "outbound";
   const isAi  = msg.metadata?.source === "ai";
 
@@ -97,11 +97,37 @@ function MessageBubble({ msg }: { msg: InboxMessage }) {
           <p className="whitespace-pre-wrap break-words">{linkify(msg.content)}</p>
         )}
         <p className={cn(
-          "mt-1 text-[10px]",
-          isOut ? "text-[var(--brand)]/60 text-right" : "text-[var(--text-3)]"
+          "mt-1 text-[10px] flex items-center gap-1",
+          isOut ? "text-[var(--brand)]/60 justify-end" : "text-[var(--text-3)]"
         )}>
-          {timeAgo(msg.sent_at)}
+          {msg.sendState === "sending" ? (
+            <>
+              <Loader2 className="h-2.5 w-2.5 animate-spin" />
+              Sending…
+            </>
+          ) : msg.sendState === "failed" ? (
+            <>
+              <AlertCircle className="h-2.5 w-2.5 text-red-400" />
+              <span className="text-red-400">Not sent</span>
+              {onRetry && (
+                <button
+                  type="button"
+                  onClick={() => onRetry(msg)}
+                  className="ml-1 underline underline-offset-2 text-red-400 hover:text-red-300 transition-colors"
+                >
+                  Retry
+                </button>
+              )}
+            </>
+          ) : (
+            timeAgo(msg.sent_at)
+          )}
         </p>
+        {msg.sendState === "failed" && msg.sendError && (
+          <p className="mt-0.5 text-[10px] text-red-400/70 text-right max-w-[240px] break-words">
+            {msg.sendError}
+          </p>
+        )}
       </div>
     </motion.div>
   );
@@ -110,6 +136,8 @@ function MessageBubble({ msg }: { msg: InboxMessage }) {
 export function ThreadView({ orgId, orgSlug, convId, lead, channelProvider, initialMessages, initialDraft }: Props) {
   const [messages, setMessages] = React.useState<InboxMessage[]>(initialMessages);
   const [draft,    setDraft]    = React.useState<InboxDraft | null>(initialDraft);
+  // Set when a failed send is retried — refills the composer with that text.
+  const [retryText, setRetryText] = React.useState<string | null>(null);
   const bottomRef = React.useRef<HTMLDivElement>(null);
   const mountedAt = React.useRef<number>(performance.now());
 
@@ -137,6 +165,27 @@ export function ThreadView({ orgId, orgSlug, convId, lead, channelProvider, init
           };
           setMessages((prev) => {
             if (prev.some((m) => m.id === newMsg.id)) return prev; // dedup with optimistic add
+            // Realtime can beat the HTTP response. If a still-pending optimistic
+            // bubble matches this row, upgrade it in place rather than appending
+            // a second copy of the same message.
+            const pendingIdx = prev.findIndex(
+              (m) =>
+                m.sendState === "sending" &&
+                m.direction === "outbound" &&
+                newMsg.direction === "outbound" &&
+                m.content === newMsg.content,
+            );
+            if (pendingIdx !== -1) {
+              const upgraded = [...prev];
+              upgraded[pendingIdx] = {
+                ...upgraded[pendingIdx],
+                id:        newMsg.id,
+                sent_at:   newMsg.sent_at,
+                metadata:  newMsg.metadata ?? {},
+                sendState: undefined,
+              };
+              return upgraded;
+            }
             const updated = [...prev, {
               id:        newMsg.id,
               direction: newMsg.direction as "inbound" | "outbound",
@@ -218,6 +267,31 @@ export function ThreadView({ orgId, orgSlug, convId, lead, channelProvider, init
     // No router.refresh() — realtime conversation UPDATE handles sidebar preview.
   }
 
+  /**
+   * Reconcile an optimistic bubble once the server responds.
+   * On success the temp id is swapped for the real one, which also lets the
+   * realtime dedup-by-id check suppress the duplicate INSERT event.
+   */
+  function handleSentResolved(
+    tempId: string,
+    patch: Partial<InboxMessage> & { id?: string },
+  ) {
+    setMessages((prev) => {
+      // If realtime already delivered the real row, drop the temp instead of
+      // renaming it — otherwise the same message would appear twice.
+      if (patch.id && prev.some((m) => m.id === patch.id)) {
+        return prev.filter((m) => m.id !== tempId);
+      }
+      return prev.map((m) => (m.id === tempId ? { ...m, ...patch } : m));
+    });
+  }
+
+  /** Re-send a failed message: drop the failed bubble, refill the composer. */
+  function handleRetry(msg: InboxMessage) {
+    setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+    setRetryText(msg.content);
+  }
+
   const stage = lead?.stage ?? "cold";
   const score = lead?.score ?? 0;
 
@@ -271,7 +345,7 @@ export function ThreadView({ orgId, orgSlug, convId, lead, channelProvider, init
 
         <AnimatePresence initial={false}>
           {messages.map((msg) => (
-            <MessageBubble key={msg.id} msg={msg} />
+            <MessageBubble key={msg.id} msg={msg} onRetry={handleRetry} />
           ))}
         </AnimatePresence>
 
@@ -291,7 +365,15 @@ export function ThreadView({ orgId, orgSlug, convId, lead, channelProvider, init
       </div>
 
       {/* ── Compose bar ── */}
-      <ComposeBar orgId={orgId} convId={convId} onSent={handleSent} channelProvider={channelProvider} />
+      <ComposeBar
+        orgId={orgId}
+        convId={convId}
+        onSent={handleSent}
+        onSentResolved={handleSentResolved}
+        channelProvider={channelProvider}
+        refillText={retryText}
+        onRefillConsumed={() => setRetryText(null)}
+      />
     </div>
   );
 }

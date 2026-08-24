@@ -146,6 +146,49 @@ accurate*, since the underlying `dms_received` metric counts both WhatsApp and I
 
 ---
 
+## AI auto-reply loop latency — options if measurement shows >8s
+
+**Status: instrumented, not yet measured.** `[ai-timing]` lines are now emitted from
+`lib/inngest/functions/on-whatsapp-message-received.ts` with per-stage deltas plus
+`e2e_from_event` (Inngest event timestamp → send complete). Real p50 needs production
+traffic; nothing here should be built until those numbers exist.
+
+**Code-derived estimate (NOT a measurement):** WhatsApp inbound → delivered reply is likely
+**~3–6s p50**, dominated by the 70B draft call. Rough per-stage shape:
+
+| Stage | Est. | Source |
+|---|---|---|
+| Webhook pre-200 (no Graph call on WA inbound) | 0.3–0.6s | ~4 sequential Supabase round-trips |
+| Inngest dispatch → function start | 0.1–0.5s | Inngest cloud round-trip |
+| `load-context` | 0.2–0.4s | 4 parallel reads + Cal.com link |
+| `qualify` (llama-3.1-8b-instant, 120 tok, temp 0) | 0.3–0.8s | `lib/ai.ts` |
+| `draft` (llama-3.3-70b-versatile, 320 tok, temp 0.72) | 1–3s | `lib/ai.ts` — **dominant cost** |
+| WA Graph send + DB writes | 0.4–1.0s | `deliverOutboundMessage` |
+
+The WhatsApp function already merges qualify+draft+send into ONE Inngest step, so it avoids
+3 step-boundary round-trips that `on-dm-received` still pays. That was a deliberate earlier
+optimisation and should not be undone.
+
+**Options to consider ONLY IF measured p50 > 8s** (none built, no new infrastructure required
+for 1–4):
+
+1. **Stream the draft into the inbox.** `draftReplyStream()` already exists at `lib/ai.ts:366`
+   and returns a `ReadableStream`, but nothing in the UI consumes it. The owner would see the
+   reply forming instead of waiting. Does not reduce delivery time, only perceived time.
+2. **Send the qualification result before the draft finishes.** Update the lead's stage and
+   fire the hot-lead push as soon as `qualify` returns, so the owner is alerted ~1–3s earlier
+   than the reply. (Partly done already — the hot-lead notification is its own step.)
+3. **Shorten the draft.** `max_tokens: 320` at temp 0.72 is the single largest lever; 200 tokens
+   would cut generation time roughly proportionally. Cheap to try, costs reply richness.
+4. **Skip the 70B for warm leads.** Use the 8B model for warm and reserve 70B for hot only.
+   Roughly a 3–5x speedup on the majority path, at some quality cost.
+5. **A faster model** (e.g. a smaller Llama on Groq). Requires re-tuning prompts.
+
+Explicitly NOT recommended: adding a queue, a warm-pool, or a second provider — all are new
+infrastructure and out of scope.
+
+---
+
 ## Phase 4 requirement (not deferred — must be built)
 
 `scripts/demo-seed.ts` must also configure the demo org's **Razorpay webhook secret (test mode)**,
