@@ -9,6 +9,7 @@ import { Badge }     from "@/components/ui/badge";
 import { Skeleton }  from "@/components/ui/skeleton";
 import { AiDraftCard } from "./ai-draft-card";
 import { ComposeBar  } from "./compose-bar";
+import { ThreadActionsMenu } from "./thread-actions-menu";
 import { linkify }     from "./linkify";
 import { timeAgo }   from "@/lib/time";
 import { createClient } from "@/lib/supabase/client";
@@ -333,6 +334,14 @@ export function ThreadView({ orgId, orgSlug, convId, lead, channelProvider, init
             {lead?.external_id ?? ""}{score > 0 ? ` · ${score}/100` : ""}
           </p>
         </div>
+
+        <ThreadActionsMenu
+          orgId={orgId}
+          orgSlug={orgSlug}
+          convId={convId}
+          leadId={lead?.id ?? null}
+          leadName={lead?.name ?? null}
+        />
       </div>
 
       {/* ── Messages ── */}

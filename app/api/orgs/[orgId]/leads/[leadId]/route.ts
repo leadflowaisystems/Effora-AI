@@ -89,19 +89,126 @@ export async function PUT(req: NextRequest, { params }: Params) {
   return NextResponse.json({ lead: data });
 }
 
+/**
+ * DELETE /api/orgs/[orgId]/leads/[leadId]
+ *
+ * Full lead removal, cascaded. Soft-delete per table — see the one-line
+ * justification on each step below.
+ *
+ * Order matters: active sequences are stopped FIRST so no automated message can
+ * escape while the rest of the cascade runs.
+ *
+ * Tenant safety: assertMember() resolves the caller's session through the
+ * RLS-scoped anon client and requires an org_members row for THIS orgId, and
+ * every mutation below is additionally constrained by .eq("org_id", orgId).
+ * A member of org A therefore cannot reach org B's lead: assertMember fails
+ * first, and even with a forged orgId the row filter matches nothing.
+ */
 export async function DELETE(_req: NextRequest, { params }: Params) {
   const user = await assertMember(params.orgId);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const svc = createServiceClient() as any;
+  const now = new Date().toISOString();
+
+  // Confirm the lead actually belongs to this org before touching anything.
+  const { data: lead } = await svc
+    .from("leads")
+    .select("id, name")
+    .eq("id", params.leadId)
+    .eq("org_id", params.orgId)
+    .maybeSingle();
+
+  if (!lead) return NextResponse.json({ error: "Lead not found" }, { status: 404 });
+
+  const removed = { sequences: 0, conversations: 0, bookings: 0 };
+
+  // ── 1. Stop active sequences FIRST ────────────────────────────────────────
+  // HARD-STOP, not delete: sequence_runs is operational state, and "stopped" is
+  // what the running Inngest function polls for. See on-ghost-revival.ts:89
+  // isStopped(), which reads this row before every nudge and self-terminates.
+  const { data: stopped } = await svc.from("sequence_runs")
+    .update({ status: "stopped", stopped_at: now, updated_at: now })
+    .eq("org_id", params.orgId)
+    .eq("lead_id", params.leadId)
+    .eq("status", "active")
+    .select("id");
+  removed.sequences = (stopped ?? []).length;
+
+  // ── 2. Conversations — SOFT ───────────────────────────────────────────────
+  // Soft: keeps the thread recoverable and lets messages inherit visibility
+  // from their parent rather than needing their own flag.
+  const { data: convs } = await svc.from("conversations")
+    .update({ deleted_at: now })
+    .eq("org_id", params.orgId)
+    .eq("lead_id", params.leadId)
+    .is("deleted_at", null)
+    .select("id");
+  removed.conversations = (convs ?? []).length;
+
+  // ── 3. Bookings — SOFT ────────────────────────────────────────────────────
+  // Soft: a booking is a scheduling record that reporting still counts.
+  const { data: bookings } = await svc.from("bookings")
+    .update({ deleted_at: now })
+    .eq("org_id", params.orgId)
+    .eq("lead_id", params.leadId)
+    .is("deleted_at", null)
+    .select("id");
+  removed.bookings = (bookings ?? []).length;
+
+  // ── 4. Payments — DELIBERATELY UNTOUCHED ──────────────────────────────────
+  // See the block comment below the handler for why.
+
+  // ── 5. Lead — SOFT + PII scrub ────────────────────────────────────────────
+  // Soft: payments.lead_id is NOT NULL ... ON DELETE CASCADE, so a hard delete
+  // would destroy financial records. The row survives; the identity does not.
+  // Scrubbing external_id also frees the (org_id, channel, external_id) unique
+  // slot, so if this number ever messages again it becomes a brand-new lead
+  // instead of resurrecting this one.
   const { error } = await svc.from("leads")
-    .update({ deleted_at: new Date().toISOString() })
-    .eq("id", params.leadId).eq("org_id", params.orgId);
+    .update({
+      deleted_at:       now,
+      updated_at:       now,
+      name:             "Deleted lead",
+      phone:            null,
+      instagram_handle: null,
+      external_id:      `deleted_${params.leadId}`,
+    })
+    .eq("id", params.leadId)
+    .eq("org_id", params.orgId);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ ok: true });
+
+  console.log(
+    `[lead-delete] org=${params.orgId} lead=${params.leadId} by=${user.id} ` +
+    `sequences_stopped=${removed.sequences} conversations=${removed.conversations} bookings=${removed.bookings}`,
+  );
+
+  return NextResponse.json({ ok: true, removed });
 }
+
+/**
+ * WHY PAYMENTS ARE NOT DELETED OR DETACHED
+ *
+ * payments.lead_id is `NOT NULL REFERENCES leads(id) ON DELETE CASCADE`, so a
+ * hard delete of a lead would silently destroy that lead's entire payment
+ * history — amounts, Razorpay order and payment ids, and timestamps. For an
+ * Indian coaching institute those rows are financial records: they reconcile
+ * against Razorpay settlements, feed revenue reporting, and may be needed for
+ * tax and audit purposes long after a student's personal data should be gone.
+ * Detaching them by nulling lead_id is not possible either, because the column
+ * is NOT NULL, and doing so would orphan the revenue from any customer context.
+ *
+ * The pattern used here separates the two concerns instead of trading one off
+ * against the other: the lead ROW is retained so referential integrity and
+ * financial reporting stay intact, while the lead's IDENTITY is erased in place
+ * — name, phone, Instagram handle and the channel external_id (which embeds the
+ * phone number) are all overwritten. Payment rows keep their amounts and
+ * gateway references but no longer resolve to a named person. This is the
+ * behaviour DPDP-style "erasure with a lawful-retention carve-out" expects, and
+ * it is why deleting a lead never changes a single revenue figure.
+ */
 
 // Suppress unused import warning — kept for future plan-change hooks
 void invalidateAccessCache;

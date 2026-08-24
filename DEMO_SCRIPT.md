@@ -83,6 +83,8 @@ that the prospect's inbound message opens.
 - [ ] Phone notifications ON and screen unlocked (for the owner-alert beat)
 - [ ] Confirm the demo org's WhatsApp shows "connected" on the dashboard panel
 - [ ] Silence other notifications / close unrelated tabs
+- [ ] If you archived or deleted anything during the last demo, `demo-reset.ts` already
+      restored it — no extra step needed (see "Removing and deleting during a demo" below)
 
 ---
 
@@ -157,6 +159,32 @@ paid: *"Here's what it looks like once a fee lands."* The story is identical and
 broken.
 **Prevention:** step 2 above, plus check Razorpay Dashboard → Webhooks → your webhook → recent
 deliveries show 200s, not 401s.
+
+---
+
+## REMOVING AND DELETING DURING A DEMO
+
+Both actions live in the **⋯ menu** in the top-right of an inbox thread. They are worth
+showing — prospects ask "what if I get spam?" almost every time.
+
+**Remove from inbox** (one confirm) — archives just that conversation. Say: *"The lead stays in
+the CRM with their history. And if they message again, the thread comes straight back."* You can
+demonstrate the reopen live by messaging the number again from your phone.
+
+**Delete lead** (two-step confirm, requires typing DELETE) — removes the person entirely.
+Say: *"This stops any follow-up sequence immediately, so a deleted person can never get an
+automated message. Payments stay in your accounts — they just stop showing a name."*
+
+**Interaction with reset:** `demo-reset.ts` hard-deletes every row for the demo org by `org_id`,
+so both archived conversations and soft-deleted leads are fully cleared and re-seeded. Nothing
+extra to clean up. Because the wipe is scoped to the demo org and every seeded row carries
+`metadata.demo = true`, it can never touch a real client's data.
+
+**One caveat if you demo Delete lead on a number you also use for the live demo:** deleting
+scrubs that lead's `external_id`, so the next message from that number creates a *brand-new*
+lead with no history. That is correct behaviour, but it means you lose the seeded conversation
+for that contact until you reset. Prefer deleting one of the low-intent cold leads (Neha Patil
+or Aditya Joshi) rather than Priya or Rahul.
 
 ---
 
