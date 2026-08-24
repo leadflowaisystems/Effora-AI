@@ -7,6 +7,11 @@ export const metadata: Metadata = {
 };
 
 const UPDATED = "1 June 2025";
+// ⚠️ FOUNDER REVIEW REQUIRED before Meta App Review submission.
+// Meta reviewers and enterprise buyers flag a free Gmail address on a public
+// privacy policy as a sign of an unverified business. Replace with a
+// domain-matched mailbox (e.g. privacy@effora.co.in) and make sure it is
+// monitored — Meta may email it to verify the deletion process.
 const CONTACT = "leadflowai.systems@gmail.com";
 
 export default function PrivacyPage() {
@@ -74,6 +79,10 @@ export default function PrivacyPage() {
                 ["Brevo", "Transactional email", "Recipient email, name"],
                 ["Cal.com", "Calendar booking", "Meeting times, attendee name"],
                 ["Upstash", "Rate limiting cache", "Request identifiers only"],
+                // Inngest was missing from this table despite processing every
+                // event payload. Meta App Review checks that the disclosed
+                // processor list matches reality.
+                ["Inngest", "Background job execution", "Event metadata (org, lead, conversation and message IDs)"],
               ].map(([s, p, d]) => (
                 <tr key={s}>
                   <td className="py-2 pr-4 font-medium">{s}</td>
@@ -107,7 +116,9 @@ export default function PrivacyPage() {
           <p>We use strictly necessary cookies (session tokens for authentication) and basic analytics cookies. No advertising or tracking cookies are used. You can disable cookies in your browser but this will prevent login from working.</p>
         </Section>
         <Section title="9. Security">
-          <p>We implement industry-standard security: TLS 1.3 in transit, AES-256-GCM encryption for sensitive credentials at rest, access controls, and regular security audits. See our <Link href="/security" className="text-[var(--brand)] underline">Security page</Link> for details.</p>
+          {/* The former link pointed at /security, which does not exist — a dead
+              link on a public policy page is a Meta App Review flag. */}
+          <p>We implement industry-standard security: TLS 1.3 in transit, AES-256-GCM encryption for sensitive credentials at rest, webhook signature verification on every inbound integration, and role-scoped database access with row-level security enforcing tenant isolation.</p>
         </Section>
         <Section title="10. Children">
           <p>Effora is not directed at children under 13. We do not knowingly collect data from children. If you believe a child has registered, contact us immediately.</p>

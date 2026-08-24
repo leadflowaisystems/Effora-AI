@@ -189,6 +189,31 @@ infrastructure and out of scope.
 
 ---
 
+## Deferred during Part 2 (Meta Review Pack)
+
+**WhatsApp Embedded Signup — explicitly NOT built (Phase 8.2).**
+Embedded Signup lets a client connect their own WABA through an in-app Meta popup instead of the
+current flow, where the founder pastes the WABA ID, phone number ID and access token into
+Settings → WhatsApp on the client's behalf. It is the right answer for self-serve, and the wrong
+answer for a done-for-you service onboarding one client at a time: it requires Tech Provider
+status, a separate review track, and significant OAuth work — all to remove a step the founder is
+performing deliberately. Revisit only when onboarding volume makes manual connection the
+bottleneck. The review submission describes the manual flow honestly rather than implying
+Embedded Signup exists. *Effort if ever needed: 2–3 days plus a separate Meta review.*
+
+**Deletion-cascade logic is duplicated.**
+`lib/inngest/functions/on-meta-data-deletion.ts` mirrors the cascade in
+`app/api/orgs/[orgId]/leads/[leadId]/route.ts` rather than importing it, deliberately — the standing
+rule was not to touch revenue-path code shipped in Part 1. Consolidating both behind a shared
+`deleteLeadCascade()` helper is the right cleanup once Part 1 is settled and smoke-tested.
+*Effort: 45 min, plus re-testing both paths.*
+
+**Instagram webhook root cause — scoped, not implemented.**
+Fails the Phase 7.2 "<2h and zero-risk" bar. Full reasoning and a 35-minute read-only diagnostic
+sequence are in `docs/META_REVIEW.md` §9. Do the measurement before writing any code.
+
+---
+
 ## Phase 4 requirement (not deferred — must be built)
 
 `scripts/demo-seed.ts` must also configure the demo org's **Razorpay webhook secret (test mode)**,

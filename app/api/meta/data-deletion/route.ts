@@ -23,6 +23,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { createServiceClient } from "@/lib/supabase/server";
+import { inngest } from "@/lib/inngest/client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -135,6 +136,15 @@ export async function POST(req: NextRequest) {
       status:            "pending",
     });
     console.log(`[meta-data-deletion] request recorded meta_user_id=${metaUserId} code=${confirmationCode}`);
+
+    // Hand off to Inngest to do the actual deletion. Fire-and-forget: Meta
+    // requires a fast synchronous response with the confirmation code, and the
+    // durable function owns retries. Without this the row stayed "pending"
+    // forever and no data was ever removed.
+    void inngest.send({
+      name: "meta.data_deletion_requested",
+      data: { confirmationCode, metaUserId },
+    }).catch((err) => console.error("[meta-data-deletion] inngest.send failed:", err));
   } catch (e) {
     console.error("[meta-data-deletion] failed to record deletion request:", e);
   }
