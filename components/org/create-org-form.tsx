@@ -59,7 +59,7 @@ export function CreateOrgForm() {
           minLength={2}
           value={name}
           onChange={(e) => handleNameChange(e.target.value)}
-          placeholder="My Coaching Business"
+          placeholder="e.g. Ascent Academy"
         />
       </div>
 

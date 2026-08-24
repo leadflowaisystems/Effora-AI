@@ -418,7 +418,7 @@ function StepOrgInfo({ data, set }: { data: WizardData; set: SetFn }) {
             id="w-name"
             value={data.orgName}
             onChange={(e) => set("orgName", e.target.value)}
-            placeholder="My Coaching Business"
+            placeholder="e.g. Ascent Academy"
           />
         </div>
       </div>
@@ -695,7 +695,7 @@ function StepVoice({
   return (
     <StepShell
       icon={<Mic className="h-5 w-5" />}
-      title="Your coaching voice"
+      title="Your institute's voice"
       desc="Help the AI understand how you communicate and what you sell."
     >
       <div className="space-y-4">
