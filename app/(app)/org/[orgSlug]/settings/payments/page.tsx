@@ -34,8 +34,14 @@ export default async function PaymentsSettingsPage({ params }: Props) {
     svc.from("orgs").select("upi_id, payment_mode").eq("id", org.id).single(),
   ]);
 
-  const config      = (intRow?.data?.config ?? {}) as { key_id?: string };
+  const config      = (intRow?.data?.config ?? {}) as {
+    key_id?: string;
+    webhook_secret?: string;
+    webhook_secret_enc?: string;
+  };
   const isConnected = !!intRow?.data?.active;
+  // Presence only — the secret value itself is never sent to the client.
+  const hasWebhookSecret = !!(config.webhook_secret_enc || config.webhook_secret);
   const orgRow2     = orgData?.data as { upi_id: string | null; payment_mode: string | null } | null;
   const upiId       = orgRow2?.upi_id ?? "";
   const paymentMode = (orgRow2?.payment_mode ?? "both") as PaymentMode;
@@ -66,6 +72,7 @@ export default async function PaymentsSettingsPage({ params }: Props) {
           orgSlug={params.orgSlug}
           initialKeyId={config.key_id ?? ""}
           isConnected={isConnected}
+          hasWebhookSecret={hasWebhookSecret}
         />
       </div>
 

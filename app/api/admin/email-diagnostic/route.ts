@@ -4,14 +4,17 @@
  * Full Brevo SMTP diagnostic: tests connection AND actual send, then returns
  * a plain-English conclusion explaining exactly what's broken.
  *
- * Usage:
- *   curl -X POST https://www.effora.co.in/api/admin/email-diagnostic \
- *     -H "Content-Type: application/json" \
- *     -d '{"adminEmail":"you@example.com","testTo":"you@example.com"}'
+ * Auth: requires an authenticated Supabase session belonging to a founder
+ *       (FOUNDER_EMAILS env var or the founder_accounts table). The caller's
+ *       identity comes from the session cookie only — it is NEVER read from the
+ *       request body. Must be invoked from a logged-in browser, not curl.
  *
- * NOTE: This endpoint checks the adminEmail against ADMIN_EMAILS env var.
- *       It does NOT require a browser session, so it can be called from curl.
- *       Only share the endpoint with trusted admins.
+ * Usage (logged in as a founder, from the browser console on the app domain):
+ *   await fetch("/api/admin/email-diagnostic", {
+ *     method: "POST",
+ *     headers: { "Content-Type": "application/json" },
+ *     body: JSON.stringify({ testTo: "you@example.com" }),
+ *   }).then(r => r.json())
  *
  * Env vars checked (all from lib/email.ts which is the actual sender):
  *   SMTP_USER     — Brevo SMTP login (your Brevo account email)
@@ -23,24 +26,26 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import nodemailer from "nodemailer";
+import { requireFounder } from "@/lib/founder-guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {
-    // ── Admin gate (email-based, no session required so curl works) ──
-    const adminEmails = (process.env.ADMIN_EMAILS ?? "")
-      .split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
+    // ── Founder gate: authenticated session + founder membership ──
+    // Identity is taken from the session cookie only. A body-supplied email
+    // is NOT accepted as authentication.
+    const founderEmail = await requireFounder();
+    if (!founderEmail) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
-    let body: { adminEmail?: string; testTo?: string } = {};
+    let body: { testTo?: string } = {};
     try { body = await req.json(); } catch { /* empty */ }
 
-    const { adminEmail, testTo } = body;
+    const { testTo } = body;
 
-    if (!adminEmail || !adminEmails.includes(adminEmail.toLowerCase())) {
-      return NextResponse.json({ error: "Not admin — provide adminEmail matching ADMIN_EMAILS env var" }, { status: 403 });
-    }
     if (!testTo) {
       return NextResponse.json({ error: "testTo email address required" }, { status: 400 });
     }
@@ -58,7 +63,7 @@ export async function POST(req: NextRequest) {
       SMTP_FROM: smtpFrom || "MISSING (will use SMTP_USER)",
       SMTP_HOST: smtpHost,
       SMTP_PORT: smtpPort,
-      ADMIN_EMAILS: adminEmails.length > 0 ? `${adminEmails.length} address(es)` : "MISSING",
+      authenticatedAs: founderEmail,
     };
 
     if (!smtpUser || !smtpPass) {
