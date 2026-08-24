@@ -37,17 +37,37 @@ export async function requireFounder(): Promise<string | null> {
   if (isFounder(email)) return email;
 
   // ── 2b. founder_accounts table (audit record / fallback) ────────────────
+  // ilike, not eq: founder_accounts.email is plain TEXT (not citext), so a row
+  // stored with different casing would silently fail an exact match and lock
+  // out a legitimate founder.
   try {
     const svc = createServiceClient();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data } = await (svc as any)
+    const { data, error } = await (svc as any)
       .from("founder_accounts")
       .select("email")
-      .eq("email", email.toLowerCase())
+      .ilike("email", email)
       .maybeSingle();
+
+    // Distinguish "not a founder" from "the guard itself is broken". Without
+    // this, a missing table, a revoked service-role key, or an RLS change all
+    // look identical to a legitimate denial and are undiagnosable in prod.
+    if (error) {
+      console.error(
+        "[founder-guard] founder_accounts lookup returned an error — " +
+        "treating as DENY, but this may be an infrastructure fault, not a real denial:",
+        error.message ?? error,
+      );
+      return null;
+    }
+
     if (data) return email;
   } catch (err) {
-    console.error("[founder-guard] founder_accounts lookup failed:", err);
+    console.error(
+      "[founder-guard] founder_accounts lookup threw (check SUPABASE_SERVICE_ROLE_KEY " +
+      "and that migration 034/037 has been applied):",
+      err,
+    );
   }
 
   return null;
