@@ -48,6 +48,16 @@ export interface MetaVerifyTokenCandidate {
  * Deduplicated by secret value; the first source to contribute a given secret
  * wins the name.
  */
+/**
+ * Env-only candidates. Synchronous and DB-free, so the common case costs
+ * nothing. Callers try these first and only reach for the DB on a miss.
+ */
+export function envSecretCandidates(): MetaSecretCandidate[] {
+  const secret = process.env.META_APP_SECRET;
+  if (!secret) return [];
+  return [{ source: "env", appId: process.env.META_APP_ID ?? null, secret }];
+}
+
 export async function collectMetaAppSecrets(): Promise<MetaSecretCandidate[]> {
   const out: MetaSecretCandidate[] = [];
   const seen = new Set<string>();
@@ -143,6 +153,11 @@ export function verifyAgainstCandidates(
  * through the admin UI would pass POST but fail Meta's GET re-verification,
  * which itself causes Meta to drop the subscription.
  */
+export function envVerifyTokenCandidates(): MetaVerifyTokenCandidate[] {
+  const token = process.env.META_WEBHOOK_VERIFY_TOKEN;
+  return token ? [{ source: "env", token }] : [];
+}
+
 export async function collectMetaVerifyTokens(): Promise<MetaVerifyTokenCandidate[]> {
   const out: MetaVerifyTokenCandidate[] = [];
   const seen = new Set<string>();

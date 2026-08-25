@@ -19,8 +19,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient }      from "@/lib/supabase/server";
 import {
+  envSecretCandidates,
   collectMetaAppSecrets,
   verifyAgainstCandidates,
+  envVerifyTokenCandidates,
   collectMetaVerifyTokens,
   matchVerifyToken,
 } from "@/lib/meta-secrets";
@@ -95,16 +97,25 @@ export async function GET(req: NextRequest) {
     return new Response("Forbidden", { status: 403 });
   }
 
-  const tokenCandidates = await collectMetaVerifyTokens();
-  const matchedToken = matchVerifyToken(token, tokenCandidates);
-
-  if (matchedToken) {
-    console.log(`[ig-webhook] ✓ verification accepted source=${matchedToken.source}`);
+  const accept = (source: string) => {
+    console.log(`[ig-webhook] ✓ verification accepted source=${source}`);
     return new Response(challenge ?? "", {
       status: 200,
       headers: { "Content-Type": "text/plain" },
     });
-  }
+  };
+
+  // Fast path: env first, with NO database round-trip. Meta's verification
+  // request times out quickly, and this handler is what Meta calls when you
+  // press "Verify and Save" — so the common case must not wait on Postgres.
+  const envMatch = matchVerifyToken(token, envVerifyTokenCandidates());
+  if (envMatch) return accept(envMatch.source);
+
+  // Slow path only on a miss: the token may live in platform_settings or a
+  // meta_byo row (the inversion this module exists to fix).
+  const tokenCandidates = await collectMetaVerifyTokens();
+  const matchedToken = matchVerifyToken(token, tokenCandidates);
+  if (matchedToken) return accept(matchedToken.source);
 
   console.warn(
     `[ig-webhook] ✗ verify_token mismatch — tried=${tokenCandidates.map((c) => c.source).join(",") || "none"}`,
@@ -149,18 +160,25 @@ export async function POST(req: NextRequest) {
   // inverse of the order OAuth uses to mint the token that CREATES the
   // subscription. Production evidence: 69 meta_instagram webhook_events, every
   // one verified=false, zero verified=true ever recorded. See lib/meta-secrets.ts.
-  const candidates = await collectMetaAppSecrets();
+  // Fast path: try the env secret with NO database round-trip. On a correctly
+  // configured deployment this is the only work done, so the hot path stays as
+  // cheap as it was before candidate-set verification existed.
+  let { matched, tried } = verifyAgainstCandidates(rawBody, sig, envSecretCandidates());
 
-  if (candidates.length === 0) {
-    console.error("[ig-webhook] no Meta app secret configured anywhere — cannot verify signature. Rejecting.");
-    void logWebhookEvent(rawBody, sig, false, "no_candidates");
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // Slow path only on a miss: the authoritative secret may live in
+  // platform_settings or a meta_byo row — the inversion this fixes.
+  if (!matched) {
+    const candidates = await collectMetaAppSecrets();
+    if (candidates.length === 0) {
+      console.error("[ig-webhook] no Meta app secret configured anywhere — cannot verify signature. Rejecting.");
+      void logWebhookEvent(rawBody, sig, false, "no_candidates");
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    // This does NOT widen acceptance: a forger must still produce a valid
+    // HMAC-SHA256 of this exact body under one of OUR real secrets.
+    ({ matched, tried } = verifyAgainstCandidates(rawBody, sig, candidates));
   }
 
-  // ── 2. Constant-time verification against each candidate ──────────────────
-  // This does NOT widen acceptance: a forger must still produce a valid
-  // HMAC-SHA256 of this exact body under one of OUR real secrets.
-  const { matched, tried } = verifyAgainstCandidates(rawBody, sig, candidates);
   const signatureValid = matched !== null;
   const secretSource   = matched?.source ?? "none";
 
