@@ -15,7 +15,9 @@
     "format": "prettier --write .",
     "test:rls": "tsx scripts/test-rls.ts",
     "demo:seed": "tsx scripts/demo-seed.ts",
-    "demo:reset": "tsx scripts/demo-reset.ts"
+    "demo:reset": "tsx scripts/demo-reset.ts",
+    "meta:doctor": "tsx scripts/meta-webhook-doctor.ts",
+    "meta:repair": "tsx scripts/meta-webhook-doctor.ts --repair"
   },
   "dependencies": {
     "@emoji-mart/data": "^1.2.1",
