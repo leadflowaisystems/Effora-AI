@@ -82,6 +82,33 @@ export async function POST(req: NextRequest, { params }: Params) {
     if (!lead_id || !amount_inr) {
       return NextResponse.json({ error: "lead_id and amount_inr are required" }, { status: 400 });
     }
+
+    // SECURITY: lead_id comes from the request body and must be proven to belong
+    // to this org BEFORE anything is written.
+    //
+    // assertMember() proves the caller belongs to params.orgId, but said nothing
+    // about who owns lead_id. The lead was only loaded further down — org-scoped
+    // but with no null guard — so a foreign lead simply yielded `lead = null`
+    // and execution continued into an UNSCOPED `leads` update. A member of org A
+    // could therefore pass org B's lead id and overwrite that lead's stage and
+    // ltv_inr. Reproduced against production: HTTP 200, victim lead went
+    // warm -> won and ltv_inr 50000 -> 999, destroying the real value.
+    //
+    // 404 rather than 403 so the response cannot be used to enumerate lead ids
+    // in other orgs. This runs before the payments insert, so a rejected request
+    // mutates nothing at all.
+    const { data: ownedLead } = await svc
+      .from("leads")
+      .select("id")
+      .eq("id", lead_id)
+      .eq("org_id", params.orgId)
+      .single();
+
+    if (!ownedLead) {
+      console.warn(`[mark-paid] lead not found in org — rejected org=${params.orgId} lead=${lead_id}`);
+      return NextResponse.json({ error: "Lead not found" }, { status: 404 });
+    }
+
     const { data: pNew, error: pErr } = await svc.from("payments").insert({
       org_id: params.orgId, lead_id, amount_inr,
       status: "paid", payment_method: payment_method ?? "other",
@@ -121,10 +148,14 @@ export async function POST(req: NextRequest, { params }: Params) {
   const leadEmail = (lead?.metadata?.email) as string | undefined ?? null;
   const firstName = getLeadFirstName({ name: lead?.name ?? null, external_id: lead?.external_id ?? null });
 
-  // Update lead stage + LTV
+  // Update lead stage + LTV. Org-scoped as defence in depth: both paths now
+  // prove ownership first (the payment_id branch resolves the lead from an
+  // org-scoped payment row, the create branch checks lead_id above), so this
+  // filter should never change the outcome — it just makes a cross-tenant write
+  // impossible even if a future caller reaches here unchecked.
   await svc.from("leads").update({
     stage: "won", ltv_inr: (lead?.ltv_inr ?? 0) + resolvedAmount, updated_at: now,
-  }).eq("id", resolvedLeadId);
+  }).eq("id", resolvedLeadId).eq("org_id", params.orgId);
 
   // Send receipt message to thread
   const convId = await getOrCreateConversation(params.orgId, resolvedLeadId, "manual");
