@@ -61,16 +61,39 @@ export async function POST(req: NextRequest, { params }: Params) {
   // round-trips (the lead query needed conv.lead_id), each measured at ~249 ms.
   // Embedding collapses them into one, removing one full round-trip.
   //
-  // Filter is deliberately UNCHANGED (.eq("id", params.convId) only) so
-  // authorization semantics are byte-for-byte identical to before. See the
-  // separate note about org scoping on this query — that is not changed here.
+  // SECURITY: scoped to BOTH the conversation id and params.orgId.
+  //
+  // assertMember() above proves the caller belongs to params.orgId, but it says
+  // nothing about who owns this conversation. Previously the lookup filtered on
+  // id alone while using the service-role client (RLS bypassed), so a member of
+  // org A could reply into an org B conversation — messaging another tenant's
+  // customer using org A's WhatsApp credentials. Confirmed live: HTTP 200.
+  //
+  // This mirrors the existing safe pattern in
+  // app/api/orgs/[orgId]/conversations/[convId]/route.ts:31.
   const tConv = Date.now();
   const { data: conv } = await svc
     .from("conversations")
     .select("channel_provider, lead_id, leads(external_id)")
     .eq("id", params.convId)
+    .eq("org_id", params.orgId)
     .single();
   mark("conv", tConv);
+
+  // SECURITY: the scoped query alone is NOT sufficient — bail out here.
+  // Without this return, a miss leaves conv null, which only skips channel
+  // delivery; execution would still reach the message insert below, and because
+  // messages.conversation_id has a foreign key to a row that genuinely exists
+  // (in the other org) that insert would SUCCEED, writing into the other
+  // tenant's conversation. Returning before any send, insert or update is what
+  // makes the fix complete.
+  //
+  // 404 rather than 403 so the response cannot be used to probe whether a
+  // conversation id exists in another org.
+  if (!conv) {
+    console.warn(`[reply] conversation not found in org — rejected org=${params.orgId} conv=${params.convId}`);
+    return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
+  }
 
   // PostgREST returns a many-to-one embed as an object; tolerate an array shape
   // defensively so a PostgREST version change cannot break delivery.
