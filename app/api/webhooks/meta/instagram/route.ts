@@ -109,11 +109,32 @@ export async function POST(req: NextRequest) {
   const sig     = req.headers.get("x-hub-signature-256") ?? "";
   const expected = "sha256=" + createHmac("sha256", appSecret).update(rawBody).digest("hex");
 
+  // ── STAGE A — OBSERVATION ONLY, NO ENFORCEMENT CHANGE ─────────────────────
+  // Instagram subscriptions created through "Instagram API with Instagram Login"
+  // are signed with the INSTAGRAM app secret, a different value from
+  // META_APP_SECRET (the Facebook app secret WhatsApp Cloud API uses). All 2,829
+  // Instagram deliveries recorded since 2026-06-05 have verified=false against
+  // META_APP_SECRET, while WhatsApp — same header, same algorithm, same raw body,
+  // and no bypass — verifies fine. That points at the secret, not at this code.
+  //
+  // Computing the signature against INSTAGRAM_APP_SECRET and recording it in
+  // webhook_events.verified lets a REAL Meta delivery prove which secret is
+  // correct. It deliberately does NOT enforce — the bypass branch below is
+  // untouched, so no request changes behaviour. Enforcement lands in Stage B,
+  // only once a genuine delivery has been observed with verified=true.
+  const igAppSecret = process.env.INSTAGRAM_APP_SECRET;
+  const igExpected  = igAppSecret
+    ? "sha256=" + createHmac("sha256", igAppSecret).update(rawBody).digest("hex")
+    : null;
+  const igSignatureValid = igExpected !== null && sig === igExpected;
+
+  // Booleans and body size only — never secret material, lengths or fingerprints.
   console.log(
     `[ig-webhook] sig-check source=${secretSource}` +
-    ` secret_len=${appSecret.length}` +
     ` body_len=${rawBody.length}` +
-    ` sig_match=${sig === expected}`,
+    ` meta_sig_match=${sig === expected}` +
+    ` ig_secret_configured=${!!igAppSecret}` +
+    ` ig_sig_match=${igSignatureValid}`,
   );
 
   // ── Signature gate ────────────────────────────────────────────────────────
@@ -245,7 +266,9 @@ export async function POST(req: NextRequest) {
             event_type: msg.mid ? "message" : "messaging_postback",
             sender_id:  senderIgsid,
             payload:    { entry_id: entryId, mid: msg.mid, has_text: !!messageText },
-            verified:   signatureValid,
+            // Stage A observation channel: records whether INSTAGRAM_APP_SECRET
+            // produces the signature Meta sent, without acting on the result.
+            verified:   igSignatureValid,
             created_at: now,
           });
         } catch (e) {
