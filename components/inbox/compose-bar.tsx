@@ -17,12 +17,27 @@ const EmojiPicker = dynamic(
 interface Props {
   orgId:           string;
   convId:          string;
+  /** Adds a message to the thread immediately (optimistic). */
   onSent:          (msg: InboxMessage) => void;
+  /** Reconciles an optimistic message once the server responds (or fails). */
+  onSentResolved?: (tempId: string, patch: Partial<InboxMessage> & { id?: string }) => void;
   disabled?:       boolean;
   channelProvider?: string;
+  /** When set, refills the composer (used by the retry affordance). */
+  refillText?:      string | null;
+  onRefillConsumed?: () => void;
 }
 
-export function ComposeBar({ orgId, convId, onSent, disabled, channelProvider }: Props) {
+let tempCounter = 0;
+function nextTempId() {
+  tempCounter += 1;
+  return `temp_${tempCounter}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+export function ComposeBar({
+  orgId, convId, onSent, onSentResolved, disabled, channelProvider,
+  refillText, onRefillConsumed,
+}: Props) {
   const isWhatsApp = channelProvider === "whatsapp_cloud";
   const [text,         setText]         = React.useState("");
   const [loading,      setLoading]      = React.useState(false);
@@ -35,6 +50,21 @@ export function ComposeBar({ orgId, convId, onSent, disabled, channelProvider }:
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const emojiRef     = React.useRef<HTMLDivElement>(null);
   const { toast }    = useToast();
+
+  // Refill from a retried message and focus, so the user can just hit send.
+  React.useEffect(() => {
+    if (!refillText) return;
+    setText(refillText);
+    onRefillConsumed?.();
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+      autoGrow(el);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refillText]);
 
   // Auto-grow textarea
   function autoGrow(el: HTMLTextAreaElement) {
@@ -93,15 +123,46 @@ export function ComposeBar({ orgId, convId, onSent, disabled, channelProvider }:
   async function send() {
     const content = text.trim();
     if ((!content && !imageFile) || loading) return;
+
+    // ── Optimistic render ──────────────────────────────────────────────────
+    // The bubble appears NOW, before any network work. Previously the composer
+    // sat disabled with the text still in it for the whole round-trip — which
+    // includes a synchronous Meta Graph API call — so a send felt like ~5s.
+    const tempId       = nextTempId();
+    const queuedFile   = imageFile;
+    const localPreview = imagePreview;
+    const sentAtLocal  = new Date().toISOString();
+
+    onSent({
+      id:        tempId,
+      direction: "outbound",
+      content:   content || (queuedFile ? "📷 Image" : ""),
+      sent_at:   sentAtLocal,
+      metadata:  { source: "manual", attachment_url: localPreview ?? null },
+      sendState: "sending",
+    });
+
+    // Clear the composer immediately — the message is already on screen.
+    setText("");
+    setImageFile(null);
+    setImagePreview(null);
+    if (textareaRef.current) { textareaRef.current.style.height = "auto"; }
+    textareaRef.current?.focus();
+
+    // Move the conversation to the top of the sidebar right away.
+    window.dispatchEvent(new CustomEvent("conversation-updated", {
+      detail: { convId, timestamp: sentAtLocal },
+    }));
+
     setLoading(true);
     try {
       let attachmentUrl: string | undefined;
 
       // Upload image first if one is queued
-      if (imageFile) {
+      if (queuedFile) {
         setUploading(true);
         const form = new FormData();
-        form.append("file", imageFile);
+        form.append("file", queuedFile);
         const upRes = await fetch(`/api/orgs/${orgId}/conversations/${convId}/upload-attachment`, {
           method: "POST",
           body:   form,
@@ -123,23 +184,17 @@ export function ComposeBar({ orgId, convId, onSent, disabled, channelProvider }:
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Send failed");
 
-      setText("");
-      clearImage();
-      if (textareaRef.current) { textareaRef.current.style.height = "auto"; }
+      if (localPreview) URL.revokeObjectURL(localPreview);
 
       const sentAt = json.message.sent_at as string;
-      onSent({
+
+      // Reconcile: swap the temp id for the real one and drop the sending state.
+      onSentResolved?.(tempId, {
         id:        json.message.id,
-        direction: "outbound",
-        content:   content || (attachmentUrl ? "📷 Image" : ""),
         sent_at:   sentAt,
         metadata:  { source: "manual", attachment_url: attachmentUrl ?? null },
+        sendState: undefined,
       });
-
-      // Optimistic sort: move conversation to top immediately, before realtime fires
-      window.dispatchEvent(new CustomEvent("conversation-updated", {
-        detail: { convId, timestamp: sentAt },
-      }));
 
       // Surface delivery failures
       if (json.delivery_failed) {
@@ -171,11 +226,11 @@ export function ComposeBar({ orgId, convId, onSent, disabled, channelProvider }:
     } catch (err) {
       setUploading(false);
       console.error("[compose]", err);
-      toast({
-        title:       "Failed to send",
-        description: err instanceof Error ? err.message : "Please try again.",
-        variant:     "destructive",
-      });
+      const reason = err instanceof Error ? err.message : "Please try again.";
+
+      // Mark the optimistic bubble as failed so the thread offers a retry.
+      // No toast here — the failure is visible in context, on the message itself.
+      onSentResolved?.(tempId, { sendState: "failed", sendError: reason });
     } finally {
       setLoading(false);
     }
@@ -188,7 +243,11 @@ export function ComposeBar({ orgId, convId, onSent, disabled, channelProvider }:
     }
   }
 
-  const canSend = (!!text.trim() || !!imageFile) && !loading;
+  // Not gated on `loading`: the previous message already rendered optimistically,
+  // so the composer stays usable while it settles. Each send carries its own
+  // temp id, and the input is cleared on submit, so a double-click can't
+  // duplicate a message (the second call sees empty content and returns).
+  const canSend = (!!text.trim() || !!imageFile) && !uploading;
 
   return (
     <div className={cn(

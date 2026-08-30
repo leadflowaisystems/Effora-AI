@@ -79,7 +79,7 @@ export default async function OnboardingPage() {
             Create your workspace
           </h1>
           <p className="text-sm text-[var(--text-3)]">
-            You&apos;re in.{userName ? ` Welcome, ${userName.split(" ")[0]}.` : ""} Let&apos;s set up your coaching business.
+            You&apos;re in.{userName ? ` Welcome, ${userName.split(" ")[0]}.` : ""} Let&apos;s set up your coaching institute.
           </p>
           {userEmail && (
             <p className="text-xs text-[var(--text-3)] mt-1">Signed in as {userEmail}</p>

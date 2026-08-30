@@ -240,16 +240,39 @@ export default async function DashboardPage({ params }: Props) {
 
   const isDev = process.env.NODE_ENV !== "production";
 
+  // ── Real setup status for the day-1 view ────────────────────
+  // Presence checks only — no secret ever reaches the client.
+  const [intRows, orgSettings] = await Promise.all([
+    svc.from("integrations").select("provider, config, active").eq("org_id", orgId),
+    svc.from("orgs").select("auto_send_replies").eq("id", orgId).maybeSingle(),
+  ]);
+
+  const integrations = (intRows.data ?? []) as {
+    provider: string; config: Record<string, string> | null; active: boolean;
+  }[];
+  const findActive = (p: string) => integrations.find((r) => r.provider === p && r.active);
+
+  const wa = findActive("whatsapp_cloud");
+  const setup = {
+    whatsappConnected: !!wa,
+    whatsappNumber:    wa?.config?.display_phone_number ?? wa?.config?.phone_number ?? null,
+    aiActive:          !!(orgSettings.data as { auto_send_replies: boolean } | null)?.auto_send_replies,
+    calendarConnected: !!findActive("calcom"),
+    paymentsConnected: !!findActive("razorpay"),
+    orgSlug:           params.orgSlug,
+    enquiryCount:      dashData.funnel.dms,
+  };
+
   return (
     <div className="space-y-6">
       <div className="space-y-1">
         <h1 className="font-display text-2xl font-bold text-[var(--text)]">Dashboard</h1>
         <p className="text-sm text-[var(--text-3)]">
-          Your full funnel, recovered revenue, and AI attribution — all in one view.
+          Every enquiry, admission and fee collected — in one view.
         </p>
       </div>
 
-      <DashboardView initialData={dashData} orgId={orgId} isDev={isDev} />
+      <DashboardView initialData={dashData} orgId={orgId} isDev={isDev} setup={setup} />
     </div>
   );
 }

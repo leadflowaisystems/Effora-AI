@@ -13,6 +13,8 @@ import { Sparkline }   from "./sparkline";
 import { SourceBars }  from "./source-bars";
 
 // ── Types ────────────────────────────────────────────────────
+import { GettingStartedPanel, type SetupStatus } from "./getting-started-panel";
+
 export interface DashboardData {
   funnel: {
     dms: number; qualified: number; booked: number;
@@ -36,6 +38,8 @@ interface Props {
   initialData: DashboardData;
   orgId:       string;
   isDev:       boolean;
+  /** Real connection status, used to render the day-1 view. */
+  setup?:      SetupStatus;
 }
 
 type Range = 7 | 30 | 90;
@@ -129,7 +133,7 @@ function CardLabel({ children }: { children: React.ReactNode }) {
 }
 
 // ── Main component ───────────────────────────────────────────
-export function DashboardView({ initialData, orgId, isDev }: Props) {
+export function DashboardView({ initialData, orgId, isDev, setup }: Props) {
   const [data,      setData]      = useState<DashboardData>(initialData);
   const [range,     setRange]     = useState<Range>(initialData.days as Range);
   const [loading,   setLoading]   = useState(false);
@@ -164,7 +168,7 @@ export function DashboardView({ initialData, orgId, isDev }: Props) {
   // All bars use the same jade color — opacity modifiers on CSS-variable hex values
   // don't render in Tailwind (requires RGB triplet). Width encodes the funnel shape.
   const funnelSteps = [
-    { label: "DMs received", value: funnel.dms,       bgColor: "bg-[var(--brand)]", color: "text-[var(--brand)]" },
+    { label: "Enquiries",    value: funnel.dms,       bgColor: "bg-[var(--brand)]", color: "text-[var(--brand)]" },
     { label: "Qualified",    value: funnel.qualified,  bgColor: "bg-[var(--brand)]", color: "text-[var(--brand)]" },
     { label: "Booked",       value: funnel.booked,     bgColor: "bg-[var(--brand)]", color: "text-[var(--brand)]" },
     { label: "Showed",       value: funnel.showed,     bgColor: "bg-[var(--brand)]", color: "text-[var(--brand)]" },
@@ -173,6 +177,13 @@ export function DashboardView({ initialData, orgId, isDev }: Props) {
 
   const sparkData = sparkline.map((s) => s.revenue_inr);
   const totalRecovered = revenue.dunning + revenue.revival + revenue.noshow;
+
+  // ── Day-1 state ──────────────────────────────────────────────
+  // With 0–5 enquiries and no revenue, every tile reads ₹0, every conversion
+  // reads "–" and the charts are flat. That reads as broken, not new. Show the
+  // real setup state instead until there is enough genuine data to plot.
+  const isEarlyDays =
+    !!setup && funnel.dms <= 5 && revenue.paid === 0 && funnel.booked === 0;
 
   return (
     <div className={cn("space-y-6 transition-opacity duration-200", loading && "opacity-60 pointer-events-none")}>
@@ -194,6 +205,10 @@ export function DashboardView({ initialData, orgId, isDev }: Props) {
           {seedDone && <span className="text-[11px] text-amber-400/70">✓ Demo data loaded</span>}
         </div>
       )}
+
+      {/* ── Day 1: real setup state instead of empty charts ──── */}
+      {isEarlyDays && setup ? <GettingStartedPanel setup={setup} /> : (
+      <>
 
       {/* ── Range selector ───────────────────────────────────── */}
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -405,7 +420,7 @@ export function DashboardView({ initialData, orgId, isDev }: Props) {
       {/* ── Analytics row ────────────────────────────────────── */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard>
-          <CardLabel>DMs processed today</CardLabel>
+          <CardLabel>Enquiries handled today</CardLabel>
           <div className="flex flex-col items-center justify-center h-20 gap-1">
             <p className="font-mono text-3xl font-bold text-[var(--brand)]">
               {sparkline.length > 0 ? (sparkline[sparkline.length - 1]?.dms ?? 0) : 0}
@@ -463,11 +478,14 @@ export function DashboardView({ initialData, orgId, isDev }: Props) {
               {convPct(funnel.booked, funnel.dms)}
             </p>
             <p className="text-[11px] text-[var(--text-3)]">
-              {funnel.dms} DMs → {funnel.booked} booked
+              {funnel.dms} enquiries → {funnel.booked} booked
             </p>
           </div>
         </StatCard>
       </div>
+
+      </>
+      )}
     </div>
   );
 }

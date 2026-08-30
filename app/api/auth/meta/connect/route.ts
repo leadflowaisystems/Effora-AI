@@ -59,7 +59,7 @@ export async function GET(req: NextRequest) {
   // The Business Login configuration (config_id) defines which permissions
   // and assets are requested. Do NOT include scope= — it is ignored when
   // config_id is present and causes "Feature unavailable" errors on some app types.
-  const oauthUrl = new URL("https://www.facebook.com/v18.0/dialog/oauth");
+  const oauthUrl = new URL("https://www.facebook.com/v23.0/dialog/oauth");
   oauthUrl.searchParams.set("client_id",     metaCfg.app_id);
   oauthUrl.searchParams.set("config_id",     metaCfg.config_id);
   oauthUrl.searchParams.set("redirect_uri",  redirectUri);

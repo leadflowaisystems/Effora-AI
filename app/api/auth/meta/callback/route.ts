@@ -29,12 +29,29 @@ export async function GET(req: NextRequest) {
   const stateRaw   = req.nextUrl.searchParams.get("state");
   const errorParam = req.nextUrl.searchParams.get("error");
 
+  // Best-effort early decode purely to recover orgSlug for the error redirects
+  // below — Meta echoes `state` back even on a denied/errored OAuth attempt,
+  // so this is usually available. Falls back to /login (same page this
+  // function already redirects to on other failure paths further down)
+  // instead of a bare, org-less settings path that 404s.
+  let earlyOrgSlug: string | null = null;
+  if (stateRaw) {
+    try {
+      earlyOrgSlug = (JSON.parse(Buffer.from(stateRaw, "base64url").toString("utf8")) as { orgSlug?: string }).orgSlug ?? null;
+    } catch {
+      earlyOrgSlug = null;
+    }
+  }
+  const settingsUrl = earlyOrgSlug
+    ? `${appUrl}/org/${earlyOrgSlug}/settings/channel/instagram`
+    : `${appUrl}/login`;
+
   if (errorParam) {
-    return NextResponse.redirect(`${appUrl}/settings/channel/instagram?error=oauth_denied`);
+    return NextResponse.redirect(`${settingsUrl}?error=oauth_denied`);
   }
 
   if (!code || !stateRaw) {
-    return NextResponse.redirect(`${appUrl}/settings/channel/instagram?error=missing_params`);
+    return NextResponse.redirect(`${settingsUrl}?error=missing_params`);
   }
 
   // Decode state
@@ -45,7 +62,7 @@ export async function GET(req: NextRequest) {
     orgSlug = decoded.orgSlug;
     userId  = decoded.userId;
   } catch {
-    return NextResponse.redirect(`${appUrl}/settings/channel/instagram?error=invalid_state`);
+    return NextResponse.redirect(`${settingsUrl}?error=invalid_state`);
   }
 
   // Verify the requesting user matches the state
@@ -62,7 +79,7 @@ export async function GET(req: NextRequest) {
     .eq("slug", orgSlug).single();
 
   if (!org) {
-    return NextResponse.redirect(`${appUrl}/settings/channel/instagram?error=org_not_found`);
+    return NextResponse.redirect(`${appUrl}/org/${orgSlug}/settings/channel/instagram?error=org_not_found`);
   }
 
   const metaCfg = await getMetaConfig((org as { id: string }).id).catch(() => null);

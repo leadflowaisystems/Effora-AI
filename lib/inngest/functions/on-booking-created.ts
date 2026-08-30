@@ -15,6 +15,7 @@ import { sendChannelMessage } from "@/lib/booking";
 import { build24hReminder, build1hReminder } from "@/prompts/reminder";
 import { sendEmail } from "@/lib/email";
 import { bookingConfirmation, bookingReminder24h } from "@/lib/email-templates";
+import { notifyBookingCreated } from "@/lib/notify";
 
 interface BookingCreatedData {
   orgId:          string;
@@ -73,6 +74,19 @@ export const onBookingCreated = inngest.createFunction(
         leadEmail:  (leadMeta?.metadata as Record<string, unknown> | undefined)?.email as string | undefined ?? null,
         coachName:  (orgRes.data as { name: string } | null)?.name ?? "Your Coach",
       };
+    });
+
+    // ── Notify the owner that a call was booked ───────────────
+    // Own step, before the long sleepUntil reminders, so the ping is immediate.
+    // notifyBookingCreated never throws (lib/notify.ts).
+    await step.run("notify-booking-created", async () => {
+      await notifyBookingCreated({
+        orgId,
+        leadName:  ctx.attendeeName,
+        startsAt:  ctx.startsAt,
+        conversationId,
+      });
+      return { notified: true };
     });
 
     // ── Send booking confirmation email ───────────────────────

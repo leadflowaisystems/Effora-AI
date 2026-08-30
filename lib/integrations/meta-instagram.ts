@@ -8,7 +8,7 @@
 import { createServiceClient } from "@/lib/supabase/server";
 import { encryptSecret, decryptSecret } from "@/lib/crypto";
 
-const GRAPH = "https://graph.facebook.com/v18.0";
+const GRAPH = "https://graph.facebook.com/v23.0";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -233,12 +233,24 @@ export const subscribePageToWebhooks = subscribeIgToWebhooks;
  * Loads the integration row for the org to get the stored page token.
  *
  * Pass imageUrl to send an image attachment instead of text.
+ *
+ * humanInitiated — set true ONLY when a logged-in user directly triggered this
+ * send (e.g. typed a manual reply and clicked Send). Defaults to false, which
+ * is byte-for-byte identical to the request this function has always sent.
+ * When true AND the first attempt is rejected specifically for being outside
+ * Instagram's standard 24-hour messaging window, this retries once with
+ * Meta's Human Agent tag (messaging_type: MESSAGE_TAG, tag: HUMAN_AGENT),
+ * which Meta's Human Agent feature permits for genuine human replies within
+ * 7 days of the customer's last message. NEVER pass true from AI/automated/
+ * scheduled/broadcast send paths — Meta's policy reserves this tag strictly
+ * for human-authored replies and treats automated use as a policy violation.
  */
 export async function sendInstagramMessage(
   orgId:              string,
   recipientIgUserId:  string,
   text:               string,
   imageUrl?:          string,
+  humanInitiated:     boolean = false,
 ): Promise<{ provider_message_id: string }> {
   const config = await loadMetaConfig(orgId);
   console.log(`[ig-send] token loaded page_id=${config.page_id} org=${orgId}`);
@@ -249,16 +261,38 @@ export async function sendInstagramMessage(
     ? { attachment: { type: "image", payload: { url: imageUrl, is_reusable: true } } }
     : { text };
 
-  const res = await fetch(url, {
-    method:  "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+  async function attemptSend(useHumanAgentTag: boolean) {
+    const body: Record<string, unknown> = {
       recipient: { id: recipientIgUserId },
       message:   messagePayload,
-    }),
-  });
+    };
+    if (useHumanAgentTag) {
+      body.messaging_type = "MESSAGE_TAG";
+      body.tag            = "HUMAN_AGENT";
+    }
+    const res = await fetch(url, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify(body),
+    });
+    return { res, responseText: await res.text() };
+  }
 
-  const responseText = await res.text();
+  let { res, responseText } = await attemptSend(false);
+
+  // Standard send was rejected for being outside the 24-hour window — retry
+  // once with the Human Agent tag, but ONLY if the caller confirmed this is
+  // a genuine human-initiated reply. Never a second, parallel send path:
+  // same URL, same payload, one additional field.
+  if (!res.ok && humanInitiated) {
+    const is24hWindow =
+      responseText.includes("131047") || responseText.includes("131026") ||
+      responseText.includes("368")    || responseText.toLowerCase().includes("outside");
+    if (is24hWindow) {
+      console.log(`[ig-send] standard window rejected — retrying with Human Agent tag (human-initiated) org=${orgId}`);
+      ({ res, responseText } = await attemptSend(true));
+    }
+  }
 
   if (!res.ok) {
     console.error(`[ig-send] graph error status=${res.status} body=${responseText}`);

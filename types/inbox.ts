@@ -20,12 +20,24 @@ export interface InboxConversation {
   lead:                 InboxLead | null;
 }
 
+/**
+ * Client-only delivery state for optimistic sends.
+ * Absent on every message that came from the server.
+ *   sending — rendered instantly, server has not confirmed yet
+ *   failed  — the request errored; the bubble offers a retry
+ */
+export type SendState = "sending" | "failed";
+
 export interface InboxMessage {
   id:        string;
   direction: "inbound" | "outbound";
   content:   string;
   sent_at:   string;
   metadata?: { source?: string; model?: string; [key: string]: unknown };
+  /** Client-only. Never persisted. */
+  sendState?: SendState;
+  /** Client-only. Reason shown next to a failed bubble. */
+  sendError?: string;
 }
 
 export interface InboxDraft {

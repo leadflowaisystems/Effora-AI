@@ -27,6 +27,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { DeleteLeadDialog } from "./delete-lead-dialog";
 import {
   ArrowLeft, Download, Instagram, Phone, Mail, Globe,
   Calendar, CreditCard, MessageSquare, StickyNote,
@@ -268,6 +269,8 @@ export function LeadDetail({ lead, conversations, bookings: initialBookings, pay
   const [savingNotes, setSavingNotes] = React.useState(false);
   const [events, setEvents] = React.useState<LeadEvent[]>(leadEvents);
   const [deletingEvent, setDeletingEvent] = React.useState<string | null>(null);
+  // Full lead removal — shares its confirmation dialog with the inbox menu.
+  const [showDeleteLead, setShowDeleteLead] = React.useState(false);
 
   // Local state for bookings + payments so UI updates instantly on delete
   const [bookings, setBookings]   = React.useState<Booking[]>(initialBookings);
@@ -406,6 +409,20 @@ export function LeadDetail({ lead, conversations, bookings: initialBookings, pay
 
   return (
     <div className="space-y-6 max-w-3xl pb-16">
+      {/* Full lead removal — same dialog the inbox thread menu uses */}
+      {showDeleteLead && (
+        <DeleteLeadDialog
+          orgId={orgId}
+          leadId={lead.id}
+          leadName={lead.name}
+          onClose={() => setShowDeleteLead(false)}
+          onDeleted={() => {
+            setShowDeleteLead(false);
+            router.push(`/org/${orgSlug}/crm`);
+          }}
+        />
+      )}
+
       {/* Booking hard-delete confirmation */}
       {bookingDeleteTarget && (
         <ConfirmDeleteModal
@@ -525,6 +542,12 @@ export function LeadDetail({ lead, conversations, bookings: initialBookings, pay
               className="flex items-center gap-1.5 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-2)] px-3 py-1.5 text-xs text-[var(--text-2)] hover:bg-[var(--bg-3)] transition-colors"
             >
               <Download className="h-3.5 w-3.5" /> Export CSV
+            </button>
+            <button
+              onClick={() => setShowDeleteLead(true)}
+              className="flex items-center gap-1.5 rounded-[var(--radius-sm)] border border-red-500/30 bg-red-500/5 px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/10 transition-colors"
+            >
+              <Trash2 className="h-3.5 w-3.5" /> Delete lead
             </button>
           </div>
         </div>

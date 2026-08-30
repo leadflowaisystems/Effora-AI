@@ -17,14 +17,65 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { createHmac }               from "crypto";
 import { createServiceClient }      from "@/lib/supabase/server";
+import {
+  collectMetaAppSecrets,
+  verifyAgainstCandidates,
+  collectMetaVerifyTokens,
+  matchVerifyToken,
+} from "@/lib/meta-secrets";
 import { inngest }                  from "@/lib/inngest/client";
 import { getIgUserProfile }         from "@/lib/integrations/meta-instagram";
 import { decryptSecret }            from "@/lib/crypto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+/**
+ * Record a webhook delivery outcome — including REJECTED ones.
+ *
+ * Bounded on purpose: this is an unauthenticated code path, so it must not
+ * become a write amplifier. A row is only written when the request at least
+ * looks like Meta traffic (a signature header present AND a JSON body with an
+ * `object` field). Random internet noise gets a 401 with no database write.
+ * Only a small, fixed set of non-secret fields is stored — never the raw body.
+ */
+async function logWebhookEvent(
+  rawBody:  string,
+  sigHeader: string,
+  verified: boolean,
+  reason:   string,
+  orgId:    string | null = null,
+): Promise<void> {
+  try {
+    if (!sigHeader) return; // not plausibly Meta — do not write
+
+    let entryId: string | null = null;
+    let objectType: string | null = null;
+    try {
+      const parsed = JSON.parse(rawBody) as { object?: string; entry?: { id?: string }[] };
+      if (!parsed?.object) return; // not plausibly Meta — do not write
+      objectType = parsed.object;
+      entryId = parsed.entry?.[0]?.id ?? null;
+    } catch {
+      return; // unparseable — do not write
+    }
+
+    const svc = createServiceClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (svc as any).from("webhook_events").insert({
+      org_id:     orgId,
+      provider:   "meta_instagram",
+      event_type: verified ? "message" : "signature_rejected",
+      sender_id:  null,
+      payload:    { object: objectType, entry_id: entryId, body_len: rawBody.length, reason },
+      verified,
+      created_at: new Date().toISOString(),
+    });
+  } catch (e) {
+    console.error("[ig-webhook] webhook_events insert failed (non-fatal):", e);
+  }
+}
 
 // ── GET — Webhook verification ───────────────────────────────────────────────
 
@@ -34,15 +85,30 @@ export async function GET(req: NextRequest) {
   const token     = url.searchParams.get("hub.verify_token");
   const challenge = url.searchParams.get("hub.challenge");
 
-  const expectedToken = process.env.META_WEBHOOK_VERIFY_TOKEN;
+  // Same inversion as the POST path: this previously read ONLY
+  // process.env.META_WEBHOOK_VERIFY_TOKEN, while getMetaConfig() resolves the
+  // token from meta_byo → platform_settings → env. A deployment configured
+  // through /admin/platform-settings would pass POST but fail Meta's GET
+  // re-verification — and a failed re-verification is itself a reason Meta
+  // drops a subscription.
+  if (mode !== "subscribe" || !token) {
+    return new Response("Forbidden", { status: 403 });
+  }
 
-  if (mode === "subscribe" && token === expectedToken && expectedToken) {
-    console.log("[ig-webhook] ✓ verification accepted");
+  const tokenCandidates = await collectMetaVerifyTokens();
+  const matchedToken = matchVerifyToken(token, tokenCandidates);
+
+  if (matchedToken) {
+    console.log(`[ig-webhook] ✓ verification accepted source=${matchedToken.source}`);
     return new Response(challenge ?? "", {
       status: 200,
       headers: { "Content-Type": "text/plain" },
     });
   }
+
+  console.warn(
+    `[ig-webhook] ✗ verify_token mismatch — tried=${tokenCandidates.map((c) => c.source).join(",") || "none"}`,
+  );
   return new Response("Forbidden", { status: 403 });
 }
 
@@ -74,65 +140,75 @@ interface IgWebhookBody {
 }
 
 export async function POST(req: NextRequest) {
-  // ── 1. Resolve app secret for signature verification ──────────────────────
-  let appSecret = process.env.META_APP_SECRET;
-  let secretSource = "env-var";
-
-  if (!appSecret) {
-    secretSource = "db";
-    try {
-      const svc = createServiceClient();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: ps } = await (svc as any)
-        .from("platform_settings")
-        .select("meta_app_secret_encrypted")
-        .eq("id", 1)
-        .maybeSingle();
-      if (ps?.meta_app_secret_encrypted) {
-        const { isEncrypted, decryptSecret: dec } = await import("@/lib/crypto");
-        appSecret = isEncrypted(ps.meta_app_secret_encrypted as string)
-          ? dec(ps.meta_app_secret_encrypted as string)
-          : (ps.meta_app_secret_encrypted as string);
-      }
-    } catch (e) {
-      console.error("[ig-webhook] failed to load platform app secret:", e);
-    }
-  }
-
-  if (!appSecret) {
-    console.error("[ig-webhook] META_APP_SECRET not configured — cannot verify signature. Set META_APP_SECRET in Vercel env vars.");
-    return NextResponse.json({ ok: true }); // return 200 so Meta doesn't retry endlessly
-  }
-
-  // ── 2. Signature verification ─────────────────────────────────────────────
   const rawBody = await req.text();
   const sig     = req.headers.get("x-hub-signature-256") ?? "";
-  const expected = "sha256=" + createHmac("sha256", appSecret).update(rawBody).digest("hex");
+
+  // ── 1. Gather every app secret this deployment knows about ────────────────
+  // Previously this read ONLY process.env.META_APP_SECRET (falling back to
+  // platform_settings when env was unset) and never consulted meta_byo — the
+  // inverse of the order OAuth uses to mint the token that CREATES the
+  // subscription. Production evidence: 69 meta_instagram webhook_events, every
+  // one verified=false, zero verified=true ever recorded. See lib/meta-secrets.ts.
+  const candidates = await collectMetaAppSecrets();
+
+  if (candidates.length === 0) {
+    console.error("[ig-webhook] no Meta app secret configured anywhere — cannot verify signature. Rejecting.");
+    void logWebhookEvent(rawBody, sig, false, "no_candidates");
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // ── 2. Constant-time verification against each candidate ──────────────────
+  // This does NOT widen acceptance: a forger must still produce a valid
+  // HMAC-SHA256 of this exact body under one of OUR real secrets.
+  const { matched, tried } = verifyAgainstCandidates(rawBody, sig, candidates);
+  const signatureValid = matched !== null;
+  const secretSource   = matched?.source ?? "none";
 
   console.log(
-    `[ig-webhook] sig-check source=${secretSource}` +
-    ` secret_len=${appSecret.length}` +
+    `[ig-webhook] sig-check matched_source=${secretSource}` +
+    ` matched_app_id=${matched?.appId ?? "unknown"}` +
+    ` candidates_tried=${tried.join(",")}` +
     ` body_len=${rawBody.length}` +
-    ` sig_match=${sig === expected}`,
+    ` sig_match=${signatureValid}`,
   );
 
-  // ── Signature gate ────────────────────────────────────────────────────────
-  // META_WEBHOOK_DEBUG_BYPASS_SIGNATURE=true skips enforcement for pipeline
-  // testing only. Remove the env var to re-enable enforcement. Never commit
-  // with bypass active — it is controlled entirely by the Vercel env var.
-  const signatureValid  = sig === expected;
-  const bypassSignature = process.env.META_WEBHOOK_DEBUG_BYPASS_SIGNATURE === "true";
+  // ── Signature gate — FAIL CLOSED ──────────────────────────────────────────
+  // The debug bypass is permanently inert in production. It is honoured only
+  // in a non-production runtime, and only when explicitly set to "true".
+  // In production an invalid signature is ALWAYS a 401, with no escape hatch.
+  //
+  // Merge note: this supersedes main's NODE_ENV-gated variant. Same production
+  // outcome, but it also covers Preview builds, warns when the var is set in a
+  // built deployment, and compares the HMAC in constant time (see above).
+  const IS_PROD = process.env.NODE_ENV === "production";
+  const bypassRequested = process.env.META_WEBHOOK_DEBUG_BYPASS_SIGNATURE === "true";
+
+  if (IS_PROD && bypassRequested) {
+    // NOTE: Next.js inlines NODE_ENV as "production" for every built deployment,
+    // so this fires on Preview builds too. Name the actual environment rather
+    // than assuming Production, or the operator hunts in the wrong place.
+    console.warn(
+      "[ig-webhook] ⚠ SECURITY: META_WEBHOOK_DEBUG_BYPASS_SIGNATURE is set in a built " +
+      `deployment (VERCEL_ENV=${process.env.VERCEL_ENV ?? "unknown"}). It is being IGNORED — ` +
+      "signature enforcement remains active. Remove this env var from that Vercel environment.",
+    );
+  }
+
+  const bypassSignature = bypassRequested && !IS_PROD;
 
   if (!signatureValid) {
-    console.error("[ig-webhook] SIGNATURE FAILED - received_sig does not match expected_sig");
+    console.error(
+      `[ig-webhook] SIGNATURE FAILED — no candidate matched. tried=${tried.join(",")}`,
+    );
     if (!bypassSignature) {
-      console.warn("[ig-webhook] ✗ signature mismatch — halting (set META_WEBHOOK_DEBUG_BYPASS_SIGNATURE=true to bypass for pipeline testing)");
-      return NextResponse.json({ ok: true });
+      console.warn("[ig-webhook] ✗ signature mismatch — rejecting with 401");
+      // Record the rejection. Fail-closed previously returned BEFORE the
+      // webhook_events insert, which destroyed exactly the observability this
+      // whole diagnosis relied on (69 rows, all verified=false). Fire-and-forget.
+      void logWebhookEvent(rawBody, sig, false, `no_match:${tried.join("|")}`);
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    console.error("[ig-webhook] ================================================================");
-    console.error("[ig-webhook] DEBUG MODE: META_WEBHOOK_DEBUG_BYPASS_SIGNATURE=true");
-    console.error("[ig-webhook] continuing despite signature failure — pipeline test in progress");
-    console.error("[ig-webhook] ================================================================");
+    console.warn("[ig-webhook] NON-PRODUCTION DEBUG BYPASS ACTIVE — continuing despite signature failure");
   } else {
     console.log("[ig-webhook] ✓ signature verified");
   }
@@ -290,6 +366,10 @@ export async function POST(req: NextRequest) {
 
       // ── 6. Upsert lead ──────────────────────────────────────────────────
       let leadId: string;
+      // Whether this enquiry is from someone we've never spoken to before.
+      // Forwarded to Inngest so the owner gets a "new enquiry" notification.
+      let isNewLead = false;
+      let leadDisplayName: string | null = resolvedName;
       try {
         const { data: existingLead } = await svc
           .from("leads")
@@ -302,6 +382,7 @@ export async function POST(req: NextRequest) {
         if (existingLead) {
           leadId = (existingLead as { id: string; name?: string | null }).id;
           const currentName = (existingLead as { id: string; name?: string | null }).name ?? "";
+          leadDisplayName = resolvedName ?? (currentName || null);
           // Re-enrich if: (a) name is blank/numeric IGSID, OR (b) name is a stored
           // "IG …" fallback from a previous failed lookup (stored directly), OR
           // (c) name is "@IG …" — an artifact of a prior webhook bug where the
@@ -324,7 +405,9 @@ export async function POST(req: NextRequest) {
         } else {
           // For new leads use resolvedName if available, otherwise store the IGSID as the name
           // so there's always a non-null name. The UI has its own display fallback.
+          isNewLead = true;
           const nameForInsert = resolvedName ?? senderIgsid;
+          leadDisplayName = nameForInsert;
           const { data: newLead, error: le } = await svc.from("leads").insert({
             org_id:       orgId,
             channel:      "instagram",
@@ -430,7 +513,7 @@ export async function POST(req: NextRequest) {
       try {
         await inngest.send({
           name: "dm.received",
-          data: { orgId, leadId, conversationId, messageId },
+          data: { orgId, leadId, conversationId, messageId, isNewLead, leadName: leadDisplayName },
         });
         console.log(
           `[ig-webhook] workflow triggered event=dm.received lead=${leadId} conv=${conversationId} msg=${messageId}` +

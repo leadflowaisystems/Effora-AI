@@ -6,7 +6,7 @@
 import { createServiceClient } from "@/lib/supabase/server";
 import { encryptSecret, decryptSecret } from "@/lib/crypto";
 
-const GRAPH = "https://graph.facebook.com/v18.0";
+const GRAPH = "https://graph.facebook.com/v23.0";
 
 export interface WhatsAppConfig {
   waba_id:              string;
@@ -24,10 +24,6 @@ export async function sendWhatsAppMessage(
 ): Promise<{ provider_message_id: string }> {
   const config = await loadWhatsAppConfig(orgId);
   const rawToken = decryptSecret(config.access_token_enc);
-
-  // DIAGNOSTIC — log token fingerprint immediately before the Meta send call.
-  // Compare these values against those from Settings save + wa-send-test endpoint.
-  console.log(`[wa-send] CREDENTIAL FINGERPRINT org=${orgId} tokenPrefix="${rawToken.slice(0, 12)}" tokenSuffix="${rawToken.slice(-8)}" tokenLength=${rawToken.length} phoneNumberId="${config.phone_number_id}" wabaId="${config.waba_id}" graphVersion="${GRAPH.split("/").pop()}" recipient="${recipientPhone}"`);
 
   const res = await fetch(`${GRAPH}/${config.phone_number_id}/messages`, {
     method:  "POST",

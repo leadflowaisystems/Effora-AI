@@ -137,6 +137,28 @@ export async function deliverOutboundMessage(
   const channelProvider = (conv as { channel_provider?: string; lead_id?: string } | null)?.channel_provider ?? "";
   const leadId          = (conv as { channel_provider?: string; lead_id?: string } | null)?.lead_id ?? "";
 
+  // ── Deleted-lead guard ────────────────────────────────────────────────────
+  // Every automated outbound path funnels through this function: AI replies,
+  // booking reminders, payment messages and ghost-revival nudges. Checking here
+  // means no Inngest function — present or future — can message a deleted lead,
+  // even if its own stop-check races or its step was already in flight.
+  // Stopping sequence_runs on delete makes this rare; this makes it impossible.
+  if (leadId) {
+    const { data: leadState } = await svc
+      .from("leads")
+      .select("deleted_at")
+      .eq("id", leadId)
+      .maybeSingle();
+
+    if ((leadState as { deleted_at?: string | null } | null)?.deleted_at) {
+      console.warn(
+        `[deliverOutbound] BLOCKED — lead ${leadId} is deleted. ` +
+        `Refusing to send (conv=${conversationId} source=${source}).`,
+      );
+      return { delivered: false, provider_message_id: null };
+    }
+  }
+
   // DIAG — log every resolve so we can see exactly what provider was found
   console.log(`[deliverOutbound] DIAG conv=${conversationId} channel_provider="${channelProvider}" lead_id="${leadId}" source="${source}" wa_match=${WA_PROVIDERS.has(channelProvider)} ig_match=${IG_PROVIDERS.has(channelProvider)}`);
 

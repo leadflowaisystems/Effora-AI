@@ -47,3 +47,11 @@ next-env.d.ts
 # Logs
 *.log
 scripts/loadtest-results.json
+
+.vercel
+.env*.local
+
+# Stray secret dumps and local backup files — NEVER commit (RC-1 item #1)
+# E.txt contained live production secrets; *.bak are local backups.
+E.txt
+*.bak

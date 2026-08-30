@@ -167,7 +167,20 @@ export function InboxShell({
           const upd = payload.new as {
             id: string; last_message_at: string | null;
             last_message_preview: string | null; lead_id: string;
+            deleted_at?: string | null;
           };
+
+          // "Remove from inbox" is an UPDATE that sets deleted_at. Without this
+          // branch the thread would survive here — and worse, be re-sorted to
+          // the top by its own archive event. Drop it instead.
+          if (upd.deleted_at) {
+            setConversations((prev) => {
+              const next = prev.filter((c) => c.id !== upd.id);
+              setInboxCache(orgId, next);
+              return next;
+            });
+            return;
+          }
 
           // Check membership without a state-setter side-effect
           const exists = conversationsRef.current.some((c) => c.id === upd.id);
@@ -254,11 +267,24 @@ export function InboxShell({
       );
     }
 
+    // Archive / delete — drop the thread from the sidebar immediately rather
+    // than waiting on the realtime round-trip.
+    function onConversationRemoved(e: Event) {
+      const { convId } = (e as CustomEvent<{ convId: string }>).detail;
+      setConversations((prev) => {
+        const next = prev.filter((c) => c.id !== convId);
+        setInboxCache(orgId, next);
+        return next;
+      });
+    }
+
     window.addEventListener("conversation-updated", onConversationUpdated);
+    window.addEventListener("conversation-removed", onConversationRemoved);
     window.addEventListener("draft-resolved",       onDraftResolved);
     window.addEventListener("draft-created",        onDraftCreated);
     return () => {
       window.removeEventListener("conversation-updated", onConversationUpdated);
+      window.removeEventListener("conversation-removed", onConversationRemoved);
       window.removeEventListener("draft-resolved",       onDraftResolved);
       window.removeEventListener("draft-created",        onDraftCreated);
     };

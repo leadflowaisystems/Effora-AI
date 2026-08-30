@@ -5,38 +5,40 @@
  * verifies the SMTP connection, and attempts an actual send.
  * Returns the full, unsanitised error so the root cause is immediately visible.
  *
- * Auth: caller must supply { adminEmail } matching ADMIN_EMAILS env var.
- *       No browser session needed — safe to call with curl.
+ * Auth: requires an authenticated Supabase session belonging to a founder
+ *       (FOUNDER_EMAILS env var or the founder_accounts table). Identity comes
+ *       from the session cookie only — never from the request body. Must be
+ *       invoked from a logged-in browser, not curl.
  *
- * curl example:
- *   curl -X POST https://www.effora.co.in/api/admin/email-test \
- *     -H "Content-Type: application/json" \
- *     -d '{"adminEmail":"you@example.com","testTo":"you@example.com"}'
+ * Usage (logged in as a founder, from the browser console on the app domain):
+ *   await fetch("/api/admin/email-test", {
+ *     method: "POST",
+ *     headers: { "Content-Type": "application/json" },
+ *     body: JSON.stringify({ testTo: "you@example.com" }),
+ *   }).then(r => r.json())
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import nodemailer from "nodemailer";
+import { requireFounder } from "@/lib/founder-guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {
-    // ── Admin gate ─────────────────────────────────────────────────────────────
-    const adminEmails = (process.env.ADMIN_EMAILS ?? "")
-      .split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
+    // ── Founder gate: authenticated session + founder membership ──────────────
+    // A body-supplied email is NOT accepted as authentication.
+    const founderEmail = await requireFounder();
+    if (!founderEmail) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
-    let body: { adminEmail?: string; testTo?: string } = {};
+    let body: { testTo?: string } = {};
     try { body = await req.json(); } catch { /* empty body */ }
 
-    const { adminEmail, testTo } = body;
+    const { testTo } = body;
 
-    if (!adminEmail || !adminEmails.includes(adminEmail.toLowerCase())) {
-      return NextResponse.json(
-        { error: "Not admin — provide adminEmail matching ADMIN_EMAILS env var" },
-        { status: 403 },
-      );
-    }
     if (!testTo) {
       return NextResponse.json({ error: "testTo email address required" }, { status: 400 });
     }
@@ -79,7 +81,7 @@ export async function POST(req: NextRequest) {
       // Resolved values that will actually be used
       resolvedUser: smtpUser ? `${smtpUser.slice(0, 10)}...` : "EMPTY — no credentials found",
       resolvedFrom: fromEmail || "EMPTY",
-      ADMIN_EMAILS: adminEmails.length ? `${adminEmails.length} address(es)` : "MISSING",
+      authenticatedAs: founderEmail,
     };
 
     if (!smtpUser || !smtpPass) {

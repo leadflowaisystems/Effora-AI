@@ -64,6 +64,20 @@ In your new app's dashboard, add these products:
 
 ---
 
+## Step 5b: Configure the Data Deletion Request URL
+
+Meta requires either a Data Deletion Request **callback URL** or a Data Deletion
+**instructions URL** in App Settings → Basic:
+
+- **Data Deletion Request URL** (callback, called automatically by Meta):
+  `https://www.effora.co.in/api/meta/data-deletion`
+- Alternatively/additionally, the **Data Deletion Instructions URL** (human-readable page):
+  `https://www.effora.co.in/data-deletion`
+
+Both are live — you can set either or both fields in the dashboard.
+
+---
+
 ## Step 6: Submit for App Review
 
 1. Go to **App Review → Permissions and Features**

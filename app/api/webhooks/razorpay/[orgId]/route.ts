@@ -24,12 +24,28 @@ export async function POST(req: NextRequest, { params }: Params) {
   const rawBody  = await req.text();
   const sigHeader = req.headers.get("x-razorpay-signature") ?? "";
 
-  // Verify signature when secret is configured
+  // ── Signature gate — FAIL CLOSED ─────────────────────────────
+  // Every rejection path returns 401 and logs a specific reason. There is no
+  // path that processes an unverified payload: a missing org secret, a missing
+  // signature header, and a bad HMAC are all hard rejections.
   const webhookSecret = await getRazorpayWebhookSecret(params.orgId);
-  if (webhookSecret && sigHeader) {
-    if (!verifyWebhookSignature(rawBody, sigHeader, webhookSecret)) {
-      return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
-    }
+
+  if (!webhookSecret) {
+    console.error(
+      `[razorpay-webhook] REJECTED org=${params.orgId} reason=no_webhook_secret_configured — ` +
+      "store the Razorpay webhook secret on this org's razorpay integration before enabling the webhook",
+    );
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (!sigHeader) {
+    console.error(`[razorpay-webhook] REJECTED org=${params.orgId} reason=missing_signature_header`);
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (!verifyWebhookSignature(rawBody, sigHeader, webhookSecret)) {
+    console.error(`[razorpay-webhook] REJECTED org=${params.orgId} reason=invalid_signature`);
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   let payload: Record<string, unknown>;
