@@ -22,7 +22,7 @@ type Provider = typeof ALLOWED_PROVIDERS[number];
 /** Fields that contain secrets and must be encrypted. */
 const SECRET_FIELDS: Record<Provider, string[]> = {
   calcom:    ["api_key", "webhook_secret"],
-  razorpay:  ["key_secret"],
+  razorpay:  ["key_secret", "webhook_secret"],
   manychat:  ["api_key"],
   meta:      ["page_access_token", "app_secret"],
 };
@@ -119,16 +119,24 @@ export async function PUT(req: NextRequest, { params }: Params) {
     // Use maybeSingle() so "no rows" returns null instead of a PGRST116 error.
     const { data: existing } = await service
       .from("integrations")
-      .select("id")
+      .select("id, config")
       .eq("org_id", params.orgId)
       .eq("provider", provider)
       .maybeSingle();
 
     let result;
     if (existing) {
+      // Merge over the stored config rather than replacing it. A wholesale
+      // replace silently dropped every key the caller did not resend — e.g.
+      // saving Razorpay API keys deleted webhook_secret_enc, because neither
+      // the settings form nor the onboarding wizard submits that field.
+      const existingConfig =
+        ((existing as { config?: Record<string, string> }).config ?? {}) as Record<string, string>;
+      const mergedConfig: Record<string, string> = { ...existingConfig, ...storedConfig };
+
       result = await service
         .from("integrations")
-        .update({ config: storedConfig, active, updated_at: now })
+        .update({ config: mergedConfig, active, updated_at: now })
         .eq("id", (existing as { id: string }).id)
         .select("id, provider, active, updated_at")
         .single();
