@@ -5,7 +5,7 @@
  * Falls back gracefully when keys are absent (returns null).
  */
 
-import { createHmac } from "crypto";
+import { createHmac, timingSafeEqual } from "crypto";
 import { createServiceClient } from "@/lib/supabase/server";
 import { decryptSecret, isEncrypted } from "@/lib/crypto";
 
@@ -179,7 +179,12 @@ export function verifyWebhookSignature(
   secret:    string
 ): boolean {
   const expected = createHmac("sha256", secret).update(body).digest("hex");
-  return signature === expected;
+  const a = Buffer.from(signature, "utf8");
+  const b = Buffer.from(expected,  "utf8");
+  // timingSafeEqual throws on length mismatch, so guard first. Length is not
+  // secret (it is fixed by the digest), so an early return here leaks nothing.
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }
 
 /** Retrieve the webhook secret from the integration config. */

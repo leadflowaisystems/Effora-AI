@@ -24,12 +24,31 @@ export async function POST(req: NextRequest, { params }: Params) {
   const rawBody  = await req.text();
   const sigHeader = req.headers.get("x-razorpay-signature") ?? "";
 
-  // Verify signature when secret is configured
+  // ── Fail-closed signature verification ───────────────────────
+  // Runs before any DB mutation. The previous `if (secret && sigHeader)`
+  // guard meant an unsigned request skipped verification entirely, so any
+  // caller who knew the orgId could forge a capture.
   const webhookSecret = await getRazorpayWebhookSecret(params.orgId);
-  if (webhookSecret && sigHeader) {
-    if (!verifyWebhookSignature(rawBody, sigHeader, webhookSecret)) {
-      return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
-    }
+
+  if (!webhookSecret) {
+    // Server-side configuration gap, not a bad request: 503 so Razorpay
+    // retries once a webhook secret is saved in Settings › Payments,
+    // rather than the delivery being silently discarded.
+    console.error(
+      `[razorpay-webhook] no webhook secret configured for org ${params.orgId} — rejecting. ` +
+      `Save the Razorpay webhook secret in Settings › Payments.`,
+    );
+    return NextResponse.json({ error: "Webhook secret not configured" }, { status: 503 });
+  }
+
+  if (!sigHeader) {
+    console.warn(`[razorpay-webhook] missing x-razorpay-signature for org ${params.orgId} — rejecting`);
+    return NextResponse.json({ error: "Missing signature" }, { status: 401 });
+  }
+
+  if (!verifyWebhookSignature(rawBody, sigHeader, webhookSecret)) {
+    console.warn(`[razorpay-webhook] signature mismatch for org ${params.orgId} — rejecting`);
+    return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
   }
 
   let payload: Record<string, unknown>;
