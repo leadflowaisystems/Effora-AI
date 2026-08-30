@@ -25,9 +25,9 @@ export async function sendWhatsAppMessage(
   const config = await loadWhatsAppConfig(orgId);
   const rawToken = decryptSecret(config.access_token_enc);
 
-  // DIAGNOSTIC — log token fingerprint immediately before the Meta send call.
-  // Compare these values against those from Settings save + wa-send-test endpoint.
-  console.log(`[wa-send] CREDENTIAL FINGERPRINT org=${orgId} tokenPrefix="${rawToken.slice(0, 12)}" tokenSuffix="${rawToken.slice(-8)}" tokenLength=${rawToken.length} phoneNumberId="${config.phone_number_id}" wabaId="${config.waba_id}" graphVersion="${GRAPH.split("/").pop()}" recipient="${recipientPhone}"`);
+  // NOTE: never log token fragments (prefix/suffix/length) or the recipient's
+  // phone number here. The success and failure paths below already record
+  // org + phone_number_id + outcome, which is enough to diagnose sends.
 
   const res = await fetch(`${GRAPH}/${config.phone_number_id}/messages`, {
     method:  "POST",

@@ -23,12 +23,17 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Local env files — NEVER commit these
+# Local env files — NEVER commit these.
+# The trailing * matters: it also covers local backups such as
+# .env.local.rescue-backup, .env.local.bak and .env.production.local.old,
+# which the bare filenames alone did not match.
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*
+.env.local*
+.env.development.local*
+.env.test.local*
+.env.production.local*
+!.env.example
 
 # Vercel
 .vercel
