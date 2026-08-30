@@ -21,14 +21,18 @@ export async function sendWhatsAppMessage(
   orgId:          string,
   recipientPhone: string,
   text:           string,
-): Promise<{ provider_message_id: string }> {
+  // graph_ms / cfg_ms are instrumentation only. Existing callers that destructure
+  // just provider_message_id are unaffected.
+): Promise<{ provider_message_id: string; graph_ms?: number; cfg_ms?: number }> {
+  // Instrumentation: tCfg measures config load (DB round-trip unless cached),
+  // tGraph measures the Meta Graph API call in isolation. No PII is logged —
+  // never token fragments, never the recipient's phone number.
+  const tCfgStart = Date.now();
   const config = await loadWhatsAppConfig(orgId);
+  const cfgMs = Date.now() - tCfgStart;
   const rawToken = decryptSecret(config.access_token_enc);
 
-  // NOTE: never log token fragments (prefix/suffix/length) or the recipient's
-  // phone number here. The success and failure paths below already record
-  // org + phone_number_id + outcome, which is enough to diagnose sends.
-
+  const tGraphStart = Date.now();
   const res = await fetch(`${GRAPH}/${config.phone_number_id}/messages`, {
     method:  "POST",
     headers: {
@@ -44,15 +48,19 @@ export async function sendWhatsAppMessage(
     }),
   });
 
+  const graphMs = Date.now() - tGraphStart;
+
   if (!res.ok) {
     const errBody = await res.text();
     // Log the HTTP status + full error body so it appears in Vercel logs
     console.error(`[wa-send] META SEND FAILED org=${orgId} phoneNumberId="${config.phone_number_id}" http_status=${res.status} error_body=${errBody}`);
+    console.log(`[wa-timing] stage=graph_send org=${orgId} ok=false cfg_ms=${cfgMs} cfg_cached=${cfgMs < 5} graph_ms=${graphMs}`);
     throw new Error(`WhatsApp send failed: ${errBody}`);
   }
   const data = await res.json() as { messages: Array<{ id: string }> };
   console.log(`[wa-send] META SEND OK org=${orgId} provider_message_id="${data.messages?.[0]?.id ?? ""}"`);
-  return { provider_message_id: data.messages?.[0]?.id ?? "" };
+  console.log(`[wa-timing] stage=graph_send org=${orgId} ok=true cfg_ms=${cfgMs} cfg_cached=${cfgMs < 5} graph_ms=${graphMs}`);
+  return { provider_message_id: data.messages?.[0]?.id ?? "", graph_ms: graphMs, cfg_ms: cfgMs };
 }
 
 // ── Send template message (approved Meta template, works outside 24h window) ─

@@ -69,6 +69,14 @@ interface WAWebhookBody {
 }
 
 export async function POST(req: NextRequest) {
+  // ── Instrumentation ───────────────────────────────────────────────────────
+  // tReceived is Effora's server clock at the moment the webhook entered the
+  // function. messages.sent_at for inbound rows is META's timestamp, not ours,
+  // so this is the only way to separate Meta's delivery leg from our own work.
+  // No PII is logged: org / conversation / message ids only, never phone
+  // numbers, message content, signatures or secrets.
+  const tReceived = Date.now();
+
   const appSecret = process.env.META_APP_SECRET;
   if (!appSecret) {
     console.error("[wa-webhook] META_APP_SECRET not set");
@@ -125,6 +133,8 @@ export async function POST(req: NextRequest) {
 
       for (const msg of value.messages ?? []) {
         if (msg.type !== "text" || !msg.text?.body) continue;
+
+        const tMsgStart = Date.now();
 
         const senderPhone = msg.from;
         const messageText = msg.text.body;
@@ -199,14 +209,27 @@ export async function POST(req: NextRequest) {
         }
 
         // ── 3. Insert message + update preview in parallel ────────────────────
+        // Meta's own timestamp for this message (second precision).
+        const metaSentMs = parseInt(msg.timestamp) * 1000;
+
         const [msgRes] = await Promise.all([
           svc.from("messages").insert({
             conversation_id: conversationId,
             org_id:          orgId,
             direction:       "inbound",
             content:         messageText,
-            sent_at:         new Date(parseInt(msg.timestamp) * 1000).toISOString(),
-            metadata:        { source: "whatsapp", sender_phone: senderPhone, wamid: msg.id },
+            sent_at:         new Date(metaSentMs).toISOString(),
+            metadata:        {
+              source: "whatsapp", sender_phone: senderPhone, wamid: msg.id,
+              // Instrumentation. `recv` is Effora's receipt time; `meta_lag_ms`
+              // is Meta's delivery leg (recv - Meta timestamp); `pre_ms` is the
+              // DB work this webhook did before inserting the row.
+              t: {
+                recv:        new Date(tReceived).toISOString(),
+                meta_lag_ms: tReceived - metaSentMs,
+                pre_ms:      Date.now() - tMsgStart,
+              },
+            },
           }).select("id").single(),
           svc.from("conversations").update({
             last_message_at:      now,
@@ -228,9 +251,14 @@ export async function POST(req: NextRequest) {
         }).catch((err: unknown) => console.error("[wa-webhook] inngest.send failed:", err));
 
         console.log(`[wa-webhook] ✓ message lead=${leadId} conv=${conversationId}`);
+        console.log(
+          `[wa-timing] stage=inbound org=${orgId} conv=${conversationId} msg=${messageId} ` +
+          `meta_lag_ms=${tReceived - metaSentMs} db_ms=${Date.now() - tMsgStart} ack_ms=${Date.now() - tReceived}`,
+        );
       }
     }
   }
 
+  console.log(`[wa-timing] stage=inbound_ack total_ms=${Date.now() - tReceived}`);
   return NextResponse.json({ ok: true });
 }

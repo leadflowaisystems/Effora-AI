@@ -376,9 +376,12 @@ export interface Database {
           org_id: string;
           direction: "inbound" | "outbound";
           content: string;
+          /** Provider timestamp for inbound Meta channels; server clock otherwise. See migration 037. */
           sent_at: string;
           provider_message_id: string | null;
           metadata: Json;
+          /** Server clock at insert. Added by migration 037 (instrumentation). Optional: NULL for rows predating it, absent until the migration is applied. */
+          created_at?: string | null;
         };
         Insert: {
           id?: string;
@@ -389,6 +392,8 @@ export interface Database {
           sent_at?: string;
           provider_message_id?: string | null;
           metadata?: Json;
+          /** Never set by application code — the database default supplies it. */
+          created_at?: string | null;
         };
         Update: {
           id?: string;

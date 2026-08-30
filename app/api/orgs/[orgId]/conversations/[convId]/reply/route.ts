@@ -28,7 +28,18 @@ async function assertMember(orgId: string) {
 }
 
 export async function POST(req: NextRequest, { params }: Params) {
+  // ── Instrumentation ───────────────────────────────────────────────────────
+  // Stage timings for the manual-reply hot path. Each value is wall-clock ms
+  // for one sequential await. Emitted as a log line AND as a Server-Timing
+  // response header so the browser's Network panel shows the server-side
+  // breakdown without any UI change. Safe fields only: ids and durations.
+  const tStart = Date.now();
+  const T: Record<string, number> = {};
+  const mark = (k: string, from: number) => { T[k] = Date.now() - from; };
+
+  const tAuth = Date.now();
   const user = await assertMember(params.orgId);
+  mark("auth", tAuth);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await req.json().catch(() => ({})) as { content?: string; attachment_url?: string };
@@ -43,11 +54,13 @@ export async function POST(req: NextRequest, { params }: Params) {
   const svc     = createServiceClient();
 
   // Load conversation to determine channel + lead's external_id for real delivery
+  const tConv = Date.now();
   const { data: conv } = await svc
     .from("conversations")
     .select("channel_provider, lead_id")
     .eq("id", params.convId)
     .single();
+  mark("conv", tConv);
 
   let providerMessageId: string | null = null;
   const deliveryMeta: Record<string, string> = {};
@@ -106,11 +119,13 @@ export async function POST(req: NextRequest, { params }: Params) {
     }
   } else if (WA_PROVIDERS.has(channelProvider)) {
     // ── WhatsApp Cloud API manual reply ──────────────────────────────────────
+    const tLead = Date.now();
     const { data: lead } = await svc
       .from("leads")
       .select("external_id")
       .eq("id", (conv as { lead_id: string }).lead_id)
       .single();
+    mark("lead", tLead);
 
     const rawExtId = ((lead as { external_id: string } | null)?.external_id ?? "")
       .replace(/^wa_/, "");
@@ -125,7 +140,11 @@ export async function POST(req: NextRequest, { params }: Params) {
       console.log("[wa-send] skipping — empty content (WA image send not yet supported in manual path)");
     } else {
       try {
+        const tSend = Date.now();
         const result = await sendWhatsAppMessage(params.orgId, rawExtId, content);
+        mark("send", tSend);
+        if (result.graph_ms !== undefined) T.graph = result.graph_ms;
+        if (result.cfg_ms   !== undefined) T.cfg   = result.cfg_ms;
         providerMessageId = result.provider_message_id;
         console.log(`[wa-send] delivery ok provider_message_id=${providerMessageId}`);
       } catch (sendErr) {
@@ -148,6 +167,7 @@ export async function POST(req: NextRequest, { params }: Params) {
   // Display content: for image-only messages use the URL as the stored content
   const storedContent = content || attachmentUrl || "";
 
+  const tInsert = Date.now();
   const { data: message, error } = await svc.from("messages").insert({
     conversation_id:    params.convId,
     org_id:             params.orgId,
@@ -160,16 +180,34 @@ export async function POST(req: NextRequest, { params }: Params) {
       sent_by:        user.id,
       attachment_url: attachmentUrl ?? null,
       ...deliveryMeta,
+      // Instrumentation: per-stage ms for this reply. Durations only, no PII.
+      t: { ...T, insert: Date.now() - tInsert },
     },
   }).select("id, content, sent_at").single();
+  mark("insert", tInsert);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
+  const tUpdate = Date.now();
   await svc.from("conversations").update({
     last_message_at:      now,
     last_message_preview: (content || (attachmentUrl ? "📷 Image" : "")).slice(0, 80),
   }).eq("id", params.convId);
+  mark("convUpdate", tUpdate);
+
+  T.total = Date.now() - tStart;
+
+  // Log line: ids + durations only — never phone numbers, content or secrets.
+  console.log(
+    `[wa-timing] stage=manual_reply org=${params.orgId} conv=${params.convId} msg=${(message as { id: string } | null)?.id ?? "none"} ` +
+    Object.entries(T).map(([k, v]) => `${k}_ms=${v}`).join(" "),
+  );
 
   const deliveryFailed = !!deliveryMeta.delivery_error;
-  return NextResponse.json({ message, delivery_failed: deliveryFailed, delivery_error: deliveryMeta.delivery_error ?? null });
+  return NextResponse.json(
+    { message, delivery_failed: deliveryFailed, delivery_error: deliveryMeta.delivery_error ?? null },
+    // Server-Timing exposes the same breakdown in the browser Network panel,
+    // so browser-request -> server-response can be measured with no UI change.
+    { headers: { "Server-Timing": Object.entries(T).map(([k, v]) => `${k};dur=${v}`).join(", ") } },
+  );
 }

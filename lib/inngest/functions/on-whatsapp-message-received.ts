@@ -34,6 +34,9 @@ export const onWhatsAppMessageReceived = inngest.createFunction(
   async ({ event, step }) => {
     const { orgId, leadId, conversationId, messageId, senderPhone: _senderPhone } = event.data as WAMessageData;
 
+    // Instrumentation only — ids and durations, never phone numbers or content.
+    const tFnStart = Date.now();
+
     // ── 1. Load context (parallel DB + Cal.com) ──────────────────────────────
     const ctx = await step.run("load-context", async () => {
       const svc = createServiceClient();
@@ -64,7 +67,10 @@ export const onWhatsAppMessageReceived = inngest.createFunction(
       };
     });
 
+    const ctxMs = Date.now() - tFnStart;
+
     if (!ctx.org || !ctx.lead || ctx.messages.length === 0) {
+      console.log(`[wa-timing] stage=inngest org=${orgId} conv=${conversationId} msg=${messageId} ctx_ms=${ctxMs} outcome=skipped_missing_context`);
       return { skipped: true, reason: "Missing context" };
     }
 
@@ -76,11 +82,13 @@ export const onWhatsAppMessageReceived = inngest.createFunction(
       const now = new Date().toISOString();
 
       // 2a. Qualify
+      const tQualify = Date.now();
       const qualification = await qualifyLead({
         messages:     ctx.messages,
         voiceProfile: ctx.voiceProfile,
         orgId,
       });
+      console.log(`[wa-timing] stage=ai_qualify org=${orgId} conv=${conversationId} qualify_ms=${Date.now() - tQualify} stage_out=${qualification.stage}`);
 
       // 2b. Persist score + stage immediately after qualify
       await svc.from("leads").update({
@@ -92,6 +100,7 @@ export const onWhatsAppMessageReceived = inngest.createFunction(
 
       // 2c. Draft + send only for warm / hot leads
       if (qualification.stage !== "hot" && qualification.stage !== "warm") {
+        console.log(`[wa-timing] stage=inngest org=${orgId} conv=${conversationId} msg=${messageId} ctx_ms=${ctxMs} total_ms=${Date.now() - tFnStart} outcome=no_draft_stage_${qualification.stage}`);
         return { score: qualification.score, stage: qualification.stage, drafted: false };
       }
 
@@ -110,6 +119,7 @@ export const onWhatsAppMessageReceived = inngest.createFunction(
         ?? ctx.org?.auto_send_replies;
 
       // 2e. Draft
+      const tDraft = Date.now();
       const draft = await draftReply({
         messages:     ctx.messages,
         voiceProfile: ctx.voiceProfile,
@@ -118,6 +128,7 @@ export const onWhatsAppMessageReceived = inngest.createFunction(
         orgId,
         calLink:      calLinkForDraft,
       });
+      console.log(`[wa-timing] stage=ai_draft org=${orgId} conv=${conversationId} draft_ms=${Date.now() - tDraft}`);
 
       if (autoReply) {
         // deliverOutboundMessage sends via WA Cloud API AND stores message to DB atomically
@@ -147,6 +158,8 @@ export const onWhatsAppMessageReceived = inngest.createFunction(
           status:          "pending",
         });
       }
+
+      console.log(`[wa-timing] stage=inngest org=${orgId} conv=${conversationId} msg=${messageId} ctx_ms=${ctxMs} total_ms=${Date.now() - tFnStart} outcome=drafted sent=${!!autoReply}`);
 
       return {
         score:   qualification.score,
