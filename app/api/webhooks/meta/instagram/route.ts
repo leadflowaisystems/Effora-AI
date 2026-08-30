@@ -17,7 +17,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { createHmac }               from "crypto";
+import { createHmac, timingSafeEqual } from "crypto";
 import { createServiceClient }      from "@/lib/supabase/server";
 import { inngest }                  from "@/lib/inngest/client";
 import { getIgUserProfile }         from "@/lib/integrations/meta-instagram";
@@ -73,90 +73,57 @@ interface IgWebhookBody {
   entry:  IgEntry[];
 }
 
+/**
+ * Meta X-Hub-Signature-256 verification: HMAC-SHA256 over the EXACT raw body,
+ * compared in constant time. Never logs or returns any secret material.
+ */
+function verifyMetaSignature(rawBody: string, header: string, secret: string): boolean {
+  const expected = "sha256=" + createHmac("sha256", secret).update(rawBody).digest("hex");
+  const received = Buffer.from(header, "utf8");
+  const computed = Buffer.from(expected, "utf8");
+  // timingSafeEqual throws on length mismatch, so guard first. The length of a
+  // signature is not secret, so returning early here leaks nothing.
+  if (received.length !== computed.length) return false;
+  return timingSafeEqual(received, computed);
+}
+
 export async function POST(req: NextRequest) {
-  // ── 1. Resolve app secret for signature verification ──────────────────────
-  let appSecret = process.env.META_APP_SECRET;
-  let secretSource = "env-var";
-
+  // ── 1. Fail-closed signature verification ─────────────────────────────────
+  // Instagram subscriptions created through "Instagram API with Instagram Login"
+  // are signed with the INSTAGRAM app secret — a different value from
+  // META_APP_SECRET, which is the Facebook app secret WhatsApp Cloud API uses.
+  // Verifying against META_APP_SECRET failed for all 2,829 deliveries recorded
+  // between 2026-06-05 and Stage A, while the first genuine deliveries checked
+  // against INSTAGRAM_APP_SECRET verified immediately. That is what proved the
+  // secret, and why no fallback to META_APP_SECRET exists here.
+  //
+  // The previous META_WEBHOOK_DEBUG_BYPASS_SIGNATURE escape hatch is gone. It
+  // meant any caller who knew the URL could POST an unsigned payload and have it
+  // fully processed — creating leads, conversations and messages, and firing
+  // dm.received, which spends AI tokens and can send an outbound Instagram DM.
+  // Rejection now happens before JSON parsing and before any database access, so
+  // a forged request cannot mutate anything.
+  const appSecret = process.env.INSTAGRAM_APP_SECRET;
   if (!appSecret) {
-    secretSource = "db";
-    try {
-      const svc = createServiceClient();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: ps } = await (svc as any)
-        .from("platform_settings")
-        .select("meta_app_secret_encrypted")
-        .eq("id", 1)
-        .maybeSingle();
-      if (ps?.meta_app_secret_encrypted) {
-        const { isEncrypted, decryptSecret: dec } = await import("@/lib/crypto");
-        appSecret = isEncrypted(ps.meta_app_secret_encrypted as string)
-          ? dec(ps.meta_app_secret_encrypted as string)
-          : (ps.meta_app_secret_encrypted as string);
-      }
-    } catch (e) {
-      console.error("[ig-webhook] failed to load platform app secret:", e);
-    }
+    console.error("[ig-webhook] INSTAGRAM_APP_SECRET not configured — rejecting");
+    return NextResponse.json({ error: "Server misconfigured" }, { status: 500 });
   }
 
-  if (!appSecret) {
-    console.error("[ig-webhook] META_APP_SECRET not configured — cannot verify signature. Set META_APP_SECRET in Vercel env vars.");
-    return NextResponse.json({ ok: true }); // return 200 so Meta doesn't retry endlessly
-  }
-
-  // ── 2. Signature verification ─────────────────────────────────────────────
   const rawBody = await req.text();
   const sig     = req.headers.get("x-hub-signature-256") ?? "";
-  const expected = "sha256=" + createHmac("sha256", appSecret).update(rawBody).digest("hex");
 
-  // ── STAGE A — OBSERVATION ONLY, NO ENFORCEMENT CHANGE ─────────────────────
-  // Instagram subscriptions created through "Instagram API with Instagram Login"
-  // are signed with the INSTAGRAM app secret, a different value from
-  // META_APP_SECRET (the Facebook app secret WhatsApp Cloud API uses). All 2,829
-  // Instagram deliveries recorded since 2026-06-05 have verified=false against
-  // META_APP_SECRET, while WhatsApp — same header, same algorithm, same raw body,
-  // and no bypass — verifies fine. That points at the secret, not at this code.
-  //
-  // Computing the signature against INSTAGRAM_APP_SECRET and recording it in
-  // webhook_events.verified lets a REAL Meta delivery prove which secret is
-  // correct. It deliberately does NOT enforce — the bypass branch below is
-  // untouched, so no request changes behaviour. Enforcement lands in Stage B,
-  // only once a genuine delivery has been observed with verified=true.
-  const igAppSecret = process.env.INSTAGRAM_APP_SECRET;
-  const igExpected  = igAppSecret
-    ? "sha256=" + createHmac("sha256", igAppSecret).update(rawBody).digest("hex")
-    : null;
-  const igSignatureValid = igExpected !== null && sig === igExpected;
-
-  // Booleans and body size only — never secret material, lengths or fingerprints.
-  console.log(
-    `[ig-webhook] sig-check source=${secretSource}` +
-    ` body_len=${rawBody.length}` +
-    ` meta_sig_match=${sig === expected}` +
-    ` ig_secret_configured=${!!igAppSecret}` +
-    ` ig_sig_match=${igSignatureValid}`,
-  );
-
-  // ── Signature gate ────────────────────────────────────────────────────────
-  // META_WEBHOOK_DEBUG_BYPASS_SIGNATURE=true skips enforcement for pipeline
-  // testing only. Remove the env var to re-enable enforcement. Never commit
-  // with bypass active — it is controlled entirely by the Vercel env var.
-  const signatureValid  = sig === expected;
-  const bypassSignature = process.env.META_WEBHOOK_DEBUG_BYPASS_SIGNATURE === "true";
-
-  if (!signatureValid) {
-    console.error("[ig-webhook] SIGNATURE FAILED - received_sig does not match expected_sig");
-    if (!bypassSignature) {
-      console.warn("[ig-webhook] ✗ signature mismatch — halting (set META_WEBHOOK_DEBUG_BYPASS_SIGNATURE=true to bypass for pipeline testing)");
-      return NextResponse.json({ ok: true });
-    }
-    console.error("[ig-webhook] ================================================================");
-    console.error("[ig-webhook] DEBUG MODE: META_WEBHOOK_DEBUG_BYPASS_SIGNATURE=true");
-    console.error("[ig-webhook] continuing despite signature failure — pipeline test in progress");
-    console.error("[ig-webhook] ================================================================");
-  } else {
-    console.log("[ig-webhook] ✓ signature verified");
+  if (!sig) {
+    console.warn("[ig-webhook] missing x-hub-signature-256 — rejecting");
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  if (!verifyMetaSignature(rawBody, sig, appSecret)) {
+    console.warn("[ig-webhook] signature mismatch — rejecting");
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Body size only — never secret material, lengths or fingerprints.
+  console.log(`[ig-webhook] ✓ signature verified body_len=${rawBody.length}`);
 
   // ── 3. Parse payload ──────────────────────────────────────────────────────
   let body: IgWebhookBody;
@@ -266,9 +233,9 @@ export async function POST(req: NextRequest) {
             event_type: msg.mid ? "message" : "messaging_postback",
             sender_id:  senderIgsid,
             payload:    { entry_id: entryId, mid: msg.mid, has_text: !!messageText },
-            // Stage A observation channel: records whether INSTAGRAM_APP_SECRET
-            // produces the signature Meta sent, without acting on the result.
-            verified:   igSignatureValid,
+            // Enforcement is fail-closed above, so reaching this line means the
+            // signature was verified against INSTAGRAM_APP_SECRET.
+            verified:   true,
             created_at: now,
           });
         } catch (e) {
