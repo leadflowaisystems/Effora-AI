@@ -7,6 +7,7 @@ import { onBookingNoShow }           from "@/lib/inngest/functions/on-booking-no
 import { onBookingConfirmMessage }   from "@/lib/inngest/functions/on-booking-confirm-message";
 import { onPaymentCreated }          from "@/lib/inngest/functions/on-payment-created";
 import { onPaymentUnpaid }           from "@/lib/inngest/functions/on-payment-unpaid";
+import { onPaymentCaptured }         from "@/lib/inngest/functions/on-payment-captured";
 import { onPaymentLinkMessage }      from "@/lib/inngest/functions/on-payment-link-message";
 import { onGhostRevival }            from "@/lib/inngest/functions/on-ghost-revival";
 import { aggregateDailyMetrics }     from "@/lib/inngest/functions/daily-metrics";
@@ -34,6 +35,7 @@ export const { GET, POST, PUT } = serve({
     onBookingConfirmMessage,
     onPaymentCreated,
     onPaymentUnpaid,
+    onPaymentCaptured,
     onPaymentLinkMessage,
     onGhostRevival,
     aggregateDailyMetrics,
