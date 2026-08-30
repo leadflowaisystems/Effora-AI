@@ -53,14 +53,30 @@ export async function POST(req: NextRequest, { params }: Params) {
   const now     = new Date().toISOString();
   const svc     = createServiceClient();
 
-  // Load conversation to determine channel + lead's external_id for real delivery
+  // Load conversation to determine channel + lead's external_id for real delivery.
+  //
+  // OPTIMIZATION (Step 7B): the lead's external_id is embedded here via the
+  // conversations->leads foreign key instead of being fetched by a second
+  // query inside each channel branch. The old code was two strictly sequential
+  // round-trips (the lead query needed conv.lead_id), each measured at ~249 ms.
+  // Embedding collapses them into one, removing one full round-trip.
+  //
+  // Filter is deliberately UNCHANGED (.eq("id", params.convId) only) so
+  // authorization semantics are byte-for-byte identical to before. See the
+  // separate note about org scoping on this query — that is not changed here.
   const tConv = Date.now();
   const { data: conv } = await svc
     .from("conversations")
-    .select("channel_provider, lead_id")
+    .select("channel_provider, lead_id, leads(external_id)")
     .eq("id", params.convId)
     .single();
   mark("conv", tConv);
+
+  // PostgREST returns a many-to-one embed as an object; tolerate an array shape
+  // defensively so a PostgREST version change cannot break delivery.
+  const embeddedLead = (conv as { leads?: { external_id?: string } | { external_id?: string }[] } | null)?.leads;
+  const leadExternalId =
+    (Array.isArray(embeddedLead) ? embeddedLead[0]?.external_id : embeddedLead?.external_id) ?? "";
 
   let providerMessageId: string | null = null;
   const deliveryMeta: Record<string, string> = {};
@@ -74,14 +90,7 @@ export async function POST(req: NextRequest, { params }: Params) {
   // Delivery failure is non-fatal: the message is always stored in the DB so the
   // coach can see what was typed, and delivery_error metadata surfaces the reason.
   if (IG_PROVIDERS.has(channelProvider)) {
-    const { data: lead } = await svc
-      .from("leads")
-      .select("external_id")
-      .eq("id", (conv as { lead_id: string }).lead_id)
-      .single();
-
-    const rawIgUserId = ((lead as { external_id: string } | null)?.external_id ?? "")
-      .replace(/^ig_/, "");
+    const rawIgUserId = leadExternalId.replace(/^ig_/, "");
 
     console.log(`[ig-send] token loading org=${params.orgId} recipient=${rawIgUserId || "(empty)"}`);
 
@@ -119,16 +128,11 @@ export async function POST(req: NextRequest, { params }: Params) {
     }
   } else if (WA_PROVIDERS.has(channelProvider)) {
     // ── WhatsApp Cloud API manual reply ──────────────────────────────────────
-    const tLead = Date.now();
-    const { data: lead } = await svc
-      .from("leads")
-      .select("external_id")
-      .eq("id", (conv as { lead_id: string }).lead_id)
-      .single();
-    mark("lead", tLead);
-
-    const rawExtId = ((lead as { external_id: string } | null)?.external_id ?? "")
-      .replace(/^wa_/, "");
+    // lead.external_id now arrives with the conversation query above (one fewer
+    // round-trip). T.lead stays reported as 0 so the Step 7A before/after
+    // comparison keeps the same key set.
+    T.lead = 0;
+    const rawExtId = leadExternalId.replace(/^wa_/, "");
 
     console.log(`[wa-send] manual reply conv=${params.convId} recipient=${rawExtId || "(empty)"}`);
 
@@ -167,33 +171,53 @@ export async function POST(req: NextRequest, { params }: Params) {
   // Display content: for image-only messages use the URL as the stored content
   const storedContent = content || attachmentUrl || "";
 
-  const tInsert = Date.now();
-  const { data: message, error } = await svc.from("messages").insert({
-    conversation_id:    params.convId,
-    org_id:             params.orgId,
-    direction:          "outbound",
-    content:            storedContent,
-    sent_at:            now,
-    provider_message_id: providerMessageId,
-    metadata:           {
-      source:         "manual",
-      sent_by:        user.id,
-      attachment_url: attachmentUrl ?? null,
-      ...deliveryMeta,
-      // Instrumentation: per-stage ms for this reply. Durations only, no PII.
-      t: { ...T, insert: Date.now() - tInsert },
-    },
-  }).select("id, content, sent_at").single();
-  mark("insert", tInsert);
+  // OPTIMIZATION (Step 7B): the message insert and the conversation preview
+  // update are independent writes to different tables — neither consumes the
+  // other's result, and the thread orders by messages.sent_at, not by any
+  // conversation column. They were strictly sequential (~249 ms + ~248 ms);
+  // running them concurrently removes one round-trip.
+  //
+  // Deliberately parallelised rather than deferred past the response: this
+  // runtime has neither waitUntil (@vercel/functions is not a dependency) nor
+  // Next 14.2 unstable_after, so work started after the response could be
+  // dropped when the instance freezes. Both writes stay fully awaited.
+  const tWrites = Date.now();
+  const [insertRes, updateRes] = await Promise.all([
+    svc.from("messages").insert({
+      conversation_id:    params.convId,
+      org_id:             params.orgId,
+      direction:          "outbound",
+      content:            storedContent,
+      sent_at:            now,
+      provider_message_id: providerMessageId,
+      metadata:           {
+        source:         "manual",
+        sent_by:        user.id,
+        attachment_url: attachmentUrl ?? null,
+        ...deliveryMeta,
+        // Instrumentation: per-stage ms for this reply. Durations only, no PII.
+        t: { ...T },
+      },
+    }).select("id, content, sent_at").single(),
+    svc.from("conversations").update({
+      last_message_at:      now,
+      last_message_preview: (content || (attachmentUrl ? "📷 Image" : "")).slice(0, 80),
+    }).eq("id", params.convId),
+  ]);
+  // Both keys retained so the Step 7A before/after comparison keeps its shape.
+  mark("insert", tWrites);
+  mark("convUpdate", tWrites);
+
+  const { data: message, error } = insertRes;
+
+  // The preview update's error was previously discarded silently. Log it now —
+  // strictly more visibility, no behaviour change (it stays non-fatal because
+  // the message row is the source of truth, not the preview string).
+  if (updateRes.error) {
+    console.warn(`[reply] conversation preview update failed conv=${params.convId}: ${updateRes.error.message}`);
+  }
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-
-  const tUpdate = Date.now();
-  await svc.from("conversations").update({
-    last_message_at:      now,
-    last_message_preview: (content || (attachmentUrl ? "📷 Image" : "")).slice(0, 80),
-  }).eq("id", params.convId);
-  mark("convUpdate", tUpdate);
 
   T.total = Date.now() - tStart;
 
