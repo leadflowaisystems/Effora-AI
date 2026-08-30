@@ -84,6 +84,7 @@ async function handler(req: NextRequest, { params }: Params) {
 
   let linkUrl    = "";
   let linkMethod = "upi";
+  let razorpayLinkId: string | null = null;
 
   // Custom URL overrides everything — mode is irrelevant
   if (custom_url?.trim()) {
@@ -142,6 +143,7 @@ async function handler(req: NextRequest, { params }: Params) {
       if (result.ok) {
         linkUrl    = result.data.shortUrl;
         linkMethod = "razorpay";
+        razorpayLinkId = result.data.id;
       } else {
         // Surface specific error for razorpay_only — no fallback allowed
         if (paymentMode === "razorpay_only") {
@@ -182,6 +184,7 @@ async function handler(req: NextRequest, { params }: Params) {
     lead_id,
     amount_inr,
     status:           "pending",
+    payment_link_id:  razorpayLinkId,
     payment_link_url: linkUrl,
     link_url:         linkUrl,
     link_method:      linkMethod,

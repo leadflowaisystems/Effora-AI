@@ -133,6 +133,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     try {
       let linkUrl    = "";
       let linkMethod = "upi";
+      let razorpayLinkId: string | null = null;
 
       // Custom URL overrides auto-generation for all members (shared URL)
       if (custom_url?.trim()) {
@@ -150,6 +151,7 @@ export async function POST(req: NextRequest, { params }: Params) {
           if (result.ok) {
             linkUrl    = result.data.shortUrl;
             linkMethod = "razorpay";
+            razorpayLinkId = result.data.id;
             console.log(`[payments/group-link-generate] DIAG lead=${lead.id} link_path=razorpay linkUrl="${linkUrl}"`);
           } else if (paymentMode === "razorpay_only") {
             const userMsg = razorpayUserMessage(result.error);
@@ -184,6 +186,7 @@ export async function POST(req: NextRequest, { params }: Params) {
         amount_inr,
         status:           "pending",
         payment_method:   linkMethod,
+        payment_link_id:  razorpayLinkId,
         payment_link_url: linkUrl || null,
         link_url:         linkUrl || null,
         link_method:      linkMethod,
