@@ -238,19 +238,10 @@ export async function POST(req: NextRequest, { params }: Params) {
       },
     });
 
-    await auditWebhook(orgId, event, {
-      razorpay_event_id:   eventId,
-      payment_link_id:     paymentLinkId ?? null,
-      razorpay_payment_id: razorpayPaymentId ?? null,
-      payment_id:          captured.id,
-      amount_inr:          amountInr,
-      processed: true,
-      reason: "captured",
-    });
-
     // Receipt (AI + WhatsApp + email) runs in the durable on-payment-captured
     // function, off this request's critical path. The event id keeps Inngest
     // from starting a second run if this event is somehow emitted twice.
+    let receiptScheduled = false;
     try {
       await inngest.send({
         id:   `payment-captured-${captured.id}`,
@@ -264,6 +255,7 @@ export async function POST(req: NextRequest, { params }: Params) {
           description:    captured.notes ?? "the program",
         },
       });
+      receiptScheduled = true;
     } catch (e) {
       // Payment state is already correct and durable. Returning 5xx would only
       // trigger a retry that the CAS no-ops, so it cannot recover the receipt —
@@ -274,8 +266,22 @@ export async function POST(req: NextRequest, { params }: Params) {
       );
     }
 
-    console.log(`[razorpay-webhook] captured payment=${captured.id} org=${orgId} event_id=${eventId ?? "none"}`);
-    return NextResponse.json({ ok: true, captured: true });
+    // Audit last, so the row records whether the receipt was actually scheduled.
+    // Without this, a receipt that never got queued would be invisible after the
+    // request's logs age out.
+    await auditWebhook(orgId, event, {
+      razorpay_event_id:   eventId,
+      payment_link_id:     paymentLinkId ?? null,
+      razorpay_payment_id: razorpayPaymentId ?? null,
+      payment_id:          captured.id,
+      amount_inr:          amountInr,
+      processed:           true,
+      reason:              "captured",
+      receipt_scheduled:   receiptScheduled,
+    });
+
+    console.log(`[razorpay-webhook] captured payment=${captured.id} org=${orgId} event_id=${eventId ?? "none"} receipt_scheduled=${receiptScheduled}`);
+    return NextResponse.json({ ok: true, captured: true, receipt_scheduled: receiptScheduled });
   }
 
   // ── payment_link.cancelled ───────────────────────────────────
