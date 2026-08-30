@@ -58,6 +58,30 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: "Draft not found" }, { status: 404 });
   }
 
+  // SECURITY: prove the conversation belongs to this org before writing to it.
+  //
+  // assertMember() proves the caller belongs to params.orgId, and the ai_drafts
+  // queries above are org-scoped — but params.convId was never checked. Since
+  // this route writes with the service-role client (RLS bypassed), a member of
+  // org A holding one of their own draft ids could pass org B's convId and have
+  // the message inserted into org B's conversation, also overwriting org B's
+  // conversation preview. Reproduced against production: HTTP 200, one row
+  // injected carrying the attacker's org_id.
+  //
+  // Same pattern and same fix as the reply route. 404 rather than 403 so the
+  // response cannot be used to probe conversation ids in other orgs.
+  const { data: ownedConv } = await svc
+    .from("conversations")
+    .select("id")
+    .eq("id", params.convId)
+    .eq("org_id", params.orgId)
+    .single();
+
+  if (!ownedConv) {
+    console.warn(`[draft] conversation not found in org — rejected org=${params.orgId} conv=${params.convId}`);
+    return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
+  }
+
   const finalContent =
     body.action === "edit" && body.editedContent?.trim()
       ? body.editedContent.trim()
@@ -75,11 +99,12 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
   if (me) return NextResponse.json({ error: me.message }, { status: 500 });
 
-  // Update conversation preview
+  // Update conversation preview. Org-scoped too, as defence in depth — the
+  // ownership check above already guarantees this row belongs to the caller.
   await svc.from("conversations").update({
     last_message_at:      now,
     last_message_preview: finalContent.slice(0, 80),
-  }).eq("id", params.convId);
+  }).eq("id", params.convId).eq("org_id", params.orgId);
 
   // Mark draft done
   await svc.from("ai_drafts").update({
