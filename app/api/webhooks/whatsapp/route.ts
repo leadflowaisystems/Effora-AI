@@ -46,11 +46,90 @@ interface WAContact {
   wa_id:   string;
 }
 
+/** Delivery callback. `id` is the wamid of the ORIGINAL outbound message. */
+interface WAStatus {
+  id:            string;
+  status:        string;   // sent | delivered | read | failed
+  timestamp:     string;
+  recipient_id?: string;
+  errors?:       Array<{ code?: number; title?: string; message?: string }>;
+}
+
 interface WAValue {
   messaging_product: string;
   metadata:          WAMetadata;
   contacts?:         WAContact[];
   messages?:         WAMessage[];
+  statuses?:         WAStatus[];
+}
+
+// Delivery states only ever move forward. Meta does not guarantee callback
+// order, so without this a late-arriving `delivered` would clobber a `read`.
+// A repeat of the same status ranks equal, updates zero rows, and is therefore
+// idempotent for free.
+const STATUS_RANK: Record<string, number> = {
+  pending: 0, sent: 1, delivered: 2, read: 3, failed: 4,
+};
+
+/** Short, non-sensitive summary of a Meta delivery failure. Never includes secrets or message content. */
+function summariseFailure(errors: WAStatus["errors"]): string | null {
+  const e = errors?.[0];
+  if (!e) return null;
+  return [e.code, e.title].filter(Boolean).join(": ").slice(0, 200) || null;
+}
+
+/**
+ * Apply one delivery callback to the outbound message it refers to.
+ *
+ * Org-scoped, so one tenant's callback can never touch another's row. If no
+ * message matches the wamid the callback is dropped: a status event must never
+ * conjure a message record into existence.
+ */
+async function applyStatus(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  svc: any,
+  orgId: string,
+  st: WAStatus,
+): Promise<void> {
+  const next = String(st.status ?? "").toLowerCase();
+  const rank = STATUS_RANK[next];
+  if (rank === undefined) {
+    console.warn(`[wa-webhook] unknown status "${next}" — ignoring`);
+    return;
+  }
+  if (!st.id) return;
+
+  // Only advance: allow the update when the row has no status yet, or a lower-ranked one.
+  const lower = Object.entries(STATUS_RANK).filter(([, r]) => r < rank).map(([k]) => k);
+  const tsMs = Number(st.timestamp) * 1000;
+
+  const patch: Record<string, unknown> = {
+    status:            next,
+    status_updated_at: new Date(Number.isFinite(tsMs) && tsMs > 0 ? tsMs : Date.now()).toISOString(),
+  };
+  const failure = next === "failed" ? summariseFailure(st.errors) : null;
+  if (failure) patch.failure_reason = failure;
+
+  let qb = svc.from("messages").update(patch)
+    .eq("org_id", orgId)
+    .eq("provider_message_id", st.id);
+  qb = lower.length
+    ? qb.or(`status.is.null,status.in.(${lower.join(",")})`)
+    : qb.is("status", null);
+
+  const { data, error } = await qb.select("id");
+  if (error) {
+    console.error(`[wa-webhook] status update failed (${next}): ${error.message}`);
+    return;
+  }
+  const n = (data ?? []).length;
+  if (n === 0) {
+    // Either the message is unknown to us, or it already holds an equal/higher
+    // status. Both are safe no-ops — nothing is created and nothing regresses.
+    console.log(`[wa-webhook] status ${next} → no-op (unknown message or already at/ahead of this state)`);
+  } else {
+    console.log(`[wa-webhook] status ${next} applied msg=${(data as { id: string }[])[0].id}`);
+  }
 }
 
 interface WAChange {
@@ -131,8 +210,32 @@ export async function POST(req: NextRequest) {
 
       const orgId = integration.org_id as string;
 
+      // ── Delivery callbacks (sent / delivered / read / failed) ────────────
+      // Meta batches these alongside messages under the same "messages" field.
+      for (const st of value.statuses ?? []) {
+        await applyStatus(svc, orgId, st);
+      }
+
       for (const msg of value.messages ?? []) {
         if (msg.type !== "text" || !msg.text?.body) continue;
+
+        // ── Idempotency fast path ─────────────────────────────────────────
+        // Meta retries whenever it does not get a timely 200. Without this a
+        // retry produced a second message row, a second whatsapp.message_received
+        // event and therefore a second AI reply to the customer. This SELECT
+        // handles the common case cheaply; the unique index on
+        // (org_id, provider_message_id) is what makes it correct under a race.
+        const { data: alreadyStored } = await svc
+          .from("messages")
+          .select("id")
+          .eq("org_id", orgId)
+          .eq("provider_message_id", msg.id)
+          .maybeSingle();
+
+        if (alreadyStored) {
+          console.log(`[wa-webhook] duplicate delivery ignored msg=${(alreadyStored as { id: string }).id}`);
+          continue;
+        }
 
         const tMsgStart = Date.now();
 
@@ -213,12 +316,18 @@ export async function POST(req: NextRequest) {
         const metaSentMs = parseInt(msg.timestamp) * 1000;
 
         const [msgRes] = await Promise.all([
-          svc.from("messages").insert({
+          // upsert, not insert: if a concurrent retry won the race between the
+          // check above and here, the unique index turns this into a no-op that
+          // returns zero rows instead of a duplicate or an error.
+          svc.from("messages").upsert({
             conversation_id: conversationId,
             org_id:          orgId,
             direction:       "inbound",
             content:         messageText,
             sent_at:         new Date(metaSentMs).toISOString(),
+            // The wamid is the idempotency key. It stays mirrored in metadata so
+            // anything already reading metadata.wamid keeps working.
+            provider_message_id: msg.id,
             metadata:        {
               source: "whatsapp", sender_phone: senderPhone, wamid: msg.id,
               // Instrumentation. `recv` is Effora's receipt time; `meta_lag_ms`
@@ -230,19 +339,27 @@ export async function POST(req: NextRequest) {
                 pre_ms:      Date.now() - tMsgStart,
               },
             },
-          }).select("id").single(),
+          }, { onConflict: "org_id,provider_message_id", ignoreDuplicates: true }).select("id"),
           svc.from("conversations").update({
             last_message_at:      now,
             last_message_preview: messageText.slice(0, 80),
           }).eq("id", conversationId),
         ]);
 
-        const { data: insertedMsg, error: me } = msgRes as { data: { id: string } | null; error: { message: string } | null };
-        if (me || !insertedMsg) {
-          console.error("[wa-webhook] message insert failed:", me?.message);
+        const { data: insertedRows, error: me } = msgRes as { data: { id: string }[] | null; error: { message: string } | null };
+        if (me) {
+          console.error("[wa-webhook] message insert failed:", me.message);
           continue;
         }
-        const messageId = insertedMsg.id;
+        // Zero rows means the unique index rejected this as a duplicate: another
+        // concurrent delivery of the same wamid already stored it. Skip the
+        // Inngest emit so the customer cannot receive two AI replies, and let the
+        // handler return 200 so Meta stops retrying.
+        if (!insertedRows || insertedRows.length === 0) {
+          console.log(`[wa-webhook] concurrent duplicate lost the race — no second message, no workflow`);
+          continue;
+        }
+        const messageId = insertedRows[0].id;
 
         // ── 4. Fire Inngest event (fire-and-forget — Meta retries on 200 loss) ─
         inngest.send({
