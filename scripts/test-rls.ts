@@ -38,8 +38,14 @@ async function main() {
   console.log("🔐 Effora AI RLS isolation test\n");
 
   const ts = Date.now();
-  const emailA = `rls-a-${ts}@Effora AI.test`;
-  const emailB = `rls-b-${ts}@Effora AI.test`;
+  // example.com is reserved for testing by RFC 2606. The previous domain was
+  // "Effora AI.test" — a CoachOS → Effora AI rename turned "coachos.test" into
+  // a value containing a space, which Supabase rejects with
+  // "Unable to validate email address: invalid format". That failure happened
+  // before the first assertion ran, so this suite had been silently
+  // non-functional since the rename.
+  const emailA = `rls-a-${ts}@example.com`;
+  const emailB = `rls-b-${ts}@example.com`;
   const password = "TestPassword123!";
 
   // ── 1. Create test users ──────────────────────────────────

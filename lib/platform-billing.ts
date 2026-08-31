@@ -5,11 +5,10 @@
  * Uses PLATFORM_RAZORPAY_KEY_ID / PLATFORM_RAZORPAY_KEY_SECRET env vars.
  */
 
-import { createHmac } from "crypto";
+import { createHmac, timingSafeEqual } from "crypto";
 
 const KEY_ID     = process.env.PLATFORM_RAZORPAY_KEY_ID     ?? "";
 const KEY_SECRET = process.env.PLATFORM_RAZORPAY_KEY_SECRET ?? "";
-const WEBHOOK_SECRET = process.env.PLATFORM_RAZORPAY_WEBHOOK_SECRET ?? "";
 
 export const PLAN_IDS: Record<string, string> = {
   starter: process.env.PLATFORM_PLAN_STARTER_ID ?? "",
@@ -108,9 +107,40 @@ export async function cancelPlatformSubscription(subscriptionId: string): Promis
   }
 }
 
-/** Verify HMAC-SHA256 webhook signature. */
+/**
+ * Verify the HMAC-SHA256 signature on a Razorpay platform-billing webhook.
+ *
+ * Fail-closed. A missing PLATFORM_RAZORPAY_WEBHOOK_SECRET now rejects every
+ * delivery; it previously returned true and treated the absent secret as
+ * "development mode". In production that meant an env var which was never set,
+ * or was later deleted or renamed, silently disabled authentication on the
+ * billing webhook — and anyone who learned an org id (they appear in the public
+ * coach funnel pages) could POST a forged subscription.activated and grant
+ * themselves a paid plan, or replay subscription.charged to reset the AI usage
+ * counter. There is no development-mode exemption here: an unsigned billing
+ * event is never trusted.
+ *
+ * The secret is read per call rather than captured at module load, so the value
+ * present in the environment when the request arrives is the one that applies.
+ *
+ * Comparison is constant-time. The length guard runs first because
+ * timingSafeEqual throws on a length mismatch; a SHA-256 digest's length is
+ * fixed and public, so returning early there leaks nothing. Neither the secret
+ * nor the expected digest is ever logged or returned.
+ */
 export function verifyPlatformWebhookSignature(body: string, signature: string): boolean {
-  if (!WEBHOOK_SECRET) return true; // dev: allow unsigned
-  const expected = createHmac("sha256", WEBHOOK_SECRET).update(body).digest("hex");
-  return signature === expected;
+  const secret = process.env.PLATFORM_RAZORPAY_WEBHOOK_SECRET ?? "";
+  if (!secret) {
+    console.error(
+      "[platform-billing] PLATFORM_RAZORPAY_WEBHOOK_SECRET is not set — rejecting webhook. " +
+      "Set it in the deployment environment; billing webhooks stay rejected until it is present.",
+    );
+    return false;
+  }
+
+  const expected = createHmac("sha256", secret).update(body).digest("hex");
+  const received = Buffer.from(signature ?? "", "utf8");
+  const computed = Buffer.from(expected, "utf8");
+  if (received.length !== computed.length) return false;
+  return timingSafeEqual(received, computed);
 }

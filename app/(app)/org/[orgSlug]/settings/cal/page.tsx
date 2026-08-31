@@ -34,7 +34,15 @@ export default async function CalSettingsPage({ params }: Props) {
     .eq("provider", "calcom")
     .maybeSingle();
 
-  const config = (intRow?.config ?? {}) as { cal_link?: string };
+  // Only the PRESENCE of the webhook secret crosses to the client — never the
+  // value, encrypted or otherwise. `webhook_secret` is the legacy plaintext key
+  // still present on older rows; `webhook_secret_enc` is what the integrations
+  // route writes today.
+  const config = (intRow?.config ?? {}) as {
+    cal_link?: string;
+    webhook_secret_enc?: string;
+    webhook_secret?: string;
+  };
 
   return (
     <div className="max-w-lg mx-auto space-y-6">
@@ -58,6 +66,7 @@ export default async function CalSettingsPage({ params }: Props) {
         orgId={org.id}
         orgSlug={params.orgSlug}
         initialCalLink={config.cal_link ?? ""}
+        hasWebhookSecret={!!(config.webhook_secret_enc || config.webhook_secret)}
       />
     </div>
   );

@@ -1,0 +1,47 @@
+-- ============================================================
+-- Effora AI — 039: Cal.com booking idempotency
+-- Idempotent — safe to run multiple times.
+-- ============================================================
+--
+-- Cal.com delivers webhooks at least once and retries on any non-2xx response,
+-- so the same BOOKING_CREATED arrives more than once. The existing index
+--
+--   idx_bookings_cal_uid ON bookings(cal_booking_uid)      -- 004_phase3
+--
+-- is NOT unique, so every retry inserted another bookings row and emitted
+-- another booking.created + booking.confirm-message pair. The customer received
+-- a duplicate confirmation message and a duplicate 24h/1h reminder chain.
+--
+-- The fix is a database-level guarantee rather than an application-level
+-- "select then insert", which races with itself under concurrent delivery: the
+-- webhook now lets the INSERT decide the winner and treats unique_violation
+-- (SQLSTATE 23505) as "already handled".
+--
+-- ── Why this index is not partial ───────────────────────────────────────────
+-- A partial unique index cannot act as an ON CONFLICT arbiter through
+-- PostgREST, which is the same constraint migration 038 settled on for
+-- messages(org_id, provider_message_id). It does not need to be partial:
+-- cal_booking_uid is NULL for every manual, recurring and group booking, and
+-- NULLs are distinct in a unique index, so those rows stay unaffected and
+-- unlimited.
+--
+-- ── Why org_id is part of the key ───────────────────────────────────────────
+-- Two different orgs may legitimately hold the same Cal.com uid — they are
+-- separate Cal.com accounts. Scoping by org keeps them independent while still
+-- collapsing retries within one org.
+--
+-- ── Verified against production before creation ─────────────────────────────
+--   105 bookings total
+--    23 rows carry a cal_booking_uid
+--    82 rows have NULL (manual / recurring / group) — unaffected
+--    23 distinct (org_id, cal_booking_uid) pairs
+--     0 duplicate groups          → the index builds with no data cleanup
+--     0 empty-string uids         → nothing collides on ''
+--     0 uids shared across orgs
+-- No existing row violates this constraint, so no data is deleted or merged.
+
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_bookings_org_cal_booking_uid
+  ON bookings (org_id, cal_booking_uid);
+
+-- idx_bookings_cal_uid is deliberately left in place: it still serves lookups
+-- by uid alone, and dropping it is an unrelated optimisation.

@@ -98,11 +98,17 @@ export async function PUT(req: NextRequest, { params }: Params) {
     // Encrypt secret fields
     const storedConfig: Record<string, string> = {};
     const secretFields = SECRET_FIELDS[provider] ?? [];
+    // Secret fields whose ENCRYPTED form was written by this request. Used
+    // below to drop a legacy plaintext twin; deliberately not populated when
+    // encryption fell back to storing a raw value, so that fallback can never
+    // delete the only copy of the secret.
+    const encryptedFields: string[] = [];
     for (const [k, v] of Object.entries(config)) {
       if (typeof v !== "string" || v === "") continue;
       if (secretFields.some((s) => k === s)) {
         try {
           storedConfig[`${k}_enc`] = encryptSecret(v);
+          encryptedFields.push(k);
         } catch {
           // ENCRYPTION_KEY not set — store raw (development only)
           storedConfig[k] = v;
@@ -133,6 +139,15 @@ export async function PUT(req: NextRequest, { params }: Params) {
       const existingConfig =
         ((existing as { config?: Record<string, string> }).config ?? {}) as Record<string, string>;
       const mergedConfig: Record<string, string> = { ...existingConfig, ...storedConfig };
+
+      // Drop a legacy plaintext twin once its encrypted replacement is stored.
+      // Rows written before the encrypted form existed can still carry e.g.
+      // `webhook_secret` alongside `webhook_secret_enc`, and the merge above
+      // preserved it forever. Every reader prefers the `_enc` value, so the
+      // plaintext copy is unreachable — it is just a readable secret sitting in
+      // the row. Only fields encrypted by THIS request are cleared, so a field
+      // the caller did not resend keeps whatever it had.
+      for (const field of encryptedFields) delete mergedConfig[field];
 
       result = await service
         .from("integrations")
