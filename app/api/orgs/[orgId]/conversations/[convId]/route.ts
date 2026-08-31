@@ -30,7 +30,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
                 lead:leads (id, name, external_id, channel, score, stage, avatar_url, created_at)`)
        .eq("id", params.convId).eq("org_id", params.orgId).single(),
     svc.from("messages")
-       .select("id, direction, content, sent_at, metadata")
+       .select("id, direction, content, sent_at, metadata, status, failure_reason")
        .eq("conversation_id", params.convId).eq("org_id", params.orgId)
        .order("sent_at", { ascending: true }),
     svc.from("ai_drafts")

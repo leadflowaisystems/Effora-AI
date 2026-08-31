@@ -243,7 +243,12 @@ async function handler(req: NextRequest, { params }: Params) {
       });
       msgContent = aiResult.content;
     }
-    const { delivered, provider_message_id } = await deliverOutboundMessage(conversationId, params.orgId, msgContent, "payment_link");
+    // Structured params for the payment-link template, used only when the lead
+    // is outside the 24-hour window: {{1}} customer name, {{2}} payment URL.
+    const { delivered, provider_message_id } = await deliverOutboundMessage(
+      conversationId, params.orgId, msgContent, "payment_link",
+      [firstName || lead.name || "there", linkUrl],
+    );
     console.log(`[link-generate] payment link message delivered=${delivered} provider_message_id=${provider_message_id ?? "null"} conv=${conversationId}`);
   } catch (e) {
     console.error("[link-generate] sync message delivery failed, falling back to Inngest:", e);

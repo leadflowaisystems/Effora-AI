@@ -9,13 +9,25 @@
  */
 
 import { createServiceClient } from "@/lib/supabase/server";
+import { maskId } from "@/lib/log-safe";
 import { sendInstagramMessage } from "@/lib/integrations/meta-instagram";
-import { sendWhatsAppMessage }  from "@/lib/integrations/whatsapp-cloud";
+import { sendWhatsAppMessage, sendWhatsAppTemplate } from "@/lib/integrations/whatsapp-cloud";
+import {
+  BUSINESS_INITIATED_SOURCES,
+  getServiceWindowState,
+  resolveTemplateBinding,
+  buildTemplateComponents,
+  validateTemplateParams,
+} from "@/lib/whatsapp-templates";
 
 // channel_provider values that map to Instagram
 const IG_PROVIDERS = new Set(["instagram", "meta_instagram"]);
 // channel_provider values that map to WhatsApp Cloud API
-const WA_PROVIDERS = new Set(["whatsapp_cloud"]);
+// "whatsapp" is a legacy value still present on historical conversations. Both
+// mean WhatsApp Cloud, and accepting only the newer one silently skipped
+// delivery for those rows via the NO_DELIVERY_ATTEMPTED branch below. Widening
+// the set fixes them in code without rewriting any historical data.
+const WA_PROVIDERS = new Set(["whatsapp_cloud", "whatsapp"]);
 
 /**
  * Returns the most recent conversation for a lead, creating one if none exists.
@@ -123,6 +135,13 @@ export async function deliverOutboundMessage(
   orgId:          string,
   content:        string,
   source:         string,
+  /**
+   * Ordered body parameters for sources with a template contract (see
+   * TEMPLATE_PARAM_CONTRACT). Required only when the message ends up going out
+   * as a template — i.e. business-initiated and outside the 24-hour window.
+   * Ignored entirely for free-form sends, so existing callers are unaffected.
+   */
+  templateParams?: readonly string[],
 ): Promise<{ delivered: boolean; provider_message_id: string | null }> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const svc = createServiceClient() as any;
@@ -158,10 +177,10 @@ export async function deliverOutboundMessage(
     const isPsid    = /^\d+$/.test(igUserId);
 
     if (!isPsid) {
-      console.log(`[ig-send] automation skipping delivery — external_id="${rawExtId}" is not a numeric PSID (manually-created lead) conv=${conversationId}`);
+      console.log(`[ig-send] automation skipping delivery — external_id=${maskId(rawExtId)} is not a numeric PSID (manually-created lead) conv=${conversationId}`);
     } else {
       try {
-        console.log(`[ig-send] automation delivery conv=${conversationId} recipient=${igUserId} source=${source}`);
+        console.log(`[ig-send] automation delivery conv=${conversationId} recipient=${maskId(igUserId)} source=${source}`);
         const result = await sendInstagramMessage(orgId, igUserId, content);
         providerMessageId = result.provider_message_id;
         delivered = true;
@@ -213,28 +232,86 @@ export async function deliverOutboundMessage(
     const hasPhone   = !!waPhone;
 
     // DIAG — log external_id and resolved phone before attempting delivery
-    console.log(`[wa-send] DIAG conv=${conversationId} lead_id="${leadId}" raw_external_id="${rawExtId}" wa_phone="${waPhone}" has_phone=${hasPhone} source="${source}"`);
+    console.log(`[wa-send] DIAG conv=${conversationId} lead_id="${leadId}" recipient=${maskId(rawExtId)} has_phone=${hasPhone} source="${source}"`);
 
     if (!hasPhone) {
-      console.log(`[wa-send] automation skipping — external_id="${rawExtId}" has no phone conv=${conversationId}`);
+      console.log(`[wa-send] automation skipping — external_id=${maskId(rawExtId)} has no phone conv=${conversationId}`);
     } else {
-      try {
-        console.log(`[wa-send] automation delivery conv=${conversationId} recipient=${waPhone} source=${source}`);
-        const result = await sendWhatsAppMessage(orgId, waPhone, content);
-        providerMessageId = result.provider_message_id;
-        delivered = true;
-        console.log(`[wa-send] automation delivery ok provider_message_id=${providerMessageId}`);
-      } catch (err) {
-        const reason = err instanceof Error ? err.message : String(err);
-        // WA 24-hour customer-initiated window (error 131047)
-        const is24hWindow =
-          reason.includes("131047") || reason.includes("outside");
-        if (is24hWindow) {
-          deliveryMeta.delivery_error = "outside_24h_window";
-          console.warn(`[wa-send] automation delivery skipped (outside 24h window) conv=${conversationId} source=${source}`);
+      // ── Route: free-form inside the service window, template outside it ────
+      // Business-initiated sources (payment links, receipts, reminders) are the
+      // ones that go out when a lead has been quiet. Attempting free-form there
+      // is guaranteed to be rejected by Meta with 131047, which is exactly the
+      // silent failure this replaces. Everything else keeps its old path.
+      const businessInitiated = BUSINESS_INITIATED_SOURCES.has(source);
+      const window = businessInitiated
+        ? await getServiceWindowState(svc, conversationId)
+        : { inside: true, lastInboundAt: null };
+
+      if (businessInitiated && !window.inside) {
+        const binding = await resolveTemplateBinding(svc, orgId, source);
+
+        if (!binding) {
+          // No approved template bound for this source. Fail loudly: sending
+          // free-form would be rejected anyway, and reporting success would
+          // hide a message the customer never received.
+          deliveryMeta.delivery_error = "template_not_configured";
+          deliveryMeta.window_state   = "outside_24h";
+          console.warn(
+            `[wa-send] blocked — outside 24h window and no template bound conv=${conversationId} ` +
+            `source=${source} last_inbound=${window.lastInboundAt ?? "never"}`,
+          );
+        } else if (validateTemplateParams(source, templateParams)) {
+          // The template needs structured variables the caller did not supply.
+          // Sending anyway would produce a malformed message rather than an
+          // error, so refuse — and say which parameters were expected.
+          const why = validateTemplateParams(source, templateParams)!;
+          deliveryMeta.delivery_error = why.slice(0, 200);
+          deliveryMeta.window_state   = "outside_24h";
+          deliveryMeta.template_name  = binding.name;
+          console.warn(`[wa-send] blocked — ${why} conv=${conversationId} source=${source} template=${binding.name}`);
         } else {
-          deliveryMeta.delivery_error = reason;
-          console.error(`[wa-send] automation delivery failed conv=${conversationId} source=${source} reason="${reason}"`);
+          try {
+            // Parameter VALUES are never logged: {{2}} is a payment URL and
+            // {{1}} is a customer name.
+            console.log(`[wa-send] template delivery conv=${conversationId} source=${source} template=${binding.name} lang=${binding.language} params=${templateParams?.length ?? 0}`);
+            const result = await sendWhatsAppTemplate(
+              orgId, waPhone, binding.name, binding.language,
+              buildTemplateComponents(binding, content, source, templateParams),
+            );
+            providerMessageId = result.provider_message_id;
+            delivered = true;
+            deliveryMeta.template_name = binding.name;
+            deliveryMeta.window_state  = "outside_24h";
+            console.log(`[wa-send] template delivery ok provider_message_id=${providerMessageId}`);
+          } catch (err) {
+            // Deliberately no free-form fallback: outside the window it would be
+            // rejected, and a template failure is a real failure to surface.
+            const reason = err instanceof Error ? err.message : String(err);
+            deliveryMeta.delivery_error = `template_send_failed: ${reason}`.slice(0, 500);
+            deliveryMeta.template_name  = binding.name;
+            deliveryMeta.window_state   = "outside_24h";
+            console.error(`[wa-send] template delivery failed conv=${conversationId} source=${source} template=${binding.name} reason="${reason}"`);
+          }
+        }
+      } else {
+        try {
+          console.log(`[wa-send] automation delivery conv=${conversationId} recipient=${maskId(waPhone)} source=${source}`);
+          const result = await sendWhatsAppMessage(orgId, waPhone, content);
+          providerMessageId = result.provider_message_id;
+          delivered = true;
+          console.log(`[wa-send] automation delivery ok provider_message_id=${providerMessageId}`);
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err);
+          // WA 24-hour customer-initiated window (error 131047)
+          const is24hWindow =
+            reason.includes("131047") || reason.includes("outside");
+          if (is24hWindow) {
+            deliveryMeta.delivery_error = "outside_24h_window";
+            console.warn(`[wa-send] automation delivery skipped (outside 24h window) conv=${conversationId} source=${source}`);
+          } else {
+            deliveryMeta.delivery_error = reason;
+            console.error(`[wa-send] automation delivery failed conv=${conversationId} source=${source} reason="${reason}"`);
+          }
         }
       }
     }

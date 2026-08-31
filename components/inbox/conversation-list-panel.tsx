@@ -20,16 +20,19 @@ interface Props {
   onDelete:      (id: string) => void;
 }
 
-const TABS: { id: ChannelTab; label: string; icon: React.ReactNode; provider?: string }[] = [
+// Each tab matches a set of channel_provider values. WhatsApp and Instagram
+// both have a legacy spelling still present on historical conversations, which
+// previously left those threads out of their own tab.
+const TABS: { id: ChannelTab; label: string; icon: React.ReactNode; providers?: string[] }[] = [
   { id: "all",       label: "All",       icon: <MessageSquare className="h-3 w-3" /> },
-  { id: "instagram", label: "Instagram", icon: <Instagram     className="h-3 w-3" />, provider: "instagram" },
-  { id: "whatsapp",  label: "WhatsApp",  icon: <Phone         className="h-3 w-3" />, provider: "whatsapp_cloud" },
-  { id: "manual",    label: "Manual",    icon: <MessageSquare className="h-3 w-3" />, provider: "manual" },
+  { id: "instagram", label: "Instagram", icon: <Instagram     className="h-3 w-3" />, providers: ["instagram", "meta_instagram"] },
+  { id: "whatsapp",  label: "WhatsApp",  icon: <Phone         className="h-3 w-3" />, providers: ["whatsapp_cloud", "whatsapp"] },
+  { id: "manual",    label: "Manual",    icon: <MessageSquare className="h-3 w-3" />, providers: ["manual", "manual_crm"] },
 ];
 
-function tabCount(conversations: InboxConversation[], provider?: string): number {
-  if (!provider) return conversations.length;
-  return conversations.filter((c) => c.channel_provider === provider).length;
+function tabCount(conversations: InboxConversation[], providers?: string[]): number {
+  if (!providers) return conversations.length;
+  return conversations.filter((c) => providers.includes(c.channel_provider)).length;
 }
 
 export function ConversationListPanel({ orgSlug, orgId, conversations, onNewDm, onDelete }: Props) {
@@ -38,13 +41,13 @@ export function ConversationListPanel({ orgSlug, orgId, conversations, onNewDm, 
   const [activeTab,  setActiveTab]  = React.useState<ChannelTab>("all");
 
   // Only show tabs that have conversations (or "all")
-  const visibleTabs = TABS.filter((t) => t.id === "all" || tabCount(conversations, t.provider) > 0);
+  const visibleTabs = TABS.filter((t) => t.id === "all" || tabCount(conversations, t.providers) > 0);
 
   const byChannel = activeTab === "all"
     ? conversations
     : conversations.filter((c) => {
         const tab = TABS.find((t) => t.id === activeTab);
-        return c.channel_provider === tab?.provider;
+        return !!tab?.providers?.includes(c.channel_provider);
       });
 
   const filtered = query.trim()
@@ -79,7 +82,7 @@ export function ConversationListPanel({ orgSlug, orgId, conversations, onNewDm, 
       {visibleTabs.length > 1 && (
         <div className="flex items-center gap-0.5 px-3 pt-2 pb-1 shrink-0 overflow-x-auto scrollbar-none">
           {visibleTabs.map((tab) => {
-            const count = tabCount(conversations, tab.provider);
+            const count = tabCount(conversations, tab.providers);
             const active = activeTab === tab.id;
             return (
               <button

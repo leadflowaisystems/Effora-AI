@@ -26,6 +26,10 @@ export interface InboxMessage {
   content:   string;
   sent_at:   string;
   metadata?: { source?: string; model?: string; [key: string]: unknown };
+  /** Provider delivery state (migration 038). Null until a callback arrives. */
+  status?:         "pending" | "sent" | "delivered" | "read" | "failed" | null;
+  /** Short provider failure description when status is "failed". */
+  failure_reason?: string | null;
 }
 
 export interface InboxDraft {

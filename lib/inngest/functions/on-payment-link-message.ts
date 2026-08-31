@@ -138,7 +138,10 @@ export const onPaymentLinkMessage = inngest.createFunction(
     // ── 3. Deliver to channel + store message ─────────────────────
     await step.run("insert-message", async () => {
       const { delivered, provider_message_id } =
-        await deliverOutboundMessage(ctx.conversationId, orgId, content, "payment_link");
+        await deliverOutboundMessage(ctx.conversationId, orgId, content, "payment_link",
+            // Template params, used only outside the 24h window:
+            // {{1}} customer name, {{2}} payment URL.
+            [getLeadFirstName({ name: ctx.leadName, external_id: ctx.leadExternalId }) || ctx.leadName || "there", ctx.paymentUrl]);
       console.log(`[payment-link-msg] message delivered=${delivered} provider_message_id=${provider_message_id ?? "null"} conv=${ctx.conversationId}`);
 
       // Send transactional email if lead has email

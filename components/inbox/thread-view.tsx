@@ -53,6 +53,46 @@ const STAGE_BADGE: Record<string, Parameters<typeof Badge>[0]["variant"]> = {
   hot: "hot", warm: "warm", cold: "cold",
 };
 
+/**
+ * Persistent delivery state for an outbound message.
+ *
+ * `status` comes from Meta's callbacks (migration 038); `delivery_error` is set
+ * when Effora could not hand the message to the provider at all. Known reason
+ * codes are shown as plain English — the raw provider text is kept in the title
+ * attribute, truncated, so it stays debuggable without dumping a payload into
+ * the thread. Nothing here renders tokens, ids or secrets.
+ */
+function DeliveryState({ msg }: { msg: InboxMessage }) {
+  if (msg.direction !== "outbound") return null;
+
+  const rawError = (msg.metadata?.["delivery_error"] as string | undefined) ?? msg.failure_reason ?? null;
+
+  if (rawError) {
+    const friendly =
+      rawError.startsWith("template_not_configured")  ? "No approved template — not sent" :
+      rawError.startsWith("template_params_missing")  ? "Template details missing — not sent" :
+      rawError.startsWith("outside_24h_window")       ? "Outside 24-hour window — not sent" :
+      rawError.startsWith("template_send_failed")     ? "Template rejected — not sent" :
+      "Not delivered";
+    return (
+      <span className="text-amber-400" title={rawError.slice(0, 160)}>⚠ {friendly}</span>
+    );
+  }
+
+  switch (msg.status) {
+    case "pending":   return <span title="Queued for delivery">· sending</span>;
+    case "sent":      return <span title="Accepted by WhatsApp">✓ sent</span>;
+    case "delivered": return <span title="Delivered to the recipient's device">✓✓ delivered</span>;
+    case "read":      return <span className="text-[var(--brand)]" title="Read by the recipient">✓✓ read</span>;
+    case "failed":    return (
+      <span className="text-amber-400" title={(msg.failure_reason ?? "Delivery failed").slice(0, 160)}>
+        ⚠ failed
+      </span>
+    );
+    default:          return null;   // never observed — show nothing rather than guess
+  }
+}
+
 function MessageBubble({ msg }: { msg: InboxMessage }) {
   const isOut = msg.direction === "outbound";
   const isAi  = msg.metadata?.source === "ai";
@@ -96,10 +136,11 @@ function MessageBubble({ msg }: { msg: InboxMessage }) {
           <p className="whitespace-pre-wrap break-words">{msg.content}</p>
         )}
         <p className={cn(
-          "mt-1 text-[10px]",
-          isOut ? "text-[var(--brand)]/60 text-right" : "text-[var(--text-3)]"
+          "mt-1 text-[10px] flex items-center gap-1.5",
+          isOut ? "text-[var(--brand)]/60 justify-end" : "text-[var(--text-3)]"
         )}>
-          {timeAgo(msg.sent_at)}
+          <span>{timeAgo(msg.sent_at)}</span>
+          <DeliveryState msg={msg} />
         </p>
       </div>
     </motion.div>

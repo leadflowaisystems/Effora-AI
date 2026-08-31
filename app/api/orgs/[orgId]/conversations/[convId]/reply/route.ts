@@ -8,12 +8,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { sendInstagramMessage } from "@/lib/integrations/meta-instagram";
 import { sendWhatsAppMessage }  from "@/lib/integrations/whatsapp-cloud";
+import { maskId }               from "@/lib/log-safe";
 
 // channel_provider values that map to Instagram (webhook writes "instagram",
 // but the integration provider is "meta_instagram" — accept both)
 const IG_PROVIDERS = new Set(["instagram", "meta_instagram"]);
 // channel_provider values that map to WhatsApp Cloud API
-const WA_PROVIDERS = new Set(["whatsapp_cloud"]);
+// "whatsapp" is a legacy channel_provider still on historical conversations;
+// both values mean WhatsApp Cloud. Matches lib/conversation.ts.
+const WA_PROVIDERS = new Set(["whatsapp_cloud", "whatsapp"]);
 
 interface Params { params: { orgId: string; convId: string } }
 
@@ -115,17 +118,17 @@ export async function POST(req: NextRequest, { params }: Params) {
   if (IG_PROVIDERS.has(channelProvider)) {
     const rawIgUserId = leadExternalId.replace(/^ig_/, "");
 
-    console.log(`[ig-send] token loading org=${params.orgId} recipient=${rawIgUserId || "(empty)"}`);
+    console.log(`[ig-send] token loading org=${params.orgId} recipient=${maskId(rawIgUserId)}`);
 
     if (!rawIgUserId) {
       console.error("[ig-send] graph error: could not resolve IG user ID from lead.external_id");
       deliveryMeta.delivery_error = "missing_psid";
     } else if (!/^\d+$/.test(rawIgUserId)) {
-      console.log(`[ig-send] skipping delivery — external_id="${rawIgUserId}" is not a numeric PSID`);
+      console.log(`[ig-send] skipping delivery — external_id=${maskId(rawIgUserId)} is not a numeric PSID`);
       deliveryMeta.delivery_error = "non_numeric_psid";
     } else {
       try {
-        console.log(`[ig-send] graph request POST /{page_id}/messages recipient=${rawIgUserId}`);
+        console.log(`[ig-send] graph request POST /{page_id}/messages recipient=${maskId(rawIgUserId)}`);
         const result = await sendInstagramMessage(params.orgId, rawIgUserId, content, attachmentUrl);
         providerMessageId = result.provider_message_id;
         console.log(`[ig-send] graph response ok provider_message_id=${providerMessageId}`);
@@ -157,7 +160,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     T.lead = 0;
     const rawExtId = leadExternalId.replace(/^wa_/, "");
 
-    console.log(`[wa-send] manual reply conv=${params.convId} recipient=${rawExtId || "(empty)"}`);
+    console.log(`[wa-send] manual reply conv=${params.convId} recipient=${maskId(rawExtId)}`);
 
     if (!rawExtId) {
       console.error("[wa-send] could not resolve phone from lead.external_id");

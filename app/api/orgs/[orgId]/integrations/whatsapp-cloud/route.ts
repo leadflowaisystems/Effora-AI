@@ -62,8 +62,9 @@ export async function POST(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: "waba_id, phone_number_id, and access_token are required" }, { status: 400 });
   }
 
-  // Validate token before saving
-  const validation = await validateWhatsAppToken(body.phone_number_id, body.access_token);
+  // Validate token AND that the ids are what they claim to be, before saving.
+  // The WABA id is passed so the phone can be proven to belong to it.
+  const validation = await validateWhatsAppToken(body.phone_number_id, body.access_token, body.waba_id);
   if (!validation.valid) {
     return NextResponse.json(
       { error: validation.error ?? "Invalid access token or phone number ID. Check your Meta credentials." },
@@ -71,7 +72,10 @@ export async function POST(req: NextRequest, { params }: Params) {
     );
   }
 
-  const displayPhone = validation.display_phone_number ?? body.display_phone_number ?? body.phone_number_id;
+  // Only ever trust Meta for the display number. The old fallback chain ended at
+  // `body.phone_number_id`, which is how a WABA id once got stored as the
+  // display phone number. Validation guarantees this value is present.
+  const displayPhone = validation.display_phone_number!;
 
   await saveWhatsAppIntegration(
     params.orgId,
