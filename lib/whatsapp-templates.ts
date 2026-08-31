@@ -56,6 +56,26 @@ export const BUSINESS_INITIATED_SOURCES = new Set([
 export const TEMPLATE_PARAM_CONTRACT: Record<string, readonly string[]> = {
   // effora_payment_link: {{1}} customer name, {{2}} payment URL
   payment_link: ["customer_name", "payment_url"],
+
+  // effora_payment_received — read back from Meta and verified verbatim:
+  //   "Hi {{1}}, we've received your payment of {{2}} for {{3}}. Thank you —
+  //    we'll be in touch with next steps shortly."
+  // Meta's own examples are ["Om", "₹12,500", "the program"], which is exactly
+  // what templateAmountInr and templateDescription produce.
+  payment_received: ["customer_name", "amount", "description"],
+
+  // effora_booking_confirmed — read back from Meta and verified verbatim:
+  //   "Hi {{1}}, your session is confirmed for {{2}}. We look forward to
+  //    seeing you."
+  // Keyed by the existing source name, which is "booking_confirm" — the trailing
+  // "ed" belongs to the Meta template name, not to Effora's message source.
+  booking_confirm: ["customer_name", "meeting_time"],
+
+  // effora_booking_reminder — one approved template serves both reminder
+  // sources, the time variable carrying the difference between them:
+  //   "Hi {{1}}, a reminder that your {{2}} is scheduled for {{3}}. …"
+  reminder_24h: ["customer_name", "session_name", "meeting_time"],
+  reminder_1h:  ["customer_name", "session_name", "meeting_time"],
 };
 
 /** One org's binding of a message source to an approved Meta template. */
@@ -164,6 +184,48 @@ export function sanitiseTemplateParam(text: string): string {
     .replace(/ {4,}/g, " ")
     .trim()
     .slice(0, 1024);
+}
+
+/**
+ * {{1}} for every contract: a customer name that is safe to put in front of a
+ * customer, never blank.
+ *
+ * `getLeadFirstName` falls back to `external_id` when a lead has no name, and
+ * for WhatsApp and Instagram leads that is "wa_<phone>" / "ig_<psid>" — an
+ * internal identifier. That is tolerable in free-form prose, which this does not
+ * touch, but it must never reach an approved template body: it is
+ * customer-visible, and on WhatsApp it would greet the customer with their own
+ * phone number. Those cases become "there", the same fallback the rest of the
+ * product already uses for an unnamed lead.
+ *
+ * Blank is also rejected here rather than left to fail validation, so a lead
+ * with no name still receives their receipt instead of being silently blocked.
+ */
+export function templateCustomerName(name: string | null | undefined): string {
+  const first = String(name ?? "").trim().split(/\s+/)[0] ?? "";
+  if (!first) return "there";
+  if (/^(wa_|ig_)/i.test(first)) return "there";
+  if (/^\+?\d[\d\s()-]*$/.test(first)) return "there";
+  return first;
+}
+
+/**
+ * {{2}} of effora_payment_received: the amount exactly as the rest of the
+ * application already renders it — "₹12,500" — matching the receipt email, the
+ * lead-event titles and Meta's own approved example.
+ */
+export function templateAmountInr(amountInr: number): string {
+  return `₹${Number(amountInr).toLocaleString("en-IN")}`;
+}
+
+/**
+ * {{3}} of effora_payment_received: what the payment was for, preserving the
+ * long-standing "the program" fallback. Whitespace-only descriptions (a payment
+ * row whose notes were saved blank) take the fallback too, so an outside-window
+ * receipt is not blocked by an empty column.
+ */
+export function templateDescription(description: string | null | undefined): string {
+  return String(description ?? "").trim() || "the program";
 }
 
 export type TemplateComponents =

@@ -61,7 +61,14 @@ export async function sendChannelMessage(
   conversationId: string,
   orgId: string,
   content: string,
-  source: "reminder_24h" | "reminder_1h" | "rebook" | "system" = "system"
+  source: "reminder_24h" | "reminder_1h" | "rebook" | "system" = "system",
+  /**
+   * Ordered template parameters, forwarded untouched. Only consulted when the
+   * message ends up going out as a template — business-initiated and outside
+   * the 24-hour window. Optional, so existing `system` and `rebook` callers are
+   * completely unaffected.
+   */
+  templateParams?: readonly string[],
 ): Promise<void> {
-  await deliverOutboundMessage(conversationId, orgId, content, source);
+  await deliverOutboundMessage(conversationId, orgId, content, source, templateParams);
 }

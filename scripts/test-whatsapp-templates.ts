@@ -18,10 +18,16 @@
 import { createClient } from "@supabase/supabase-js";
 import { createCipheriv, randomBytes, randomUUID } from "crypto";
 import { deliverOutboundMessage } from "@/lib/conversation";
+import { sendChannelMessage } from "@/lib/booking";
+import { formatMeetingTime } from "@/lib/leads";
+import {
+  build24hReminder, build1hReminder, reminderLeadName, reminderOffer,
+} from "@/prompts/reminder";
 import {
   getServiceWindowState, resolveTemplateBinding, sanitiseTemplateParam,
   buildTemplateComponents, validateTemplateParams, TEMPLATE_PARAM_CONTRACT,
   BUSINESS_INITIATED_SOURCES, SERVICE_WINDOW_MS,
+  templateCustomerName, templateAmountInr, templateDescription,
 } from "@/lib/whatsapp-templates";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -182,18 +188,22 @@ async function outsideCounts() {
     ok("P5. contract unsatisfied → blocked, not sent",
       String(mp?.metadata?.delivery_error ?? "").startsWith("template_params_missing") && mp?.provider_message_id === null,
       `delivery_error="${String(mp?.metadata?.delivery_error).slice(0, 60)}…"`);
+    // "group_booking" stands in for a contract-free source here; payment_received
+    // used to play that role and now has a verified contract of its own.
     ok("P6. validateTemplateParams rejects wrong arity and blanks",
       validateTemplateParams("payment_link", [NAME]) !== null
       && validateTemplateParams("payment_link", [NAME, ""]) !== null
       && validateTemplateParams("payment_link", [NAME, URL]) === null
-      && validateTemplateParams("payment_received", undefined) === null,
+      && validateTemplateParams("group_booking", undefined) === null,
       "arity + blank checks, and contract-free sources unaffected");
 
     // ── 7, 8, 9. per-source routing ───────────────────────────────────────
     for (const [n, src] of [["7", "payment_link"], ["8", "payment_received"], ["9", "reminder_24h"]] as const) {
       await setTemplates({ [src]: { name: `zz_tpl_${src}_${TAG}`, language: "en" } });
-      // payment_link has a 2-parameter contract; the other two do not.
-      const p = src === "payment_link" ? [NAME, URL] : undefined;
+      // Supply exactly what each source's contract demands; payment_received
+      // has none, so it falls back to the rendered-text convention.
+      const contract = TEMPLATE_PARAM_CONTRACT[src];
+      const p = contract ? contract.map((_, i) => `p${i + 1}`) : undefined;
       await deliverOutboundMessage(CONV, ORG, `outside window ${src}`, src, p);
       const r = await lastOutbound();
       ok(`${n}. ${src} chooses the template path`,
@@ -218,6 +228,225 @@ async function outsideCounts() {
     ok("U9. buildTemplateComponents honours bodyParams",
       buildTemplateComponents({ name: "t", language: "en", bodyParams: "none" }, "x") === undefined
       && buildTemplateComponents({ name: "t", language: "en", bodyParams: "rendered" }, "a\nb")?.[0].parameters[0].text === "a b");
+
+    // ── effora_booking_reminder contract ──────────────────────────────────
+    // The approved Meta template is:
+    //   "Hi {{1}}, a reminder that your {{2}} is scheduled for {{3}}. …"
+    // and serves BOTH reminder sources.
+    ok("R0. reminder contract declares exactly 3 params (both sources)",
+      TEMPLATE_PARAM_CONTRACT.reminder_24h?.length === 3 && TEMPLATE_PARAM_CONTRACT.reminder_1h?.length === 3
+      && TEMPLATE_PARAM_CONTRACT.reminder_24h?.join() === "customer_name,session_name,meeting_time"
+      && TEMPLATE_PARAM_CONTRACT.reminder_1h?.join() === "customer_name,session_name,meeting_time",
+      `[${TEMPLATE_PARAM_CONTRACT.reminder_24h?.join(", ")}]`);
+
+    const STARTS_AT = "2026-09-01T09:30:00.000Z";
+    const FORMATTED = formatMeetingTime(STARTS_AT);
+    ok("R1. startsAt is genuinely formatted, not passed raw",
+      FORMATTED !== STARTS_AT && /\d/.test(FORMATTED) && !FORMATTED.includes("T09:30"),
+      `"${FORMATTED}"`);
+
+    // The tuple each reminder path builds, using the same helpers the callers use.
+    const p24 = [reminderLeadName("Priya Sharma"), reminderOffer("our Clarity Call", "24h"), FORMATTED];
+    const p1h = [reminderLeadName("Priya Sharma"), reminderOffer("our Clarity Call", "1h"), FORMATTED];
+    ok("R2. 24h tuple = [name, session, formatted time]",
+      p24[0] === "Priya" && p24[1] === "Clarity Call" && p24[2] === FORMATTED, JSON.stringify(p24));
+    ok("R3. 1h tuple = [name, session, formatted time]",
+      p1h[0] === "Priya" && p1h[1] === "Clarity Call" && p1h[2] === FORMATTED, JSON.stringify(p1h));
+    ok("R4. session fallbacks differ per path and are never blank",
+      reminderOffer("", "24h") === "upcoming session" && reminderOffer(null, "1h") === "call"
+      && reminderLeadName("") === "there" && reminderLeadName(null) === "there",
+      `24h→"${reminderOffer("", "24h")}", 1h→"${reminderOffer(null, "1h")}", name→"${reminderLeadName(null)}"`);
+
+    ok("R5. extraction did not change the rendered prose",
+      build24hReminder({ leadName: "Priya Sharma", startsAt: STARTS_AT, meetingUrl: null, coachOffer: "our Clarity Call" })
+        .startsWith("Hey, Priya! Just a quick heads-up — our Clarity Call is coming up soon.")
+      && build1hReminder({ leadName: "Priya Sharma", startsAt: STARTS_AT, meetingUrl: null, coachOffer: "" })
+        .startsWith("Hey, Priya! Our call is coming up in about an hour"),
+      "free-form wording byte-identical to before");
+
+    // sendChannelMessage must forward params to the template path.
+    await setTemplates({ reminder_24h: { name: "effora_booking_reminder", language: "en" } });
+    await sendChannelMessage(CONV, ORG, "reminder prose", "reminder_24h", p24);
+    let rm = await lastOutbound();
+    ok("R6. outside 24h → reminder takes the template path",
+      rm?.metadata?.template_name === "effora_booking_reminder"
+      && String(rm?.metadata?.delivery_error ?? "").startsWith("template_send_failed:"),
+      "template attempted, no free-form");
+
+    await sendChannelMessage(CONV, ORG, "reminder prose", "reminder_24h", [p24[0], "", p24[2]]);
+    rm = await lastOutbound();
+    ok("R7. blank session param fails closed",
+      String(rm?.metadata?.delivery_error ?? "").startsWith("template_params_missing"), "blocked before Meta");
+
+    await sendChannelMessage(CONV, ORG, "reminder prose", "reminder_24h", [p24[0], p24[1]]);
+    rm = await lastOutbound();
+    ok("R8. wrong arity fails closed",
+      String(rm?.metadata?.delivery_error ?? "").startsWith("template_params_missing"), "2 of 3 rejected");
+
+    await sendChannelMessage(CONV, ORG, "reminder prose", "reminder_24h");
+    rm = await lastOutbound();
+    ok("R9. missing params fail closed (no silent 1-param send)",
+      String(rm?.metadata?.delivery_error ?? "").startsWith("template_params_missing"), "blocked");
+
+    // Inside the window the reminder must stay free-form.
+    await setLastInbound(60_000);
+    await sendChannelMessage(CONV, ORG, "reminder prose", "reminder_24h", p24);
+    rm = await lastOutbound();
+    ok("R10. inside 24h → reminder stays free-form",
+      !rm?.metadata?.template_name && String(rm?.metadata?.delivery_error ?? "").startsWith("WhatsApp send failed:"),
+      "free-form attempted, template ignored");
+    await setLastInbound(SERVICE_WINDOW_MS + 60_000);
+
+    // Existing sources that share sendChannelMessage must be unaffected.
+    await sendChannelMessage(CONV, ORG, "system nudge", "system");
+    rm = await lastOutbound();
+    ok("R11. shared sendChannelMessage callers unaffected ('system')",
+      !rm?.metadata?.template_name && !String(rm?.metadata?.delivery_error ?? "").startsWith("template_"),
+      "no contract, no template routing");
+
+    // ══ effora_payment_received (Meta ID 3617342975089954, verified) ═══════
+    //   "Hi {{1}}, we've received your payment of {{2}} for {{3}}. …"
+    ok("PR0. payment_received declares exactly 3 params in Meta's order",
+      TEMPLATE_PARAM_CONTRACT.payment_received?.length === 3
+      && TEMPLATE_PARAM_CONTRACT.payment_received?.join() === "customer_name,amount,description",
+      `[${TEMPLATE_PARAM_CONTRACT.payment_received?.join(", ")}]`);
+
+    ok("PR1. amount keeps the application's existing ₹ formatting",
+      templateAmountInr(12500) === "₹12,500"
+      && templateAmountInr(12500) === `₹${(12500).toLocaleString("en-IN")}`
+      && templateAmountInr(999) === "₹999" && templateAmountInr(150000) === "₹1,50,000",
+      `12500→"${templateAmountInr(12500)}", 150000→"${templateAmountInr(150000)}" (matches Meta's example ₹12,500)`);
+
+    ok("PR2. description keeps the 'the program' fallback",
+      templateDescription(undefined) === "the program" && templateDescription(null) === "the program"
+      && templateDescription("") === "the program" && templateDescription("   ") === "the program"
+      && templateDescription("Elite Coaching") === "Elite Coaching",
+      "null/blank/whitespace fall back; a real description passes through");
+
+    ok("PR3. customer name resolution never leaks an identifier or a blank",
+      templateCustomerName("Priya Sharma") === "Priya"
+      && templateCustomerName("") === "there" && templateCustomerName(null) === "there"
+      && templateCustomerName("wa_000000000000") === "there"
+      && templateCustomerName("ig_000000000000") === "there"
+      && templateCustomerName("000000000000") === "there",
+      `"Priya Sharma"→"Priya", wa_/ig_/bare-number→"there"`);
+
+    const PR_AMOUNT = templateAmountInr(12500), PR_DESC = templateDescription(undefined);
+    const PR_TUPLE = [templateCustomerName("Priya Sharma"), PR_AMOUNT, PR_DESC];
+    await setTemplates({ payment_received: { name: "effora_payment_received", language: "en" } });
+    const prBinding = (await resolveTemplateBinding(db, ORG, "payment_received"))!;
+    const prComps = buildTemplateComponents(prBinding, "Payment received, Priya! ₹12,500 confirmed.", "payment_received", PR_TUPLE);
+    ok("PR4. {{1}} = customer name", prComps?.[0].parameters[0]?.text === "Priya", `{{1}}="${prComps?.[0].parameters[0]?.text}"`);
+    ok("PR5. {{2}} = formatted amount", prComps?.[0].parameters[1]?.text === "₹12,500", `{{2}}="${prComps?.[0].parameters[1]?.text}"`);
+    ok("PR6. {{3}} = description", prComps?.[0].parameters[2]?.text === "the program", `{{3}}="${prComps?.[0].parameters[2]?.text}"`);
+    ok("PR7. the rendered receipt is NOT passed as {{1}}",
+      prComps?.[0].parameters.length === 3
+      && !prComps?.[0].parameters.some((p) => p.text.includes("Payment received, Priya")),
+      "exactly 3 params, rendered prose absent from all of them");
+
+    await deliverOutboundMessage(CONV, ORG, "receipt prose", "payment_received", PR_TUPLE);
+    let pr = await lastOutbound();
+    ok("PR8. outside 24h → template path, no free-form",
+      pr?.metadata?.template_name === "effora_payment_received"
+      && String(pr?.metadata?.delivery_error ?? "").startsWith("template_send_failed:")
+      && pr?.provider_message_id === null,
+      "template attempted; the failure is the template's, not a fallback's");
+
+    await deliverOutboundMessage(CONV, ORG, "receipt prose", "payment_received", [PR_TUPLE[0], "", PR_TUPLE[2]]);
+    pr = await lastOutbound();
+    ok("PR9. blank amount fails closed",
+      String(pr?.metadata?.delivery_error ?? "").startsWith("template_params_missing") && pr?.provider_message_id === null,
+      "blocked before Meta");
+
+    await deliverOutboundMessage(CONV, ORG, "receipt prose", "payment_received", [PR_TUPLE[0], PR_TUPLE[1]]);
+    pr = await lastOutbound();
+    ok("PR10. wrong arity fails closed",
+      String(pr?.metadata?.delivery_error ?? "").startsWith("template_params_missing"), "2 of 3 rejected");
+
+    await deliverOutboundMessage(CONV, ORG, "receipt prose", "payment_received");
+    pr = await lastOutbound();
+    ok("PR11. missing params fail closed (no silent 1-param send)",
+      String(pr?.metadata?.delivery_error ?? "").startsWith("template_params_missing") && !pr?.provider_message_id,
+      "the rendered-text convention can no longer satisfy this source");
+
+    await setLastInbound(60_000);
+    await deliverOutboundMessage(CONV, ORG, "receipt prose", "payment_received", PR_TUPLE);
+    pr = await lastOutbound();
+    ok("PR12. inside 24h → receipt stays free-form",
+      !pr?.metadata?.template_name && String(pr?.metadata?.delivery_error ?? "").startsWith("WhatsApp send failed:"),
+      "free-form attempted, template ignored");
+    await setLastInbound(SERVICE_WINDOW_MS + 60_000);
+
+    // ══ effora_booking_confirmed (Meta ID 1060354640297067, verified) ══════
+    //   "Hi {{1}}, your session is confirmed for {{2}}. …"
+    ok("BC0. booking_confirm declares exactly 2 params in Meta's order",
+      TEMPLATE_PARAM_CONTRACT.booking_confirm?.length === 2
+      && TEMPLATE_PARAM_CONTRACT.booking_confirm?.join() === "customer_name,meeting_time",
+      `[${TEMPLATE_PARAM_CONTRACT.booking_confirm?.join(", ")}]`);
+
+    const BC_TUPLE = [templateCustomerName("Priya Sharma"), formatMeetingTime(STARTS_AT)];
+    await setTemplates({ booking_confirm: { name: "effora_booking_confirmed", language: "en" } });
+    const bcBinding = (await resolveTemplateBinding(db, ORG, "booking_confirm"))!;
+    const bcComps = buildTemplateComponents(bcBinding, "Done Priya. Your call is confirmed.", "booking_confirm", BC_TUPLE);
+    ok("BC1. {{1}} = customer name", bcComps?.[0].parameters[0]?.text === "Priya", `{{1}}="${bcComps?.[0].parameters[0]?.text}"`);
+    ok("BC2. {{2}} = formatMeetingTime(startsAt)",
+      bcComps?.[0].parameters[1]?.text === FORMATTED, `{{2}}="${bcComps?.[0].parameters[1]?.text}"`);
+    ok("BC3. the raw ISO startsAt is NOT passed",
+      bcComps?.[0].parameters[1]?.text !== STARTS_AT
+      && !bcComps?.[0].parameters.some((p) => p.text.includes("T09:30") || p.text.includes("Z")),
+      `ISO "${STARTS_AT}" never appears`);
+    ok("BC4. the rendered confirmation prose is NOT used as a parameter",
+      bcComps?.[0].parameters.length === 2
+      && !bcComps?.[0].parameters.some((p) => p.text.includes("Done Priya")),
+      "exactly 2 params, rendered prose absent");
+
+    await deliverOutboundMessage(CONV, ORG, "confirm prose", "booking_confirm", BC_TUPLE);
+    let bc = await lastOutbound();
+    ok("BC5. outside 24h → template path, no free-form",
+      bc?.metadata?.template_name === "effora_booking_confirmed"
+      && String(bc?.metadata?.delivery_error ?? "").startsWith("template_send_failed:")
+      && bc?.provider_message_id === null,
+      "template attempted; no fallback");
+
+    await deliverOutboundMessage(CONV, ORG, "confirm prose", "booking_confirm", ["", BC_TUPLE[1]]);
+    bc = await lastOutbound();
+    ok("BC6. blank name fails closed",
+      String(bc?.metadata?.delivery_error ?? "").startsWith("template_params_missing") && bc?.provider_message_id === null,
+      "blocked before Meta");
+
+    await deliverOutboundMessage(CONV, ORG, "confirm prose", "booking_confirm", [BC_TUPLE[0], BC_TUPLE[1], "extra"]);
+    bc = await lastOutbound();
+    ok("BC7. wrong arity fails closed",
+      String(bc?.metadata?.delivery_error ?? "").startsWith("template_params_missing"), "3 of 2 rejected");
+
+    await deliverOutboundMessage(CONV, ORG, "confirm prose", "booking_confirm");
+    bc = await lastOutbound();
+    ok("BC8. missing params fail closed (no silent 1-param send)",
+      String(bc?.metadata?.delivery_error ?? "").startsWith("template_params_missing") && !bc?.provider_message_id,
+      "the rendered-text convention can no longer satisfy this source");
+
+    await setLastInbound(60_000);
+    await deliverOutboundMessage(CONV, ORG, "confirm prose", "booking_confirm", BC_TUPLE);
+    bc = await lastOutbound();
+    ok("BC9. inside 24h → confirmation stays free-form",
+      !bc?.metadata?.template_name && String(bc?.metadata?.delivery_error ?? "").startsWith("WhatsApp send failed:"),
+      "free-form attempted, template ignored");
+    await setLastInbound(SERVICE_WINDOW_MS + 60_000);
+
+    // The two newly bound sources must not have disturbed the others.
+    ok("X1. every contract still declares the arity Meta approved",
+      TEMPLATE_PARAM_CONTRACT.payment_link?.length === 2
+      && TEMPLATE_PARAM_CONTRACT.payment_received?.length === 3
+      && TEMPLATE_PARAM_CONTRACT.booking_confirm?.length === 2
+      && TEMPLATE_PARAM_CONTRACT.reminder_24h?.length === 3
+      && TEMPLATE_PARAM_CONTRACT.reminder_1h?.length === 3
+      && Object.keys(TEMPLATE_PARAM_CONTRACT).length === 5,
+      `${Object.keys(TEMPLATE_PARAM_CONTRACT).length} contracts: ${Object.keys(TEMPLATE_PARAM_CONTRACT).join(", ")}`);
+    ok("X2. business-initiated sources without a verified template keep the old path",
+      ["group_booking", "group_payment", "group_payment_request", "rebook"]
+        .every((s) => BUSINESS_INITIATED_SOURCES.has(s) && !TEMPLATE_PARAM_CONTRACT[s]
+                      && validateTemplateParams(s, undefined) === null),
+      "group/rebook sources still use the binding's bodyParams convention");
 
     // ── TASK 3: the legacy "whatsapp" channel_provider must still deliver ──
     const { data: legacyConv } = await db.from("conversations").insert({

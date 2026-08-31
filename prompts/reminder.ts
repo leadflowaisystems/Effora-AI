@@ -16,11 +16,33 @@ export interface ReminderParams {
   coachOffer: string;
 }
 
+/**
+ * Bare first name for a WhatsApp template parameter, never blank.
+ *
+ * Distinct from the private firstName() above, which yields ", Priya" for
+ * inline prose. A template variable needs the name on its own, and Meta rejects
+ * an empty parameter, so this falls back to "there".
+ */
+export function reminderLeadName(name: string | null | undefined): string {
+  const first = String(name ?? "").trim().split(/\s+/)[0];
+  return first || "there";
+}
+
+/**
+ * Session/programme label, never blank — the single definition of the fallback
+ * and the "our " strip, so the template parameter can never drift from the
+ * wording used in the free-form prose below.
+ */
+export function reminderOffer(coachOffer: string | null | undefined, kind: "24h" | "1h"): string {
+  const fallback = kind === "24h" ? "upcoming session" : "call";
+  return (coachOffer?.trim() || fallback).replace(/^our\s+/i, "");
+}
+
 export function build24hReminder(p: ReminderParams): string {
   const name  = firstName(p.leadName);
   // Strip any accidental leading "our " from the stored offer so the template
   // "our ${offer}" never produces "our our ...".
-  const offer = (p.coachOffer?.trim() || "upcoming session").replace(/^our\s+/i, "");
+  const offer = reminderOffer(p.coachOffer, "24h");
 
   const lines = [
     `Hey${name}! Just a quick heads-up — our ${offer} is coming up soon.`,
@@ -38,7 +60,7 @@ export function build24hReminder(p: ReminderParams): string {
 
 export function build1hReminder(p: ReminderParams): string {
   const name  = firstName(p.leadName);
-  const offer = (p.coachOffer?.trim() || "call").replace(/^our\s+/i, "");
+  const offer = reminderOffer(p.coachOffer, "1h");
 
   const lines = [`Hey${name}! Our ${offer} is coming up in about an hour ⏰`];
 

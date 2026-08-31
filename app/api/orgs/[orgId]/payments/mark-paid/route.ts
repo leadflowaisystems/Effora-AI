@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { generatePaymentReceivedMessage } from "@/lib/ai";
 import { getOrCreateConversation, deliverOutboundMessage } from "@/lib/conversation";
+import { templateCustomerName, templateAmountInr, templateDescription } from "@/lib/whatsapp-templates";
 import { sendEmail } from "@/lib/email";
 import { paymentReceived } from "@/lib/email-templates";
 import { getLeadFirstName } from "@/lib/leads";
@@ -69,7 +70,7 @@ export async function POST(req: NextRequest, { params }: Params) {
 
     resolvedLeadId    = p.lead_id;
     resolvedAmount    = p.amount_inr;
-    resolvedDesc      = description ?? p.notes ?? "the program";
+    resolvedDesc      = templateDescription(description ?? p.notes);
     resolvedPaymentId = p.id;
     void writeLeadEvent({
       orgId: params.orgId, leadId: p.lead_id,
@@ -119,7 +120,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     const newId = (pNew as { id: string }).id;
     resolvedLeadId    = lead_id;
     resolvedAmount    = amount_inr;
-    resolvedDesc      = description ?? "the program";
+    resolvedDesc      = templateDescription(description);
     resolvedPaymentId = newId;
     void writeLeadEvent({
       orgId: params.orgId, leadId: lead_id,
@@ -166,8 +167,12 @@ export async function POST(req: NextRequest, { params }: Params) {
     content: `Payment received${firstName ? `, ${firstName}` : ""}. ₹${resolvedAmount.toLocaleString("en-IN")} confirmed for ${resolvedDesc}. Welcome — I'll send the next steps shortly.`,
   }));
   // Use deliverOutboundMessage so Instagram leads receive the receipt DM.
+  // effora_payment_received params, used only outside the 24-hour window:
+  // {{1}} customer name, {{2}} formatted amount, {{3}} description — the same
+  // values the prose and the email are built from.
   const { delivered: receiptDelivered } = await deliverOutboundMessage(
     convId, params.orgId, aiMsg.content, "payment_received",
+    [templateCustomerName(firstName), templateAmountInr(resolvedAmount), resolvedDesc],
   );
   console.log(`[payments/mark-paid] receipt message delivered=${receiptDelivered} conv=${convId}`);
 

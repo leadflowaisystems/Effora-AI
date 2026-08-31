@@ -23,6 +23,7 @@ import { inngest } from "../client";
 import { createServiceClient } from "@/lib/supabase/server";
 import { generatePaymentReceivedMessage } from "@/lib/ai";
 import { getOrCreateConversation, deliverOutboundMessage } from "@/lib/conversation";
+import { templateCustomerName, templateAmountInr, templateDescription } from "@/lib/whatsapp-templates";
 import { getLeadFirstName } from "@/lib/leads";
 import { sendEmail } from "@/lib/email";
 import { paymentReceived } from "@/lib/email-templates";
@@ -46,6 +47,10 @@ export const onPaymentCaptured = inngest.createFunction(
   async ({ event, step }) => {
     const { orgId, paymentId, leadId, conversationId, amountInr, description } =
       event.data as PaymentCapturedData;
+
+    // One resolved description for the AI prompt, the fallback copy, the receipt
+    // email and the template parameter, so they can never drift apart.
+    const receiptDescription = templateDescription(description);
 
     // ── 1. Load everything the receipt needs ────────────────────
     const ctx = await step.run("load-receipt-context", async () => {
@@ -95,18 +100,23 @@ export const onPaymentCaptured = inngest.createFunction(
       const aiMsg = await generatePaymentReceivedMessage({
         leadFirstName: ctx.firstName,
         amountInr,
-        description:   description ?? "the program",
+        description:   receiptDescription,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         voiceProfile:  ctx.vp as any,
         orgId,
       }).catch(() => ({
         content: `Payment received${ctx.firstName ? `, ${ctx.firstName}` : ""}. ` +
-                 `₹${amountInr.toLocaleString("en-IN")} confirmed for ${description ?? "the program"}. ` +
+                 `${templateAmountInr(amountInr)} confirmed for ${receiptDescription}. ` +
                  `Welcome — I'll send the next steps shortly.`,
       }));
 
+      // effora_payment_received params, used only outside the 24-hour window:
+      // {{1}} customer name, {{2}} formatted amount, {{3}} description. Built
+      // from the same values the prose was built from — never parsed back out of
+      // the rendered message.
       const { delivered } = await deliverOutboundMessage(
         convId, orgId, aiMsg.content, "payment_received",
+        [templateCustomerName(ctx.firstName), templateAmountInr(amountInr), receiptDescription],
       );
       console.log(`[on-payment-captured] receipt delivered=${delivered} conv=${convId} payment=${paymentId}`);
       return { conversationId: convId, delivered };
@@ -120,8 +130,8 @@ export const onPaymentCaptured = inngest.createFunction(
           subject: "Payment received — welcome!",
           html:    paymentReceived({
             leadName:    ctx.firstName || "there",
-            amount:      `₹${amountInr.toLocaleString("en-IN")}`,
-            description: description ?? "the program",
+            amount:      templateAmountInr(amountInr),
+            description: receiptDescription,
             coachName:   ctx.orgName,
           }),
           orgId,

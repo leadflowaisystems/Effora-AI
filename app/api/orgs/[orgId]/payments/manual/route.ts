@@ -9,6 +9,7 @@ import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { getAccessState } from "@/lib/access";
 import { generatePaymentReceivedMessage } from "@/lib/ai";
 import { getOrCreateConversation, deliverOutboundMessage } from "@/lib/conversation";
+import { templateCustomerName, templateAmountInr, templateDescription } from "@/lib/whatsapp-templates";
 import { sendEmail } from "@/lib/email";
 import { paymentReceived } from "@/lib/email-templates";
 import { getLeadFirstName } from "@/lib/leads";
@@ -67,7 +68,7 @@ async function handler(req: NextRequest, { params }: Params) {
   const orgName   = (orgRes.data as { name: string } | null)?.name ?? "Your Coach";
   const leadEmail = (lead.metadata?.email) as string | undefined ?? null;
   const firstName = getLeadFirstName({ name: lead.name, external_id: lead.external_id });
-  const desc      = description || payment_method;
+  const desc      = templateDescription(description || payment_method);
 
   // ── Insert payment row ────────────────────────────────────────
   const { data: payment, error } = await svc.from("payments").insert({
@@ -109,8 +110,13 @@ async function handler(req: NextRequest, { params }: Params) {
   // Use deliverOutboundMessage so Instagram leads actually receive the receipt DM.
   // For manual/offline payments the conversation channel_provider may be "manual"
   // (no Instagram delivery attempted) or "instagram" (delivery attempted).
+  // effora_payment_received params, used only outside the 24-hour window:
+  // {{1}} customer name, {{2}} formatted amount, {{3}} description. Here the
+  // description defaults to the payment method ("upi", "cash", …), which is what
+  // the prose and the receipt email already say.
   const { delivered: receiptDelivered } = await deliverOutboundMessage(
     conversationId, params.orgId, aiResult.content, "payment_received",
+    [templateCustomerName(firstName), templateAmountInr(amount_inr), desc],
   );
   console.log(`[payments/manual] receipt message delivered=${receiptDelivered} conv=${conversationId}`);
 

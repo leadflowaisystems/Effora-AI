@@ -12,7 +12,8 @@
 import { inngest } from "../client";
 import { createServiceClient } from "@/lib/supabase/server";
 import { sendChannelMessage } from "@/lib/booking";
-import { build24hReminder, build1hReminder } from "@/prompts/reminder";
+import { build24hReminder, build1hReminder, reminderLeadName, reminderOffer } from "@/prompts/reminder";
+import { formatMeetingTime } from "@/lib/leads";
 import { sendEmail } from "@/lib/email";
 import { bookingConfirmation, bookingReminder24h } from "@/lib/email-templates";
 
@@ -124,7 +125,12 @@ export const onBookingCreated = inngest.createFunction(
         meetingUrl: ctx.meetingUrl,
         coachOffer: ctx.offer,
       });
-      await sendChannelMessage(conversationId, orgId, msg, "reminder_24h");
+      // effora_booking_reminder params, used only outside the 24-hour window:
+      // {{1}} customer name, {{2}} session name, {{3}} formatted date/time.
+      // The helpers guarantee {{1}} and {{2}} are never blank; formatMeetingTime
+      // is the same formatter the booking confirmation already uses.
+      await sendChannelMessage(conversationId, orgId, msg, "reminder_24h",
+        [reminderLeadName(ctx.attendeeName), reminderOffer(ctx.offer, "24h"), formatMeetingTime(ctx.startsAt)]);
       if (ctx.leadEmail) {
         await sendEmail({
           to:       ctx.leadEmail,
@@ -158,7 +164,9 @@ export const onBookingCreated = inngest.createFunction(
         meetingUrl: ctx.meetingUrl,
         coachOffer: ctx.offer,
       });
-      await sendChannelMessage(conversationId, orgId, msg, "reminder_1h");
+      // Same approved template; the time variable carries the difference.
+      await sendChannelMessage(conversationId, orgId, msg, "reminder_1h",
+        [reminderLeadName(ctx.attendeeName), reminderOffer(ctx.offer, "1h"), formatMeetingTime(ctx.startsAt)]);
       return { sent: true };
     });
 

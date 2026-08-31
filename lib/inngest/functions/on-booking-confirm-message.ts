@@ -16,6 +16,7 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { generateBookingConfirmMessage } from "@/lib/ai";
 import { getLeadFirstName, formatMeetingTime } from "@/lib/leads";
 import { deliverOutboundMessage } from "@/lib/conversation";
+import { templateCustomerName } from "@/lib/whatsapp-templates";
 
 interface BookingConfirmMessageData {
   orgId:     string;
@@ -114,8 +115,18 @@ export const onBookingConfirmMessage = inngest.createFunction(
 
     // ── 3. Deliver to channel + store message ─────────────────────
     await step.run("insert-message", async () => {
+      // effora_booking_confirmed params, used only outside the 24-hour window:
+      // {{1}} customer name, {{2}} the formatted meeting time — never the raw
+      // ISO timestamp, and never parsed back out of the generated prose.
+      //
+      // Both are recomputed from ctx rather than threaded out of
+      // generate-confirm-msg: they are pure, and widening that step's return
+      // value would change a memoised result, breaking any run already in
+      // flight when this deploys.
+      const firstName = getLeadFirstName({ name: ctx.leadName, external_id: ctx.leadExternalId });
       const { delivered, provider_message_id } =
-        await deliverOutboundMessage(ctx.conversationId, orgId, content, "booking_confirm");
+        await deliverOutboundMessage(ctx.conversationId, orgId, content, "booking_confirm",
+          [templateCustomerName(firstName), formatMeetingTime(ctx.startsAt)]);
       console.log(`[booking-confirm] message delivered=${delivered} provider_message_id=${provider_message_id ?? "null"} conv=${ctx.conversationId}`);
     });
 
