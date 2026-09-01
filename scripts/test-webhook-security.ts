@@ -463,7 +463,7 @@ async function captureConsole<T>(fn: () => T | Promise<T>): Promise<[T, string]>
         const pageHtml = await pageRes.text();
         ok("S5. secret absent from API responses and from the settings page HTML",
           !s4.text.includes(SECRET_V2) && !pageHtml.includes(SECRET_V2)
-          && !pageHtml.includes(cfg2.webhook_secret_enc ?? " "),
+          && !!cfg2.webhook_secret_enc && !pageHtml.includes(cfg2.webhook_secret_enc),
           `page ${pageRes.status}, ${pageHtml.length} bytes — neither secret nor ciphertext present`);
 
         // 6. a member of another org cannot modify this org's Cal.com config
