@@ -24,6 +24,7 @@ import { onBroadcastCron }             from "@/lib/inngest/functions/on-broadcas
 import { onRecurringPaymentCron }      from "@/lib/inngest/functions/on-recurring-payment-cron";
 import { onScheduledPaymentCron }      from "@/lib/inngest/functions/on-scheduled-payment-cron";
 import { onRecurringBookingCron }      from "@/lib/inngest/functions/on-recurring-booking-cron";
+import { onMetaDataDeletion }          from "@/lib/inngest/functions/on-meta-data-deletion";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -52,5 +53,6 @@ export const { GET, POST, PUT } = serve({
     onRecurringPaymentCron,
     onScheduledPaymentCron,
     onRecurringBookingCron,
+    onMetaDataDeletion,
   ],
 });
